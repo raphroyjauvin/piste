@@ -1,0 +1,13 @@
+# Raw downloads are re-created by tools/fetch_data.py (and are too big for GitHub)
+data/raw/
+data/build/
+# Reference images from other people's work: keep local, never publish
+docs/mapideas/
+# Python and Node tooling
+.venv/
+__pycache__/
+tools/shots/node_modules/
+# OS / editor
+.DS_Store
+Thumbs.db
+*.part

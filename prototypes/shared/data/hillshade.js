@@ -1,0 +1,1 @@
+window.HILLSHADE={"url":"hillshade.png","coordinates":[[-73.6151637,45.5820565],[-73.5249729,45.5820565],[-73.5249729,45.4999487],[-73.6151637,45.4999487]],"meta":"Multidirectional hillshade of NRCan HRDEM CMM 2023 DTM (5 m), shadows and highlights"};

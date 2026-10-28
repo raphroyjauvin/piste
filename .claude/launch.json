@@ -1,0 +1,11 @@
+﻿{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bikeapp-prototypes",
+      "runtimeExecutable": "C:\\bikeapp\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["C:\\bikeapp\\tools\\serve.py", "8765", "C:\\bikeapp\\prototypes"],
+      "port": 8765
+    }
+  ]
+}

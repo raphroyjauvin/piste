@@ -1,0 +1,30 @@
+[
+  {
+    "id": "rachel",
+    "name": "Parc La Fontaine to Avenue du Parc, along Rachel",
+    "difficulty": "easy",
+    "from": { "label": "Parc La Fontaine (Rachel / Calixa-Lavallée)", "lonlat": [-73.57204, 45.52787] },
+    "to": { "label": "Rachel / Avenue du Parc", "lonlat": [-73.58485, 45.51462] }
+  },
+  {
+    "id": "montroyal",
+    "name": "Mont-Royal metro to Avenue Papineau",
+    "difficulty": "challenging",
+    "from": { "label": "Mont-Royal metro", "lonlat": [-73.58165, 45.52460] },
+    "to": { "label": "Papineau / Mont-Royal", "lonlat": [-73.57458, 45.53291] }
+  },
+  {
+    "id": "biodome",
+    "name": "Assomption metro to the Biodôme",
+    "difficulty": "mixed",
+    "from": { "label": "Assomption metro", "lonlat": [-73.54673, 45.56939] },
+    "to": { "label": "Biodôme (Pierre-De Coubertin)", "lonlat": [-73.54895, 45.55914] }
+  },
+  {
+    "id": "davidson",
+    "name": "Assomption metro to Ontario / Davidson",
+    "difficulty": "mixed",
+    "from": { "label": "Assomption metro", "lonlat": [-73.54673, 45.56939] },
+    "to": { "label": "Ontario / Davidson", "lonlat": [-73.54611, 45.54299] }
+  }
+]
