@@ -4,7 +4,7 @@ This is Raph Roy-Jauvin's personal side project, separate from his day job. Neve
 
 Read `README.md` first: decisions, open questions, folder map. Details are in `docs\`:
 - `05_routing.md`: graph and router
-- `06_prototypes.md`: the three prototypes
+- `06_prototypes.md`: the app (prototype A), its URL options and the phone preview
 - `03_data_sources.md`: data
 
 ## How to work here
@@ -18,9 +18,11 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   5. `tools/compare_engines.py`
 - **Serve:** `tools/serve.py` on port 8765. The preview config is `.claude/launch.json` ("bikeapp-prototypes").
 - **Test:**
-  - `node tools/shots/test.mjs` runs functional smoke tests.
-  - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/`.
+  - `node tools/shots/test.mjs` runs functional smoke tests (exit code 1 if any fail).
+  - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/` (A = desktop, P = phone).
   - Both use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden.
+  - `prototypes/phone.html` shows the app in iPhone-sized screens; the real iPhone (GitHub Pages) is the final check.
+- **Publish:** `git push` to `main`; `.github/workflows/pages.yml` deploys `prototypes/` to https://raphroyjauvin.github.io/piste/. Git lives in `C:\Program Files\Git\cmd` (prefix PATH in each shell). The repo is public: never commit `docs/mapideas/`, raw data, credentials, or anything about Raph's work.
 
 ## Rules
 - `data\raw\` holds downloads exactly as published. Never edit or delete them. Use one folder per dataset and log every download.

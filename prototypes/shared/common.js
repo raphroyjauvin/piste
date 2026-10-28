@@ -30,7 +30,7 @@
     works: '<path d="M10 4.5h4l4 13.5H6zM8.2 11.2h7.6M5 19.8h14"/>',
   };
   const POI_KINDS = {
-    bixi: { label: "BIXI station", color: "#23272E", glyph: "bike", minzoom: 15.6, group: "bike" },
+    bixi: { label: "BIXI station", color: "#EE3124", glyph: "bike", minzoom: 15.6, group: "bike" },
     metro: { label: "Metro", color: "#FFFFFF", glyph: "metro", minzoom: 12, group: "transit" },
     cafe: { label: "Café", color: "#9A4A16", glyph: "cup", minzoom: 15.8, group: "food" },
     food: { label: "Restaurant", color: STM.orange, glyph: "fork", minzoom: 16.8, group: "food" },
@@ -54,25 +54,33 @@
     return (lines && lines.length ? lines : ["2"]).map((l) => cols[l] || "#888");
   }
 
+  // Metro and BIXI echo the real signs without copying them: our own drawings, using only the familiar colour and idea.
+  const METRO_SIGN_BLUE = "#0072B2";
   function iconSVG(kind, opts = {}) {
     const k = POI_KINDS[kind] || POI_KINDS.park;
     const size = opts.size || 56;
     const ring = opts.ring || "#FFFFFF";
-    let disc = `<circle cx="12" cy="12" r="11" fill="${k.color}" stroke="${ring}" stroke-width="1.6"/>`;
-    let stroke = k.dark ? "#1E1E1E" : "#FFFFFF";
+    const wrap = (body) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">${body}</svg>`;
+    const glyph = (stroke) => `<g transform="translate(12 12) scale(0.62) translate(-12 -12)" fill="none" stroke="${stroke}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${G[k.glyph]}</g>`;
     if (kind === "metro") {
-      const cols = metroRing(opts.lines);
-      disc = `<circle cx="12" cy="12" r="11" fill="#FFFFFF"/>`;
-      const n = cols.length;
+      // like the métro entrance sign (white down-arrow on a blue disc); the outer ring shows the lines serving the station
+      const cols = metroRing(opts.lines), n = cols.length;
+      let s = `<circle cx="12" cy="12" r="11.9" fill="#FFFFFF"/>`;
       cols.forEach((c, i) => {
+        if (n === 1) { s += `<circle cx="12" cy="12" r="10.1" fill="none" stroke="${c}" stroke-width="2.6"/>`; return; }
         const a0 = (i / n) * 2 * Math.PI - Math.PI / 2, a1 = ((i + 1) / n) * 2 * Math.PI - Math.PI / 2;
-        if (n === 1) disc += `<circle cx="12" cy="12" r="9.6" fill="none" stroke="${c}" stroke-width="2.8"/>`;
-        else disc += `<path d="M${12 + 9.6 * Math.cos(a0)} ${12 + 9.6 * Math.sin(a0)}A9.6 9.6 0 0 1 ${12 + 9.6 * Math.cos(a1)} ${12 + 9.6 * Math.sin(a1)}" fill="none" stroke="${c}" stroke-width="2.8"/>`;
+        const pt = (a) => `${(12 + 10.1 * Math.cos(a)).toFixed(2)} ${(12 + 10.1 * Math.sin(a)).toFixed(2)}`;
+        s += `<path d="M${pt(a0)}A10.1 10.1 0 0 1 ${pt(a1)}" fill="none" stroke="${c}" stroke-width="2.6"/>`;
       });
-      stroke = "#111111";
+      s += `<circle cx="12" cy="12" r="8.3" fill="${METRO_SIGN_BLUE}"/>` +
+        `<path d="M10.25 6.2h3.5v5.3h3.1L12 17.7l-4.85-6.2h3.1z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width=".7" stroke-linejoin="round"/>`;
+      return wrap(s);
     }
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">${disc}` +
-      `<g transform="translate(12 12) scale(0.62) translate(-12 -12)" fill="none" stroke="${stroke}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${G[k.glyph]}</g></svg>`;
+    if (kind === "bixi") {
+      // BIXI red on a rounded-square tag, with a plain bike (not their wordmark)
+      return wrap(`<rect x="1.2" y="1.2" width="21.6" height="21.6" rx="5.8" fill="${k.color}" stroke="${ring}" stroke-width="1.6"/>` + glyph("#FFFFFF"));
+    }
+    return wrap(`<circle cx="12" cy="12" r="11" fill="${k.color}" stroke="${ring}" stroke-width="1.6"/>` + glyph(k.dark ? "#1E1E1E" : "#FFFFFF"));
   }
 
   function svgToImage(svg) {
@@ -170,18 +178,31 @@
     return out.sort((a, b) => a.along - b.along);
   }
 
-  // climbs: sustained stretches of >= 3 % over >= 80 m, from the route's elevation profile
+  // climbs: stretches rising at >= 2.5 % for >= 80 m and >= 3 m, from the route's elevation profile.
+  // Runs split by a short, nearly flat breather (< 120 m, dropping < 2 m) count as one hill, the way a rider feels it.
   function climbs(route) {
     const pr = route.profile; if (!pr || pr.length < 2) return [];
-    const out = []; let start = null;
+    const runs = []; let start = null;
     for (let i = 1; i < pr.length; i++) {
       const dd = pr[i][0] - pr[i - 1][0], dz = pr[i][1] - pr[i - 1][1];
       const grade = dd > 0 ? dz / dd : 0;
       if (grade >= 0.025) { if (start === null) start = i - 1; }
-      else if (start !== null) { push(start, i - 1); start = null; }
+      else if (start !== null) { runs.push([start, i - 1]); start = null; }
     }
-    if (start !== null) push(start, pr.length - 1);
-    function push(a, b) {
+    if (start !== null) runs.push([start, pr.length - 1]);
+    const merged = [];
+    for (const run of runs) {
+      const last = merged[merged.length - 1];
+      if (last) {
+        const gap = pr[run[0]][0] - pr[last[1]][0];
+        let low = pr[last[1]][1];
+        for (let i = last[1]; i <= run[0]; i++) low = Math.min(low, pr[i][1]);
+        if (gap < 120 && pr[last[1]][1] - low < 2) { last[1] = run[1]; continue; }
+      }
+      merged.push([run[0], run[1]]);
+    }
+    const out = [];
+    for (const [a, b] of merged) {
       const len = pr[b][0] - pr[a][0], rise = pr[b][1] - pr[a][1];
       if (len >= 80 && rise >= 3) out.push({ start: pr[a][0], length: len, rise, grade: rise / len });
     }
@@ -198,22 +219,85 @@
     return { next, nextDist: next ? next.at - d : null, inGap, nextGap, nextGapDist: nextGap ? nextGap.start - d : null, hill, pois };
   }
 
+  // ---------------------------------------------------------------- elevation along a route (profile = [[dist m, elev m], ...])
+  function elevAt(route, d) {
+    const pr = route.profile; if (!pr || !pr.length) return 0;
+    if (d <= pr[0][0]) return pr[0][1];
+    for (let i = 1; i < pr.length; i++) {
+      if (pr[i][0] >= d) { const u = (d - pr[i - 1][0]) / ((pr[i][0] - pr[i - 1][0]) || 1); return pr[i - 1][1] + (pr[i][1] - pr[i - 1][1]) * u; }
+    }
+    return pr[pr.length - 1][1];
+  }
+  function profileWindow(route, d0, d1, step = 10) {
+    const out = [];
+    for (let d = d0; d <= d1 + 0.01; d += step) out.push([d, elevAt(route, Math.max(0, Math.min(route.length, d)))]);
+    return out;
+  }
+  // steepest grade inside a climb, measured over 30 m windows so one short kink doesn't count
+  function climbMaxGrade(route, c, win = 30) {
+    let mx = c.grade;
+    for (let d = c.start; d + win <= c.start + c.length + 0.01; d += 10) mx = Math.max(mx, (elevAt(route, d + win) - elevAt(route, d)) / win);
+    return mx;
+  }
+  function climbName(route, c) {
+    const mid = c.start + c.length / 2;
+    const p = route.pieces.find((q) => q.start <= mid && q.start + q.length >= mid);
+    return (p && p.names[0]) || "";
+  }
+  // route coordinates between two distances along it
+  function sliceCoords(route, d0, d1) {
+    const c = route.coords, cum = [0];
+    for (let i = 1; i < c.length; i++) cum.push(cum[i - 1] + distM(c[i - 1][0], c[i - 1][1], c[i][0], c[i][1]));
+    const scale = cum[cum.length - 1] ? route.length / cum[cum.length - 1] : 1;
+    const g0 = d0 / scale, g1 = d1 / scale, out = [];
+    const lerp = (i, g) => { const u = (g - cum[i - 1]) / ((cum[i] - cum[i - 1]) || 1); return [c[i - 1][0] + (c[i][0] - c[i - 1][0]) * u, c[i - 1][1] + (c[i][1] - c[i - 1][1]) * u]; };
+    for (let i = 1; i < c.length; i++) {
+      if (cum[i] < g0) continue;
+      if (!out.length) out.push(lerp(i, Math.max(g0, cum[i - 1])));
+      if (cum[i] >= g1) { out.push(lerp(i, g1)); break; }
+      out.push(c[i]);
+    }
+    return out;
+  }
+  // climbs as lines for uphill chevrons (Michelin-style: more chevrons = steeper), drawn in the direction of travel
+  function climbsGeoJSON(route, list) {
+    return {
+      type: "FeatureCollection",
+      features: (list || climbs(route)).map((c, i) => {
+        const max = climbMaxGrade(route, c);
+        const n = c.grade >= 0.08 || max >= 0.1 ? 3 : c.grade >= 0.05 || max >= 0.07 ? 2 : 1;
+        return { type: "Feature", id: i, geometry: { type: "LineString", coordinates: sliceCoords(route, c.start, c.start + c.length) },
+          properties: { n, rise: Math.round(c.rise), grade: Math.round(c.grade * 100) } };
+      }),
+    };
+  }
+
   // ---------------------------------------------------------------- elevation profile (SVG string)
   function profileSVG(route, opts = {}) {
-    const W = opts.width || 320, H = opts.height || 84, padB = 14, padT = 8;
+    const W = opts.width || 320, H = opts.height || 84, padB = 14, padT = 10;
     const pr = route.profile; if (!pr || pr.length < 2) return "";
     const zs = pr.map((p) => p[1]); let zmin = Math.min(...zs), zmax = Math.max(...zs);
     if (zmax - zmin < 12) { const m = (zmax + zmin) / 2; zmin = m - 6; zmax = m + 6; }
     const L = route.length || 1;
     const X = (d) => (d / L) * W, Y = (z) => padT + (1 - (z - zmin) / (zmax - zmin)) * (H - padT - padB);
-    let path = `M0 ${H - padB}`;
-    pr.forEach(([d, z]) => { path += `L${X(d).toFixed(1)} ${Y(z).toFixed(1)}`; });
-    path += `L${W} ${H - padB}Z`;
+    let line = "";
+    pr.forEach(([d, z], i) => { line += `${i ? "L" : "M"}${X(d).toFixed(1)} ${Y(z).toFixed(1)}`; });
+    const area = `M0 ${H - padB}L${line.slice(1)}L${W} ${H - padB}Z`;
     const band = route.pieces.map((p) => `<rect x="${X(p.start).toFixed(1)}" y="${H - padB + 3}" width="${Math.max(0.6, X(p.length)).toFixed(1)}" height="6" fill="${opts.tierColors[p.tier]}"/>`).join("");
     const gapShade = route.gaps.map((g) => `<rect x="${X(g.start).toFixed(1)}" y="${padT}" width="${Math.max(1, X(g.length)).toFixed(1)}" height="${H - padT - padB}" fill="${opts.gapShade}"/>`).join("");
+    // climbs: a warmer fill under the line, and "+N m" above the bigger ones
+    const cl = opts.climbs || [];
+    const clipId = "pc" + Math.random().toString(36).slice(2, 8);
+    const climbFill = cl.length ? `<clipPath id="${clipId}">${cl.map((c) => `<rect x="${X(c.start).toFixed(1)}" y="0" width="${Math.max(1, X(c.length)).toFixed(1)}" height="${H}"/>`).join("")}</clipPath>` +
+      `<path d="${area}" fill="${opts.climbFill || "#dcc3a3"}" clip-path="url(#${clipId})"/>` : "";
+    const climbText = cl.filter((c) => c.rise >= 6).map((c) => {
+      const x = Math.min(W - 16, Math.max(16, X(c.start + c.length / 2))), y = Math.max(9, Y(elevAt(route, c.start + c.length)) - 4);
+      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="9.5" font-weight="700" text-anchor="middle" fill="${opts.climbText || "#7a5a3a"}">+${Math.round(c.rise)} m</text>`;
+    }).join("");
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="Elevation profile">` +
-      `${gapShade}<path d="${path}" fill="${opts.fill}" stroke="${opts.stroke}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>${band}` +
-      `<text x="2" y="${padT + 9}" font-size="10" fill="${opts.text}">${Math.round(zmax)} m</text>` +
+      `${gapShade}<path d="${area}" fill="${opts.fill}"/>${climbFill}` +
+      `<path d="${line}" fill="none" stroke="${opts.stroke}" stroke-width="1.3" vector-effect="non-scaling-stroke"/>${band}${climbText}` +
+      `<text x="2" y="${padT + 1}" font-size="10" fill="${opts.text}">${Math.round(zmax)} m</text>` +
       `<text x="2" y="${H - padB - 3}" font-size="10" fill="${opts.text}">${Math.round(zmin)} m</text></svg>`;
   }
 
@@ -332,5 +416,6 @@
 
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
+    elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON,
     profileSVG, makeGeocoder, RideSim, voice, gapSentence, buildCursor, distM };
 })();

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Piste on a phone</title>
+<link rel="icon" href="favicon.ico">
+<style>
+  :root { --ink: #1c2228; --ink-2: #48525c; --ink-3: #7b858f; --blue: #0095E6; --paper: #ffffff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+    background: radial-gradient(circle at 30% 15%, #eceee9, #cdd1ca 70%); min-height: 100vh; }
+  header { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+    padding: 10px 18px; background: rgba(255, 255, 255, .88); backdrop-filter: blur(8px); box-shadow: 0 1px 0 rgba(0, 0, 0, .07); }
+  header h1 { margin: 0 6px 0 0; font-size: 16px; }
+  header label { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+  select, button, input { font: inherit; }
+  select, button { border: 1px solid #d6d9d3; background: #fff; border-radius: 8px; padding: 5px 8px; }
+  button { cursor: pointer; }
+  button:hover, select:hover { border-color: var(--blue); }
+  .stage { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 36px; padding: 20px 16px 28px; }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .col .bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: center; max-width: 470px; }
+  .col .bar a { color: var(--ink-2); font-size: 13px; }
+  .fit { position: relative; }
+  .device { position: absolute; top: 0; left: 0; transform-origin: top left; padding: 13px; background: #1c1e21;
+    border-radius: calc(var(--r) + 13px); box-shadow: 0 0 0 2px #3c3f44, 0 28px 60px rgba(20, 24, 28, .3); }
+  .screen { position: relative; width: var(--w); height: var(--h); border-radius: var(--r); overflow: hidden; background: #fff; }
+  .screen iframe { position: absolute; left: 0; width: 100%; border: 0; background: #f2f3f0; }
+  .status { position: absolute; left: 0; right: 0; top: 0; height: var(--sb); z-index: 2; pointer-events: none; background: #fff;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 30px 0 36px; font: 600 15px/1 system-ui, sans-serif; }
+  .status svg { height: 12px; }
+  .island { position: absolute; z-index: 3; top: 11px; left: 50%; transform: translateX(-50%); width: 124px; height: 36px; border-radius: 20px; background: #000; }
+  .notch { position: absolute; z-index: 3; top: 0; left: 50%; transform: translateX(-50%); width: 158px; height: 31px; border-radius: 0 0 19px 19px; background: #000; }
+  .home { position: absolute; z-index: 3; bottom: 8px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px; border-radius: 3px; background: rgba(0, 0, 0, .72); pointer-events: none; }
+  .safari { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; height: var(--tb); background: rgba(247, 247, 247, .97);
+    border-top: 1px solid #dcdcdc; display: flex; justify-content: center; padding-top: 9px; pointer-events: none; }
+  .safari span { width: 88%; height: 38px; border-radius: 12px; background: #e8e8ea; display: grid; place-items: center; color: #333; font-size: 15px; }
+  .notes { max-width: 900px; margin: 0 auto; padding: 0 18px 40px; color: var(--ink-2); }
+  .notes h2 { font-size: 15px; color: var(--ink); margin: 18px 0 6px; }
+  .notes li { margin: 3px 0; }
+  kbd { font: 12px/1 ui-monospace, monospace; background: #fff; border: 1px solid #ccd; border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Piste on a phone</h1>
+  <label>Phone <select id="device"></select></label>
+  <label>Opened as <select id="mode">
+    <option value="app">Home-screen app (full screen)</option>
+    <option value="safari">Safari tab (approximate toolbars)</option>
+  </select></label>
+  <label>Phones <select id="count"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>
+  <label>Size <select id="zoom"><option value="fit" selected>Fit the window</option><option value="1">100%</option><option value="0.8">80%</option><option value="0.65">65%</option></select></label>
+</header>
+
+<main id="stage" class="stage"></main>
+
+<section class="notes">
+  <h2>How to use it</h2>
+  <ul>
+    <li>Use the mouse as your finger: drag to pan, scroll to zoom, right-drag (or <kbd>Ctrl</kbd> + drag) to tilt and turn the map. Pinch can't be simulated with a mouse.</li>
+    <li>Each phone has its own screen picker, so you can compare a route and a ride side by side. <b>Reload</b> restarts that phone only.</li>
+    <li>Phone sizes are Apple's screen sizes in points (the units web pages use). The notch/island and home-bar areas are approximate.</li>
+    <li>This shows layout and flow. It still runs in your desktop browser's engine, so the final check is the real iPhone: open <b>raphroyjauvin.github.io/piste</b> in Safari, then Share → <b>Add to Home Screen</b> to get the full-screen app.</li>
+  </ul>
+</section>
+
+<script>
+(function () {
+  "use strict";
+  // CSS-point screen sizes; sb = status bar / top safe area, bottom = home-bar safe area (approximate)
+  const DEVICES = [
+    { id: "se", label: "iPhone SE (375 × 667)", w: 375, h: 667, sb: 20, bottom: 0, r: 8, cut: "none" },
+    { id: "13", label: "iPhone 13 / 14 (390 × 844)", w: 390, h: 844, sb: 47, bottom: 34, r: 46, cut: "notch" },
+    { id: "15", label: "iPhone 15 / 16 (393 × 852)", w: 393, h: 852, sb: 59, bottom: 34, r: 54, cut: "island" },
+    { id: "17", label: "iPhone 17 / 16 Pro / 17 Pro (402 × 874)", w: 402, h: 874, sb: 62, bottom: 34, r: 58, cut: "island" },
+    { id: "max", label: "iPhone 16 / 17 Pro Max (440 × 956)", w: 440, h: 956, sb: 62, bottom: 34, r: 60, cut: "island" },
+  ];
+  const SCREENS = [
+    { label: "Route: Rachel (has a climb)", q: "trip=rachel" },
+    { label: "Ride 3D: hill ahead on Rachel", q: "trip=rachel&ride=bird&at=600" },
+    { label: "Ride top-down: Assomption → Biodôme", q: "trip=biodome&ride=top" },
+    { label: "Route: Mont-Royal → Papineau", q: "trip=montroyal" },
+    { label: "3D view: Plateau", q: "trip=montroyal&view=3d" },
+    { label: "Explore the map", q: "trip=none" },
+  ];
+  const DEFAULT_SCREENS = [0, 1, 2];
+  const TOOLBAR = 92;   // Safari's bottom bar, roughly (it changes with iOS version and scrolling)
+  const $ = (s) => document.querySelector(s);
+  const store = { get(k, d) { try { return localStorage.getItem("piste-phone-" + k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem("piste-phone-" + k, v); } catch (e) { /* private mode */ } } };
+
+  $("#device").innerHTML = DEVICES.map((d) => `<option value="${d.id}">${d.label}</option>`).join("");
+  $("#device").value = store.get("device", "17");
+  $("#mode").value = store.get("mode", "app");
+  $("#count").value = store.get("count", "2");
+  $("#zoom").value = store.get("zoom", "fit");
+  const picks = JSON.parse(store.get("screens", JSON.stringify(DEFAULT_SCREENS)));
+
+  const now = () => { const d = new Date(); return `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const icons = '<svg viewBox="0 0 66 12" aria-hidden="true"><g fill="#111"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="4.5" y="6" width="3" height="6" rx="1"/><rect x="9" y="3.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="1" width="3" height="11" rx="1"/>' +
+    '<path d="M29 3.2a10 10 0 0 1 13 0l-1.6 1.7a7.6 7.6 0 0 0-9.8 0zM31.6 6a6.2 6.2 0 0 1 7.8 0l-1.6 1.7a3.8 3.8 0 0 0-4.6 0zM35.5 11.5l-2.1-2.2a3 3 0 0 1 4.2 0z"/>' +
+    '<rect x="47" y="1" width="16" height="10" rx="3" fill="none" stroke="#111" stroke-opacity=".45"/><rect x="48.6" y="2.6" width="12" height="6.8" rx="1.8"/><rect x="64" y="4" width="1.6" height="4" rx=".8" fill-opacity=".45"/></g></svg>';
+
+  function build() {
+    const dev = DEVICES.find((d) => d.id === $("#device").value) || DEVICES[3];
+    const mode = $("#mode").value, count = +$("#count").value;
+    const stage = $("#stage"); stage.innerHTML = "";
+    const avail = innerHeight - $("header").offsetHeight - 90;
+    const full = { w: dev.w + 26, h: dev.h + 26 };
+    const z = $("#zoom").value === "fit" ? Math.min(1, avail / full.h, (innerWidth - 40 * count) / (count * full.w)) : +$("#zoom").value;
+    for (let i = 0; i < count; i++) {
+      const col = document.createElement("div"); col.className = "col";
+      const pick = picks[i] ?? DEFAULT_SCREENS[i] ?? 0;
+      col.innerHTML = `<div class="bar"><select aria-label="Screen for phone ${i + 1}">${SCREENS.map((s, j) => `<option value="${j}" ${j === pick ? "selected" : ""}>${s.label}</option>`).join("")}</select>
+        <button type="button">Reload</button><a target="_blank" rel="noopener">open</a></div>
+        <div class="fit" style="width:${full.w * z}px;height:${full.h * z}px"><div class="device" style="--w:${dev.w}px;--h:${dev.h}px;--r:${dev.r}px;--sb:${dev.sb}px;--tb:${TOOLBAR}px;transform:scale(${z})">
+          <div class="screen"><iframe title="Piste on ${dev.label}, phone ${i + 1}"></iframe>
+            <div class="status"><span>${now()}</span>${icons}</div>
+            ${dev.cut === "island" ? '<div class="island"></div>' : dev.cut === "notch" ? '<div class="notch"></div>' : ""}
+            ${mode === "safari" ? '<div class="safari"><span>raphroyjauvin.github.io</span></div>' : dev.bottom ? '<div class="home"></div>' : ""}
+          </div></div></div>`;
+      stage.appendChild(col);
+      const frame = col.querySelector("iframe"), sel = col.querySelector("select"), open = col.querySelector("a");
+      // home-screen app: the page starts under the status bar and runs to the bottom edge (home bar overlaps it);
+      // Safari tab: the page sits between the status bar and Safari's toolbar.
+      const top = dev.sb, height = mode === "safari" ? dev.h - dev.sb - TOOLBAR : dev.h - dev.sb;
+      frame.style.top = top + "px"; frame.style.height = height + "px";
+      const load = () => {
+        const s = SCREENS[+sel.value];
+        const url = `a-positron/index.html?${s.q}&safe=0,${mode === "safari" ? 0 : dev.bottom}`;
+        frame.src = url; open.href = url;
+        picks[i] = +sel.value; store.set("screens", JSON.stringify(picks));
+      };
+      sel.onchange = load; col.querySelector("button").onclick = load; load();
+    }
+  }
+  for (const id of ["device", "mode", "count", "zoom"]) $("#" + id).addEventListener("change", (e) => { store.set(id, e.target.value); build(); });
+  let t = null; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => { if ($("#zoom").value === "fit") build(); }, 250); });
+  build();
+})();
+</script>
+</body>
+</html>

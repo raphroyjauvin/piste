@@ -3,7 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Piste A · Positron</title>
+<title>Piste</title>
+<meta name="theme-color" content="#ffffff">
+<!-- installable: on iPhone, Safari > Share > Add to Home Screen opens it full screen like an app -->
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+<link rel="icon" href="../favicon.ico">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Piste">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=Overpass:wght@600;800&display=swap" rel="stylesheet">
@@ -16,7 +25,7 @@
 <aside id="panel" class="panel">
   <header class="brand">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#0095E6"/><path d="M9 21.5 13.2 11h5.6L23 21.5M13.2 11l3 10.5" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div><h1>Piste</h1><p>Prototype A · Positron light</p></div>
+    <div><h1>Piste</h1><p>Montréal by bike lane · prototype</p></div>
   </header>
 
   <section class="search" aria-label="Plan a ride">
@@ -51,7 +60,7 @@
 </aside>
 
 <div class="map-controls">
-  <button id="view-btn" class="view-btn" title="Switch between top-down and bird's-eye" aria-label="Switch view">
+  <button id="view-btn" class="view-btn" title="Switch to bird's-eye 3D" aria-label="Switch view">
     <svg viewBox="0 0 32 32" aria-hidden="true"><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g></svg>
     <span id="view-label">3D</span>
   </button>
@@ -64,10 +73,13 @@
     <label><input type="checkbox" data-layer="pois-food" checked> Cafés &amp; food</label>
     <label><input type="checkbox" data-layer="pois-bike" checked> BIXI, water, repair, parking</label>
     <label><input type="checkbox" data-layer="pois-out" checked> Parks, culture, metro</label>
-    <label><input type="checkbox" data-layer="relief" checked> Relief (LiDAR 2023)</label>
-    <label><input type="checkbox" data-layer="contours" checked> Contours, 5 m</label>
+    <h3>Elevation</h3>
+    <label><input type="checkbox" data-layer="tint" checked> Elevation colours</label>
+    <label><input type="checkbox" data-layer="relief" checked> Hill shading <em>LiDAR 2023</em></label>
+    <label><input type="checkbox" data-layer="contours" checked> Contours, every 5 m</label>
+    <label><input type="checkbox" data-layer="terrain" checked> Terrain relief <em>in 3D</em></label>
+    <h3>Other</h3>
     <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
-    <label><input type="checkbox" data-layer="terrain"> Terrain in 3D (×1.6)</label>
     <label id="engines-row" hidden><input type="checkbox" data-layer="engines"> Compare other routing engines</label>
   </div>
 </div>
@@ -77,9 +89,14 @@
     <summary>Legend</summary>
     <div class="lg-group"><b>Your route</b>
       <span><i class="sw sw-a"></i>Protected</span><span><i class="sw sw-b"></i>Painted lane</span><span><i class="sw sw-c"></i>Shared lane</span><span><i class="sw sw-gap"></i>No bike lane</span>
+      <span><i class="sw-chev" aria-hidden="true">›››</i>Climb (more chevrons = steeper)</span>
     </div>
     <div class="lg-group"><b>Bike network</b>
       <span><i class="sw sw-rev"></i>REV</span><span><i class="sw sw-net"></i>Bike lanes &amp; paths</span><span><i class="sw sw-plan"></i>Planned (browse only)</span>
+    </div>
+    <div class="lg-group"><b>Elevation above sea level</b>
+      <div class="elev-legend"><i id="elev-ramp" class="elev-ramp"></i><div id="elev-ticks" class="elev-ticks"></div></div>
+      <span><i class="sw sw-contour"></i>Contour every 5 m, bold every 25 m</span>
     </div>
   </details>
 </div>
@@ -87,7 +104,10 @@
 <div id="ride-hud" class="ride-hud" hidden>
   <div class="turn-card"><div id="turn-icon" class="turn-icon" aria-hidden="true"></div><div><b id="turn-dist">—</b><span id="turn-text">Starting…</span></div></div>
   <div id="gap-card" class="gap-card" hidden></div>
-  <div id="hill-chip" class="hill-chip" hidden></div>
+  <div id="hill-card" class="hill-card" hidden aria-live="polite">
+    <div id="hill-spark" class="hill-spark" aria-hidden="true"></div>
+    <div class="hill-text"><b id="hill-title"></b><span id="hill-sub"></span></div>
+  </div>
   <div class="ride-bar">
     <div class="progress"><i id="progress"></i></div>
     <span id="ride-remaining">—</span>
@@ -127,9 +147,10 @@
 <script src="../shared/data/network.js"></script>
 <script src="../shared/data/planned.js"></script>
 <script src="../shared/data/pois.js"></script>
-<script src="../shared/data/metro.js"></script>
 <script src="../shared/data/contours.js"></script>
 <script src="../shared/data/hillshade.js"></script>
+<script src="../shared/data/elevation_tint.js"></script>
+<script src="../shared/data/terrain_index.js"></script>
 <script src="../shared/data/buildings_packed.js"></script>
 <script src="../shared/data/trips.js"></script>
 <script src="../shared/data/engine_routes.js"></script>

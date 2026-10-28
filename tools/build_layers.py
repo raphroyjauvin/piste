@@ -498,9 +498,10 @@ def layer_hillshade(res=5.0, zf=2.8, sigma_m=8.0):
 
 
 # Hypsometric tint: elevation (m) -> (r, g, b, alpha 0-255). Low ground clear, hills warm.
-TINT_RAMP = [(10, (233, 240, 236, 0)), (20, (238, 236, 220, 55)), (35, (236, 226, 196, 92)), (50, (231, 213, 175, 118)),
-             (65, (226, 201, 158, 138)), (85, (219, 186, 140, 155)), (110, (209, 170, 124, 170)),
-             (150, (194, 151, 108, 185)), (200, (176, 131, 95, 200))]
+# soft sand-to-tan ramp (2026-10-28: softened after the first look; it now sits above parks, so it must stay light)
+TINT_RAMP = [(10, (240, 240, 232, 0)), (20, (240, 236, 222, 46)), (35, (238, 229, 206, 76)), (50, (235, 221, 192, 97)),
+             (65, (231, 212, 180, 115)), (85, (226, 202, 167, 132)), (110, (219, 190, 153, 148)),
+             (150, (209, 176, 139, 161)), (200, (196, 160, 124, 174))]
 
 
 def layer_tint(res=10.0, sigma_m=20.0):
@@ -599,7 +600,9 @@ LAYERS = {"network": layer_network, "planned": layer_planned, "pois": layer_pois
 
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
-    for name in (sys.argv[1:] or LAYERS):
+    # landcover and demgrid fed the retired three.js prototype (C); build them only when named
+    OPTIONAL = {"landcover", "demgrid"}
+    for name in (sys.argv[1:] or [k for k in LAYERS if k not in OPTIONAL]):
         print(f"== {name}")
         sys.stdout.flush()
         LAYERS[name]()

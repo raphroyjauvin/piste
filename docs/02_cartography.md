@@ -1,5 +1,15 @@
 # Cartography principles (2026-10-25)
 
+## Update 2026-10-28: elevation, and one prototype (A)
+- **Raph's direction:** keep A only. In 2D, elevation must be very clear; in 3D, you should feel a hill coming up while riding (the one idea kept from C).
+- **2D elevation, three layers working together:**
+  - *Colour:* a soft hypsometric tint, sand to tan, from 10 m (transparent) to 200 m. It covers land and parks but not water, so Mont Royal reads as one hill whether park or cemetery. It fades from full at zoom 13 to 45% at zoom 17, where the street map must stay clean. A first, browner ramp was too heavy and stopped at park edges; the ramp was softened the same day.
+  - *Shading:* multidirectional LiDAR hillshade (5 m, ×2.8), dark shadows and light highlights, under the streets.
+  - *Contours:* every 5 m, bold every 25 m with labels; a warm brown (`#9a7c52`) that doesn't fight the green bike network.
+- **Climbs on the route:** Michelin-style uphill chevrons, pointing uphill, 1–3 by steepness, dark brown with a white edge so they read on blue, light blue and orange. The profile shades climbs in the same tan.
+- **3D:** LiDAR terrain (×1.6). While riding, the terrain swells (up to about ×3.4) as a climb approaches; the camera sits low and behind the rider (pitch 70°).
+- **Icons that echo real signs, drawn from scratch:** metro = white down-arrow on a blue disc (the métro entrance sign idea, STM 1963), ringed by line colours; BIXI = BIXI red (`#EE3124`) tag with a plain bike. No logo artwork is copied; check STM and BIXI terms before a public launch.
+
 ## Update 2026-10-25, afternoon: Raph's direction, as built in the prototypes
 - **Theme colours:** the official STM metro colours from GTFS: green `#00B300`, orange `#D95700`, yellow `#FFD900`, blue `#0095E6`.
   - A and C: the route is blue, the bike network green, and gaps a **soft** orange (`#ef8f45`, dashed on quiet streets).
