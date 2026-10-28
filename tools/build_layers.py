@@ -451,7 +451,7 @@ def gaussian_smooth(z, sigma_cells):
     return zp[r:-r, r:-r]
 
 
-def layer_hillshade(res=5.0, zf=1.8, sigma_m=12.0):
+def layer_hillshade(res=5.0, zf=2.8, sigma_m=8.0):
     """Soft relief overlay from the LiDAR terrain: transparent PNG (shadows + light highlights) in Web Mercator."""
     from PIL import Image
     env = dict(os.environ, PROJ_DATA=str(QGIS_BIN.parent / "share" / "proj"),
@@ -477,10 +477,10 @@ def layer_hillshade(res=5.0, zf=1.8, sigma_m=12.0):
         a = math.radians(az)
         hs += wgt * (math.cos(zen) * np.cos(slope) + math.sin(zen) * np.sin(slope) * np.cos(a - aspect))
     flat = math.cos(zen)
-    shadow = np.clip((flat - hs) / flat - 0.01, 0, 1) ** 0.8
-    light = np.clip((hs - flat) / (1 - flat) - 0.01, 0, 1)
-    lum = np.where(shadow > 0, 40, 255).astype(np.uint8)
-    alpha = np.where(shadow > 0, shadow * 230, light * 140)
+    shadow = np.clip((flat - hs) / flat - 0.008, 0, 1) ** 0.7
+    light = np.clip((hs - flat) / (1 - flat) - 0.008, 0, 1) ** 0.85
+    lum = np.where(shadow > 0, 38, 255).astype(np.uint8)
+    alpha = np.where(shadow > 0, np.minimum(1, shadow * 1.25) * 245, light * 175)
     alpha = np.where(valid, np.clip(alpha, 0, 255), 0).astype(np.uint8)
     img = Image.fromarray(np.dstack([lum, alpha]), "LA")
     img.save(OUT / "hillshade.png", optimize=True)
@@ -497,13 +497,105 @@ def layer_hillshade(res=5.0, zf=1.8, sigma_m=12.0):
     print(f"  hillshade.png {(OUT / 'hillshade.png').stat().st_size / 1e6:.2f} MB, {z.shape[1]}x{z.shape[0]} px")
 
 
+# Hypsometric tint: elevation (m) -> (r, g, b, alpha 0-255). Low ground clear, hills warm.
+TINT_RAMP = [(10, (233, 240, 236, 0)), (20, (238, 236, 220, 55)), (35, (236, 226, 196, 92)), (50, (231, 213, 175, 118)),
+             (65, (226, 201, 158, 138)), (85, (219, 186, 140, 155)), (110, (209, 170, 124, 170)),
+             (150, (194, 151, 108, 185)), (200, (176, 131, 95, 200))]
+
+
+def layer_tint(res=10.0, sigma_m=20.0):
+    """Elevation colour tint (transparent PNG, Web Mercator) + the ramp for the legend."""
+    from PIL import Image
+    env = dict(os.environ, PROJ_DATA=str(QGIS_BIN.parent / "share" / "proj"),
+               PATH=str(QGIS_BIN) + os.pathsep + os.environ["PATH"])
+    merc = BUILD / "dtm_3857_10m.tif"
+    subprocess.run([str(QGIS_BIN / "gdalwarp.exe"), "-overwrite", "-t_srs", "EPSG:3857", "-tr", str(res), str(res),
+                    "-r", "average", str(BUILD / "dtm_5m.tif"), str(merc)], check=True, env=env, stdout=subprocess.DEVNULL)
+    ds = rasterio.open(merc)
+    z = ds.read(1, masked=True).filled(np.nan).astype("float64")
+    valid = np.isfinite(z)
+    z = gaussian_smooth(np.where(valid, z, np.nanmedian(z)), sigma_m / (res * math.cos(math.radians((BBOX[1] + BBOX[3]) / 2))))
+    zs = [s[0] for s in TINT_RAMP]
+    rgba = np.zeros(z.shape + (4,), dtype=np.uint8)
+    for ch in range(4):
+        rgba[..., ch] = np.interp(z, zs, [s[1][ch] for s in TINT_RAMP]).astype(np.uint8)
+    rgba[..., 3] = np.where(valid, rgba[..., 3], 0)
+    Image.fromarray(rgba, "RGBA").save(OUT / "elevation_tint.png", optimize=True)
+    b = ds.bounds
+    to_ll = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    (w, n_), (e, s_) = to_ll.transform(b.left, b.top), to_ll.transform(b.right, b.bottom)
+    write_js("elevation_tint.js", "ELEVATION_TINT", {
+        "url": "elevation_tint.png", "coordinates": [[round(w, 7), round(n_, 7)], [round(e, 7), round(n_, 7)], [round(e, 7), round(s_, 7)], [round(w, 7), round(s_, 7)]],
+        "ramp": [[s[0], "rgba(%d,%d,%d,%.2f)" % (s[1][0], s[1][1], s[1][2], s[1][3] / 255)] for s in TINT_RAMP],
+        "meta": "Hypsometric tint from NRCan HRDEM CMM 2023 DTM, 10 m, smoothed 20 m"})
+    print(f"  elevation_tint.png {(OUT / 'elevation_tint.png').stat().st_size / 1e6:.2f} MB")
+
+
+def layer_terrain(zmin=10, zmax=14, margin=0.012):
+    """Terrain tiles (Terrarium PNG encoding) from the LiDAR DTM; pixels outside the LiDAR cut come from the
+    public AWS terrain tiles so there is no cliff at the edge. Writes shared/terrain/{z}/{x}/{y}.png + an index."""
+    from PIL import Image
+    import io
+    import urllib.request
+    ds = rasterio.open(BUILD / "dtm_5m.tif")
+    arr = ds.read(1, masked=True).filled(np.nan).astype("float64")
+    arr = gaussian_smooth(np.where(np.isfinite(arr), arr, np.nan_to_num(arr, nan=float(np.nanmedian(arr)))), 1.2)
+    arr[~np.isfinite(ds.read(1, masked=True).filled(np.nan))] = np.nan
+    inv = ~ds.transform
+    H, W = arr.shape
+
+    def sample(xs, ys):
+        cols, rows = inv * (xs, ys)
+        c0 = np.floor(cols - 0.5).astype(int); r0 = np.floor(rows - 0.5).astype(int)
+        fc = cols - 0.5 - c0; fr = rows - 0.5 - r0
+        ok = (c0 >= 0) & (r0 >= 0) & (c0 + 1 < W) & (r0 + 1 < H)
+        c0c = np.clip(c0, 0, W - 2); r0c = np.clip(r0, 0, H - 2)
+        v = (arr[r0c, c0c] * (1 - fc) * (1 - fr) + arr[r0c, c0c + 1] * fc * (1 - fr) +
+             arr[r0c + 1, c0c] * (1 - fc) * fr + arr[r0c + 1, c0c + 1] * fc * fr)
+        return np.where(ok, v, np.nan)
+
+    def aws(z, x, y):
+        url = f"https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "bikeapp-prototype/0.1"}), timeout=60) as r:
+            im = np.asarray(Image.open(io.BytesIO(r.read())).convert("RGB")).astype("float64")
+        return im[..., 0] * 256 + im[..., 1] + im[..., 2] / 256 - 32768
+
+    w, s, e, n = BBOX
+    outdir = OUT.parent / "terrain"
+    tiles = []
+    for z in range(zmin, zmax + 1):
+        N = 2 ** z
+        def tx(lon): return int((lon + 180) / 360 * N)
+        def ty(lat): return int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * N)
+        for x in range(tx(w - margin), tx(e + margin) + 1):
+            for y in range(ty(n + margin), ty(s - margin) + 1):
+                px = (np.arange(256) + 0.5) / 256
+                lon = (x + px) / N * 360 - 180
+                lat = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y + px) / N))))
+                LON, LAT = np.meshgrid(lon, lat)
+                X, Y = TO_M.transform(LON.ravel(), LAT.ravel())
+                elev = sample(np.asarray(X), np.asarray(Y)).reshape(256, 256)
+                if np.isnan(elev).any():
+                    elev = np.where(np.isnan(elev), aws(z, x, y), elev)
+                elev = np.round(elev, 1)
+                v = elev + 32768
+                rgb = np.dstack([np.floor(v / 256), np.floor(v) % 256, np.floor((v - np.floor(v)) * 256)]).astype(np.uint8)
+                p = outdir / str(z) / str(x); p.mkdir(parents=True, exist_ok=True)
+                Image.fromarray(rgb, "RGB").save(p / f"{y}.png", optimize=True)
+                tiles.append(f"{z}/{x}/{y}")
+    total = sum(f.stat().st_size for f in outdir.rglob("*.png"))
+    write_js("terrain_index.js", "TERRAIN_TILES", {"minzoom": zmin, "maxzoom": zmax, "tiles": tiles,
+                                                  "meta": "Terrarium-encoded NRCan HRDEM CMM 2023 DTM; AWS terrain tiles outside the LiDAR cut"})
+    print(f"  terrain tiles: {len(tiles)}, {total / 1e6:.1f} MB")
+
+
 def layer_trips():
     write_js("trips.js", "TRIPS", json.loads((ROOT / "prototypes" / "shared" / "trips.json").read_text(encoding="utf-8")))
 
 
 LAYERS = {"network": layer_network, "planned": layer_planned, "pois": layer_pois, "metro": layer_metro,
           "buildings": layer_buildings, "contours": layer_contours, "landcover": layer_landcover, "trips": layer_trips,
-          "demgrid": layer_demgrid, "hillshade": layer_hillshade}
+          "demgrid": layer_demgrid, "hillshade": layer_hillshade, "tint": layer_tint, "terrain": layer_terrain}
 
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
