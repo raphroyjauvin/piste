@@ -22,7 +22,7 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/` (A = desktop, P = phone).
   - Both use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden.
   - `prototypes/phone.html` shows the app in iPhone-sized screens; the real iPhone (GitHub Pages) is the final check.
-- **Publish:** `git push` to `main`; `.github/workflows/pages.yml` deploys `prototypes/` to https://raphroyjauvin.github.io/piste/. Git lives in `C:\Program Files\Git\cmd` (prefix PATH in each shell). The repo is public: never commit `docs/mapideas/`, raw data, credentials, or anything about Raph's work.
+- **Publish:** `git push` to `main`; `.github/workflows/pages.yml` deploys `prototypes/` to https://www.raphroyjauvin.ca/piste/ (raphroyjauvin.github.io/piste forwards there). `PISTE_BASE=https://www.raphroyjauvin.ca/piste/` runs the tests against the live site. Git lives in `C:\Program Files\Git\cmd` (prefix PATH in each shell). The repo is public: never commit `docs/mapideas/`, raw data, credentials, or anything about Raph's work.
 
 ## Rules
 - `data\raw\` holds downloads exactly as published. Never edit or delete them. Use one folder per dataset and log every download.

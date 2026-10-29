@@ -1,7 +1,8 @@
 // Functional smoke tests for the app, in headless Edge. Usage: node C:\bikeapp\tools\shots\test.mjs
+// Test the live site instead: set PISTE_BASE=https://www.raphroyjauvin.ca/piste/ first.
 import { chromium } from "playwright-core";
 
-const BASE = "http://localhost:8765/";
+const BASE = process.env.PISTE_BASE || "http://localhost:8765/";
 const APP = "a-positron/index.html";
 const browser = await chromium.launch({ channel: "msedge", headless: true, args: ["--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"] });
 const results = [];

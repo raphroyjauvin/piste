@@ -1,4 +1,5 @@
-# Publishes the prototypes/ folder to GitHub Pages on every push to main.
+# Publishes the prototypes/ folder to GitHub Pages on every push to main: https://www.raphroyjauvin.ca/piste/
+# (the account's Pages use Raph's own domain; raphroyjauvin.github.io/piste forwards there).
 # One-time setup on github.com: Settings > Pages > Build and deployment > Source: "GitHub Actions".
 name: Deploy to GitHub Pages
 

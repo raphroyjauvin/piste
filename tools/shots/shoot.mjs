@@ -4,8 +4,9 @@ import { chromium } from "playwright-core";
 import fs from "node:fs";
 import path from "node:path";
 
-const BASE = "http://localhost:8765/";
-const OUT = "C:\\bikeapp\\prototypes\\screens";
+// PISTE_BASE points at another copy (e.g. the live site); PISTE_SHOTS writes the images somewhere else
+const BASE = process.env.PISTE_BASE || "http://localhost:8765/";
+const OUT = process.env.PISTE_SHOTS || "C:\\bikeapp\\prototypes\\screens";
 fs.mkdirSync(OUT, { recursive: true });
 
 const desktop = { w: 1440, h: 900, scale: 1 };

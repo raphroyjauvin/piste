@@ -11,7 +11,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 - It shows places cyclists care about: BIXI, metro, cafés, food, water, repair, parks.
 
 ## Try it
-- **On your phone:** https://raphroyjauvin.github.io/piste/ (in Safari, Share → Add to Home Screen opens it full screen).
+- **On your phone:** https://www.raphroyjauvin.ca/piste/ (in Safari, Share → Add to Home Screen opens it full screen). GitHub Pages serves it on Raph's own domain; raphroyjauvin.github.io/piste forwards there.
 - **On this PC:** double-click `prototypes\start-prototypes.bat`, then open http://localhost:8765/.
 - **Phone screens on the monitor:** http://localhost:8765/phone.html shows the app inside iPhone-sized screens, side by side.
 - `docs/06_prototypes.md` lists what's in the app and its URL options.
@@ -33,7 +33,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 - 2026-10-28 (Raph): elevation must be very clear in 2D. Built: soft elevation colours, stronger LiDAR shading, 5 m contours (labelled every 25 m), uphill chevrons on climbs.
 - 2026-10-28 (Raph): the 3D ride camera sits lower, more behind the rider (not fully behind). Built: pitch 70°, rider at 70% of the screen height.
 - 2026-10-28 (Raph): metro and BIXI icons should look like their real signs, without copyright problems. Built from scratch: white down-arrow on a blue disc for the metro; a BIXI-red tag with a plain bike.
-- 2026-10-28 (Raph): public GitHub repo `raphroyjauvin/piste`, published with GitHub Pages.
+- 2026-10-28 (Raph): public GitHub repo `raphroyjauvin/piste`, published with GitHub Pages. Pages switched on the same day; the site is https://www.raphroyjauvin.ca/piste/ and the tests pass against it.
 - 2026-10-28 (Raph): **suggest a ride**: a start point, loop or one-way, an optional stop by category (coffee, food, shopping, any map category) and a distance; the app suggests three routes. Built the same day as a second tab; see `docs/06_prototypes.md`.
 - 2026-10-28 (Raph), to discuss: an AI agent that understands ride requests in plain language; simple graphics on the 3D massing by business type (cafés, shops…).
 - 2026-10-28 (Claude): phone preview page (`prototypes/phone.html`) for designing the phone layout on the monitor; the real iPhone (via Pages) stays the final check.

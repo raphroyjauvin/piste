@@ -62,7 +62,7 @@
     <li>Use the mouse as your finger: drag to pan, scroll to zoom, right-drag (or <kbd>Ctrl</kbd> + drag) to tilt and turn the map. Pinch can't be simulated with a mouse.</li>
     <li>Each phone has its own screen picker, so you can compare a route and a ride side by side. <b>Reload</b> restarts that phone only.</li>
     <li>Phone sizes are Apple's screen sizes in points (the units web pages use). The notch/island and home-bar areas are approximate.</li>
-    <li>This shows layout and flow. It still runs in your desktop browser's engine, so the final check is the real iPhone: open <b>raphroyjauvin.github.io/piste</b> in Safari, then Share → <b>Add to Home Screen</b> to get the full-screen app.</li>
+    <li>This shows layout and flow. It still runs in your desktop browser's engine, so the final check is the real iPhone: open <b>www.raphroyjauvin.ca/piste</b> in Safari, then Share → <b>Add to Home Screen</b> to get the full-screen app.</li>
   </ul>
 </section>
 
@@ -120,7 +120,7 @@
           <div class="screen"><iframe title="Piste on ${dev.label}, phone ${i + 1}"></iframe>
             <div class="status"><span>${now()}</span>${icons}</div>
             ${dev.cut === "island" ? '<div class="island"></div>' : dev.cut === "notch" ? '<div class="notch"></div>' : ""}
-            ${mode === "safari" ? '<div class="safari"><span>raphroyjauvin.github.io</span></div>' : dev.bottom ? '<div class="home"></div>' : ""}
+            ${mode === "safari" ? '<div class="safari"><span>raphroyjauvin.ca</span></div>' : dev.bottom ? '<div class="home"></div>' : ""}
           </div></div></div>`;
       stage.appendChild(col);
       const frame = col.querySelector("iframe"), sel = col.querySelector("select"), open = col.querySelector("a");
