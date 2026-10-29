@@ -21,6 +21,8 @@ const SHOTS = [
   { name: "A6-ride-climbing", url: `${APP}?trip=rachel&ride=bird&at=1500&paused`, ...desktop, steps: [["wait", 4000]] },
   { name: "A7-ride-topdown", url: `${APP}?trip=biodome&ride=top&at=600&paused`, ...desktop, steps: [["wait", 3000]] },
   { name: "A8-explore-planned", url: `${APP}?trip=none`, ...desktop, steps: [["eval", "document.querySelector('[data-layer=planned]').click(); window.__app.map.jumpTo({center:[-73.585,45.537],zoom:13.3})"], ["wait", 2500]] },
+  { name: "A9-suggest-loop", url: `${APP}?trip=montroyal&suggest=loop&km=10&stop=cafe`, ...desktop, steps: [["wait", 1500]] },
+  { name: "P3-phone-suggest", url: `${APP}?trip=montroyal&suggest=loop&km=10&safe=62,34`, ...phone, steps: [["wait", 1500]] },
   { name: "P1-phone-route", url: `${APP}?trip=rachel&safe=62,34`, ...phone, steps: [["wait", 1500]] },
   { name: "P2-phone-ride", url: `${APP}?trip=rachel&ride=bird&at=650&paused&safe=62,34`, ...phone, steps: [["wait", 4000]] },
 ];

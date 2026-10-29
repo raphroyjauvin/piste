@@ -9,6 +9,7 @@ The app lives in `prototypes/a-positron/`. It uses the shared data (`prototypes/
 - `?from=lon,lat&to=lon,lat`: open on any trip.
 - `?view=3d`: start in bird's-eye 3D.
 - `?ride=bird|top`: start the simulated ride; add `&at=<metres>` to jump along it and `&paused` to hold still (used for screenshots and tests).
+- `?suggest=loop|oneway&km=10&stop=cafe`: open "Suggest a ride" (stops: cafe, food, bakery, icecream, bar, market, shop, park, viewpoint, culture, bikeshop).
 - `?safe=top,bottom`: simulated phone safe areas in px (the phone preview sets this, since desktop browsers report 0).
 
 ## What's in it
@@ -22,6 +23,13 @@ The app lives in `prototypes/a-positron/`. It uses the shared data (`prototypes/
 - **Route:** STM blue by tier (solid protected, light painted, dashed shared). Soft orange where there's no bike lane, with an "N m no bike lane" pill. The bike network is green.
 - **Climbs:** stretches rising ≥ 2.5 % for ≥ 80 m and ≥ 3 m; runs split by a short flat breather count as one hill. Shown as uphill chevrons on the route (Michelin style: 1, 2 or 3 chevrons by steepness), shaded on the profile with "+N m", and summarised under it ("Steepest: 5% on Rue Rachel Est").
 - **Planning:** three options (your route / most bike lanes / most direct) with time, distance, climb and a composition bar. The direct ↔ bike-lanes slider re-routes live, and so does dragging the pins. Gap list (click to zoom) and turn-by-turn.
+- **Suggest a ride (2026-10-28, `shared/suggest.js`):** a second tab next to "Go somewhere". You set a start, loop or one-way, a distance (2–20 km) and an optional stop kind; you get three rides.
+  - Loops with no stop: a circle through the start, tried in 8 directions and resized until its length fits (about 35 ms for all of them).
+  - With a stop: places of that kind at about the right distance, spread around the compass; a loop goes out to the stop and comes back another way (streets already ridden cost 4× on the way back).
+  - One-way with no stop: ends at a metro station (easy way home), a park or a viewpoint.
+  - Ranked by share on bike infrastructure, closeness to the asked distance and how little it retraces; the three kept share less than 45% of their streets. They use the same route-style slider and hill setting as normal routes.
+  - The stop is a ring on the map with "Stop · name", an instruction while riding ("Stop: Café …"), and "stop after 4.5 km" on the card.
+  - Shops (999 named shops from OSM: clothes, books, gifts, sports…) were added for the "Shopping" stop; they show on the map from zoom 17.
 - **3D:** one-button toggle (square ↔ cube; the label names the view you switch to). Bird's-eye uses a narrow 22° lens, which looks almost axonometric.
 - **Before riding:** a sheet with alert options (soft chime, voice prompts, voice commands where supported, watch taps marked iPhone-app only) and a reminder of the Québec rules.
 - **Ride (simulated):**

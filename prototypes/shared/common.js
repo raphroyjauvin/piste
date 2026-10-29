@@ -28,6 +28,7 @@
     columns: '<path d="M4.5 9.2h15L12 4.5zM6.8 10.6v7M10.3 10.6v7M13.7 10.6v7M17.2 10.6v7M4.5 19.5h15"/>',
     basket: '<path d="M5 10.5h14l-2 8.5H7zM9 10.5l3-5 3 5"/>',
     works: '<path d="M10 4.5h4l4 13.5H6zM8.2 11.2h7.6M5 19.8h14"/>',
+    bag: '<path d="M5.5 8.5h13l-1.2 11.5H6.7zM9 10.5V7.3a3 3 0 0 1 6 0v3.2"/>',
   };
   const POI_KINDS = {
     bixi: { label: "BIXI station", color: "#EE3124", glyph: "bike", minzoom: 15.6, group: "bike" },
@@ -38,6 +39,7 @@
     icecream: { label: "Ice cream", color: "#D9677B", glyph: "cone", minzoom: 16.2, group: "food" },
     bar: { label: "Bar", color: "#7A3420", glyph: "glass", minzoom: 17, group: "food" },
     market: { label: "Market", color: "#B5651D", glyph: "basket", minzoom: 15.5, group: "food" },
+    shop: { label: "Shop", color: "#9C4F86", glyph: "bag", minzoom: 17, group: "shopping" },
     water: { label: "Drinking water", color: "#0094B8", glyph: "drop", minzoom: 16.2, group: "bike" },
     repair: { label: "Bike repair stand", color: "#006FB0", glyph: "wrench", minzoom: 15, group: "bike" },
     bikeshop: { label: "Bike shop", color: STM.blue, glyph: "bike", minzoom: 15, group: "bike" },

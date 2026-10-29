@@ -221,10 +221,12 @@
       const tl = tc[0].lon, tla = tc[0].lat;
       const wmin = Math.min(...w);
       const h = (i) => Math.max(0, distM(this.lon[i], this.lat[i], tl, tla) - 45) * wmin;
+      // opts.penalty: optional per-edge cost multipliers (>= 1), e.g. so a loop's way back avoids the way out
+      const pen = opts.penalty || null;
       const cost = (e, fwd, part) => {
         const L = this.elen[e] * part;
         const climb = (fwd ? this.ecf[e] : this.ecb[e]) * part;
-        return L * w[this.etier[e]] + climb * hill;
+        return L * w[this.etier[e]] * (pen ? pen[e] : 1) + climb * hill;
       };
       const usable = (c) => this.edir[c.e] !== 3 && this.etier[c.e] !== 5;
       // virtual arcs from the start point to both ends of every candidate edge (respecting one-ways)
@@ -383,6 +385,47 @@
         }
         const n = lc.length; lastBearing = bearing(lc[n - 2][0], lc[n - 2][1], lc[n - 1][0], lc[n - 1][1]);
       }
+      return out;
+    }
+
+    // Chain routes end to end (a ride through stops or waypoints) into one route object. stopLabels[i], when given,
+    // names the stop between parts i and i+1 and becomes a "Stop: …" instruction; waypoints have no label.
+    // Turn instructions are rebuilt across the joins.
+    join(parts, stopLabels = []) {
+      const out = { legs: [], coords: [], pieces: [], gaps: [], profile: [], byTier: [0, 0, 0, 0, 0, 0],
+        length: 0, climb: 0, descent: 0, cost: 0, visited: 0, stops: [] };
+      parts.forEach((r, i) => {
+        const off = out.length;
+        for (const l of r.legs) out.legs.push(Object.assign({}, l, { dist0: (l.dist0 || 0) + off }));
+        for (const c of r.coords) { const last = out.coords[out.coords.length - 1]; if (!last || last[0] !== c[0] || last[1] !== c[1]) out.coords.push(c); }
+        for (const p of r.pieces) {
+          const prev = out.pieces[out.pieces.length - 1];
+          if (prev && prev.tier === p.tier && Math.abs(prev.start + prev.length - (p.start + off)) < 1) {
+            prev.length += p.length; prev.coords = prev.coords.concat(p.coords.slice(1));
+            p.names.forEach((n) => prev.names.includes(n) || prev.names.push(n));
+          } else out.pieces.push(Object.assign({}, p, { start: p.start + off, coords: p.coords.slice(), names: p.names.slice() }));
+        }
+        for (const g of r.gaps) {
+          const prev = out.gaps[out.gaps.length - 1];
+          if (prev && Math.abs(prev.start + prev.length - (g.start + off)) < 1) {
+            prev.length += g.length; prev.busy = prev.busy || g.busy; g.names.forEach((n) => prev.names.includes(n) || prev.names.push(n));
+          } else out.gaps.push(Object.assign({}, g, { start: g.start + off, names: g.names.slice() }));
+        }
+        for (const [d, z] of r.profile) out.profile.push([d + off, z]);
+        r.byTier.forEach((m, k) => (out.byTier[k] += m));
+        out.length += r.length; out.climb += r.climb; out.descent += r.descent; out.cost += r.cost; out.visited += r.visited || 0;
+        if (i < parts.length - 1 && stopLabels[i]) {
+          const end = r.coords[r.coords.length - 1];
+          out.stops.push({ at: out.length, label: stopLabels[i], lon: end[0], lat: end[1] });
+        }
+      });
+      // at the same spot, "Stop: …" comes before the turn that leaves it
+      out.maneuvers = this._maneuvers(out.legs)
+        .concat(out.stops.map((s) => ({ at: s.at, text: `Stop: ${s.label}`, tier: 0, lon: s.lon, lat: s.lat, stop: true })))
+        .sort((a, b) => a.at - b.at || (b.stop ? 1 : 0) - (a.stop ? 1 : 0));
+      const infra = out.byTier[0] + out.byTier[1] + out.byTier[2];
+      out.infraShare = out.length ? infra / out.length : 0;
+      out.from = parts[0].from; out.to = parts[parts.length - 1].to;
       return out;
     }
 

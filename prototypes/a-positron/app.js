@@ -36,6 +36,8 @@
   const t0 = performance.now();
   const router = new Router(window.GRAPH_STUDY);
   const geocoder = C.makeGeocoder(router);
+  const suggester = new window.BikeSuggest.Suggester(router, window.POIS);
+  const SK = window.BikeSuggest.STOP_KINDS;
   const buildings = C.unpackBuildings(window.BUILDINGS_PACKED);
   console.log(`router ready in ${(performance.now() - t0).toFixed(0)} ms: ${router.n} nodes, ${router.m} edges`);
 
@@ -54,7 +56,8 @@
   }
 
   const state = { from: null, to: null, fromLabel: "", toLabel: "", routes: [], sel: 0, mode: "explore", is3d: false,
-    trip: null, pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false };
+    trip: null, pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
+    tab: "go", sugg: { loop: true, km: 10, stop: "" }, rideEnd: "" };
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
   let style;
@@ -112,7 +115,7 @@
   map.addSource("pois", { type: "geojson", data: C.poisGeoJSON(window.POIS) });
   map.addSource("terrain", { type: "raster-dem", tiles: ["piste-dem://{z}/{x}/{y}"], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
   const empty = { type: "FeatureCollection", features: [] };
-  for (const id of ["route", "route-alts", "gaps", "ends", "engines", "climbs", "works-near"]) map.addSource(id, { type: "geojson", data: empty });
+  for (const id of ["route", "route-alts", "gaps", "ends", "engines", "climbs", "works-near", "stops"]) map.addSource(id, { type: "geojson", data: empty });
   for (const n of [1, 2, 3]) map.addImage("chev" + n, chevronImage(n), { pixelRatio: 2 });
 
   // ------------------------------------------------------------------ layers (bottom to top)
@@ -170,6 +173,9 @@
     layout: { "symbol-placement": "line", "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 13, 28, 17, 54],
       "icon-image": ["concat", "chev", ["to-string", ["get", "n"]]], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 17, 1.15],
       "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "map", "icon-pitch-alignment": "map", "icon-keep-upright": false } });
+  // a ring under the stop's POI icon on suggested rides
+  add({ id: "stops", type: "circle", source: "stops",
+    paint: { "circle-radius": 17, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 3, "circle-pitch-alignment": "map" } });
   // labels and points on top
   add({ id: "contour-labels", type: "symbol", source: "contours", minzoom: 13.5, filter: ["==", ["get", "i"], 1],
     layout: { "symbol-placement": "line", "text-field": ["concat", ["to-string", ["get", "e"]], " m"], "text-font": ["Noto Sans Regular"],
@@ -196,6 +202,10 @@
     layout: { "icon-image": "pill", "icon-text-fit": "both", "icon-text-fit-padding": [3, 7, 3, 7], "text-field": ["concat", ["to-string", ["get", "len"]], " m no bike lane"],
       "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "bottom", "text-offset": [0, -1.2], "icon-allow-overlap": true, "text-allow-overlap": true },
     paint: { "text-color": "#8a3f0a" } });
+  map.addLayer({ id: "stop-labels", type: "symbol", source: "stops",
+    layout: { "text-field": ["concat", "Stop · ", ["get", "label"]], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 1.7],
+      "text-allow-overlap": true, "text-max-width": 14 },
+    paint: { "text-color": "#0072B2", "text-halo-color": "#ffffff", "text-halo-width": 1.8 } });
   map.addLayer({ id: "ends", type: "circle", source: "ends",
     paint: { "circle-radius": 8, "circle-color": ["match", ["get", "k"], "from", "#ffffff", "#0095E6"],
       "circle-stroke-color": ["match", ["get", "k"], "from", "#0095E6", "#ffffff"], "circle-stroke-width": 3.5 } });
@@ -227,6 +237,37 @@
   strict.addEventListener("input", () => { strictOut.textContent = strictLabel(+strict.value); computeRoutes(false); });
   hills.addEventListener("change", () => computeRoutes(false));
   strictOut.textContent = strictLabel(+strict.value);
+
+  // ------------------------------------------------------------------ UI: "Go somewhere" / "Suggest a ride"
+  const chipsBox = $("#stop-chips");
+  chipsBox.innerHTML = [["", "None"], ...Object.entries(SK).map(([k, v]) => [k, v.label])].map(([k, label]) => {
+    const icon = k ? `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(C.iconSVG(SK[k].kinds[0], { size: 36 }))}">` : "";
+    return `<button type="button" role="radio" class="stop-chip" data-stop="${k}">${icon}${label}</button>`;
+  }).join("");
+  function markStopChips() {
+    chipsBox.querySelectorAll(".stop-chip").forEach((b) => { const on = b.dataset.stop === state.sugg.stop; b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); });
+  }
+  chipsBox.querySelectorAll(".stop-chip").forEach((b) => b.addEventListener("click", () => { state.sugg.stop = b.dataset.stop; markStopChips(); computeRoutes(true); }));
+  markStopChips();
+  document.querySelectorAll('input[name="shape"]').forEach((r) => r.addEventListener("change", () => {
+    state.sugg.loop = document.querySelector('input[name="shape"]:checked').value === "loop"; computeRoutes(true);
+  }));
+  const km = $("#km"), kmOut = $("#km-out");
+  const kmLabel = () => { kmOut.textContent = `${km.value} km · about ${Math.round((+km.value / 16) * 60)} min`; };
+  km.addEventListener("input", () => { state.sugg.km = +km.value; kmLabel(); });
+  km.addEventListener("change", () => computeRoutes(true));
+  kmLabel();
+  function setTab(tab) {
+    state.tab = tab;
+    for (const [id, t] of [["#tab-go", "go"], ["#tab-suggest", "suggest"]]) { $(id).classList.toggle("on", tab === t); $(id).setAttribute("aria-selected", String(tab === t)); }
+    document.querySelectorAll(".go-only").forEach((el) => (el.hidden = tab !== "go"));
+    document.querySelectorAll(".suggest-only").forEach((el) => (el.hidden = tab !== "suggest"));
+    if (markers.to) markers.to.getElement().style.display = tab === "suggest" ? "none" : "";
+    $("#engines-row").hidden = tab === "suggest" || !state.trip;
+    computeRoutes(true);
+  }
+  $("#tab-go").onclick = () => setTab("go");
+  $("#tab-suggest").onclick = () => setTab("suggest");
 
   const fromEl = $("#from"), toEl = $("#to"), sug = $("#suggest");
   let sugItems = [], sugActive = -1, sugTarget = null, sugTimer = null;
@@ -289,7 +330,7 @@
     const alt = map.queryRenderedFeatures(e.point, { layers: ["route-alts"] });
     if (alt.length && !state.pick) { selectRoute(alt[0].properties.i); return; }
     const lonlat = [e.lngLat.lng, e.lngLat.lat];
-    const which = state.pick || (!state.from ? "from" : "to");
+    const which = state.tab === "suggest" ? "from" : state.pick || (!state.from ? "from" : "to");
     setPoint(which, lonlat, placeLabel(lonlat[0], lonlat[1]), true);
     state.pick = null; document.querySelectorAll(".pick").forEach((x) => x.classList.remove("on")); map.getCanvas().style.cursor = "";
     computeRoutes(!state.routes.length);
@@ -300,7 +341,8 @@
       <button id="poi-go" class="primary" style="margin-top:8px;padding:7px 10px;font-size:13px">Ride here</button></div>`;
     const pop = new maplibregl.Popup({ offset: 14 }).setLngLat(f.geometry.coordinates).setHTML(html).addTo(map);
     pop.getElement().querySelector("#poi-go").onclick = () => {
-      pop.remove(); setPoint("to", f.geometry.coordinates, f.properties.name || k.label, true);
+      pop.remove(); if (state.tab === "suggest") { state.tab = "go"; setTab("go"); }
+      setPoint("to", f.geometry.coordinates, f.properties.name || k.label, true);
       if (!state.from) toast("Now pick a start: click the map or type it"); computeRoutes(true);
     };
   }
@@ -309,8 +351,14 @@
 
   // ------------------------------------------------------------------ routing
   function overlap(a, b) { let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++; return c / Math.max(a.sig.size, b.sig.size); }
+  let suggTimer = null;
   function computeRoutes(fit) {
-    if (!state.from || !state.to) { renderRoutes(); return; }
+    if (state.tab === "suggest") {   // suggestions take ~50 ms: run at once when asked, debounce while dragging
+      clearTimeout(suggTimer);
+      if (fit) computeSuggestions(true); else suggTimer = setTimeout(() => computeSuggestions(false), 140);
+      return;
+    }
+    if (!state.from || !state.to) { state.routes = []; renderRoutes(); drawRoutes(); return; }
     const t = performance.now();
     const w = weightsFor(+strict.value / 100, hills.checked);
     const cands = [
@@ -327,6 +375,23 @@
     renderRoutes(); drawRoutes();
     if (fit && keep.length) fitRoute(keep[0].r);
   }
+  // "Suggest a ride": three rides from the start, loop or one-way, of about the asked length, optionally via a stop
+  function computeSuggestions(fit) {
+    if (!state.from) { state.routes = []; renderRoutes(); drawRoutes(); return; }
+    const t = performance.now();
+    const picks = suggester.suggest({ start: state.from, km: state.sugg.km, loop: state.sugg.loop, stop: state.sugg.stop,
+      weights: weightsFor(+strict.value / 100, hills.checked) });
+    state.lastMs = performance.now() - t;
+    state.routes = picks.map((c) => {
+      const stopAt = c.route.stops && c.route.stops[0] ? `stop after ${C.fmtKm(c.route.stops[0].at)}` : "";
+      const note = [stopAt, c.via.length ? "via " + c.via.join(", ") : ""].filter(Boolean).join(" · ");
+      return { label: c.title, note, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), endLabel: c.endLabel, loop: c.loop };
+    });
+    state.sel = 0;
+    if (!picks.length) toast("Nothing fits from here yet: the map only covers the Plateau to the Olympic Park. Try a shorter ride.");
+    renderRoutes(); drawRoutes();
+    if (fit && state.routes.length) fitRoute(state.routes[0].r);
+  }
   function selectRoute(i) { state.sel = +i; renderRoutes(); drawRoutes(); }
   function fitRoute(r) {
     const xs = r.coords.map((c) => c[0]), ys = r.coords.map((c) => c[1]);
@@ -340,7 +405,11 @@
     map.getSource("gaps").setData(sel ? C.gapStartsGeoJSON(sel.r) : empty);
     map.getSource("climbs").setData(sel ? C.climbsGeoJSON(sel.r, sel.climbs) : empty);
     map.getSource("route-alts").setData({ type: "FeatureCollection", features: state.routes.map((c, i) => i === state.sel ? null : C.routeLineGeoJSON(c.r, { i })).filter(Boolean) });
-    map.getSource("ends").setData(empty);
+    const stops = (sel && sel.r.stops) || [];
+    map.getSource("stops").setData({ type: "FeatureCollection", features: stops.map((s, i) => ({ type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { label: s.label } })) });
+    // suggested one-way rides end at a place, not at a dragged pin: mark the end with a dot
+    const end = state.tab === "suggest" && sel && !sel.loop ? sel.r.coords[sel.r.coords.length - 1] : null;
+    map.getSource("ends").setData(end ? { type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "Point", coordinates: end }, properties: { k: "to" } }] } : empty);
     updateEngines();
     setMode(sel ? "route" : "explore");
   }
@@ -355,14 +424,20 @@
     return `${list.length} climb${list.length > 1 ? "s" : ""}, ${Math.round(r.climb)} m up in all. Steepest: ${Math.round(steep.max * 100)}%` +
       `${name ? " on " + C.esc(name) : ""} (+${Math.round(steep.c.rise)} m over ${C.fmtKm(steep.c.length)})`;
   }
+  const NOTES = {
+    go: `<h2>Explore</h2><p>Pick a test trip or type two places. Click the map to drop the start, then the destination. Turn on <b>Planned &amp; in construction</b> in Layers to see what the City is building. It only shows while you browse, never on a route.</p>`,
+    suggest: `<h2>Suggest a ride</h2><p>Set where you start: type it, or click the map. Then choose a loop or a one-way ride, a distance and, if you like, a stop on the way. You get three rides that stay on bike lanes as much as they can.</p>`,
+  };
   function renderRoutes() {
     const box = $("#routes"), det = $("#detail");
-    $("#explore-note").hidden = state.routes.length > 0;
+    const note = $("#explore-note");
+    note.hidden = state.routes.length > 0; note.innerHTML = NOTES[state.tab];
     if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
     box.innerHTML = state.routes.map((c, i) => {
       const r = c.r;
       return `<button class="route-card ${i === state.sel ? "sel" : ""}" data-i="${i}">
-        <div class="rc-top"><b>${c.label}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
+        <div class="rc-top"><b>${C.esc(c.label)}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
+        ${c.note ? `<div class="rc-note">${C.esc(c.note)}</div>` : ""}
         <div class="rc-sub">${C.fmtKm(r.length)} · climb ${Math.round(r.climb)} m · ${r.gaps.length ? r.gaps.length + (r.gaps.length > 1 ? " stretches" : " stretch") + " without a bike lane" : "bike lanes all the way"}</div>
         ${compBar(r)}
         <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> on bike infrastructure</div></button>`;
@@ -425,7 +500,7 @@
     // while riding, roadside pop-ups replace the map's POI icons (only metro stations stay)
     const riding = state.mode === "ride";
     POI_LAYERS.forEach((p) => vis(p.id, riding ? p.id === "poi-metro" && toggles["pois-out"]
-      : (p.group === "food" && toggles["pois-food"]) || ((p.group === "bike" || p.group === "services") && toggles["pois-bike"]) || ((p.group === "outdoors" || p.group === "transit") && toggles["pois-out"])));
+      : (p.group === "food" && toggles["pois-food"]) || (p.group === "shopping" && toggles["pois-shop"]) || ((p.group === "bike" || p.group === "services") && toggles["pois-bike"]) || ((p.group === "outdoors" || p.group === "transit") && toggles["pois-out"])));
     document.body.classList.toggle("riding", riding);
     vis("tint", toggles.tint); vis("relief", toggles.relief);
     ["contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
@@ -492,7 +567,7 @@
     right: '<path d="M16 38V22a6 6 0 0 1 6-6h12M27 9l7 7-7 7"/>', slightL: '<path d="M28 38V24L16 12M16 21v-9h9"/>',
     slightR: '<path d="M18 38V24l12-12M30 21v-9h-9"/>', arrive: '<path d="M14 38V8M14 9h17l-4 6 4 6H14"/>',
   };
-  function turnKind(text) { return /Sharp left|Turn left/.test(text) ? "left" : /Sharp right|Turn right/.test(text) ? "right" : /Slight left/.test(text) ? "slightL" : /Slight right/.test(text) ? "slightR" : "straight"; }
+  function turnKind(text) { return /^Stop:/.test(text) ? "arrive" : /Sharp left|Turn left/.test(text) ? "left" : /Sharp right|Turn right/.test(text) ? "right" : /Slight left/.test(text) ? "slightL" : /Slight right/.test(text) ? "slightR" : "straight"; }
 
   // you: a heading cone lying on the street + an upright cyclist badge facing the camera
   const coneEl = document.createElement("div"); coneEl.className = "rider-cone";
@@ -516,6 +591,7 @@
   function startRide() {
     const sel = state.routes[state.sel]; if (!sel) return;
     const r = sel.r;
+    state.rideEnd = sel.endLabel || state.toLabel || "destination";
     C.voice.enabled = $("#opt-voice").checked;
     state.rideView = document.querySelector('input[name="opt-view"]:checked').value;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
@@ -568,7 +644,7 @@
     // turn card
     const L = f.look;
     if (L.next) { $("#turn-dist").textContent = C.fmtKm(L.nextDist); $("#turn-text").textContent = L.next.text; $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG[turnKind(L.next.text)]}</svg>`; }
-    else { $("#turn-dist").textContent = C.fmtKm(f.total - f.d); $("#turn-text").textContent = "Arrive at " + (state.toLabel || "destination"); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`; }
+    else { $("#turn-dist").textContent = C.fmtKm(f.total - f.d); $("#turn-text").textContent = "Arrive at " + state.rideEnd; $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`; }
     // gap card: calm, specific
     const card = $("#gap-card");
     if (L.inGap) {
@@ -728,6 +804,14 @@
     const startTrip = window.TRIPS.find((t) => t.id === (params.get("trip") || "montroyal"));
     if (startTrip) useTrip(startTrip);
   }
+  // ?suggest=loop|oneway&km=10&stop=cafe opens "Suggest a ride"
+  if (params.get("suggest")) {
+    state.sugg.loop = params.get("suggest") !== "oneway";
+    document.querySelector(`input[name="shape"][value="${state.sugg.loop ? "loop" : "oneway"}"]`).checked = true;
+    if (params.get("km")) { km.value = params.get("km"); state.sugg.km = +km.value; kmLabel(); }
+    if (SK[params.get("stop")]) { state.sugg.stop = params.get("stop"); markStopChips(); }
+    setTab("suggest");
+  }
   if (params.get("view") === "3d") set3d(true);
   // ?ride=bird|top starts the simulated ride; &at=<metres> jumps along it; &paused holds it still (screenshots, tests)
   if (params.get("ride") && state.routes.length) {
@@ -736,5 +820,5 @@
     if (params.has("at")) { state.snap = true; state.ride.seek(+params.get("at")); }
     if (params.has("paused")) pauseRide(true);
   }
-  window.__app = { map, router, state, useTrip, set3d, startRide, computeRoutes, pauseRide, CAM };
+  window.__app = { map, router, state, useTrip, set3d, startRide, computeRoutes, computeSuggestions, setTab, suggester, pauseRide, CAM };
 })();

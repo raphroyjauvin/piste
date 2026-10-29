@@ -122,6 +122,12 @@ def task_osm(refresh):
   node["railway"="subway_entrance"]{bb};
 );
 out center tags;""",
+        # added 2026-10-28 for "suggest a ride" stops: named shops people ride to (not groceries or services)
+        "osm_overpass/shops.json": f"""[out:json][timeout:300];
+(
+  nwr["shop"~"^(clothes|shoes|books|gift|boutique|second_hand|charity|music|musical_instrument|art|craft|frame|jewelry|department_store|mall|variety_store|florist|outdoor|sports|toys|games|stationery|antiques|interior_decoration|houseware|kitchen|furniture|garden_centre|cosmetics|perfumery|bag|fabric|sewing|hobby|photo|electronics|video_games|anime|comics|records|tea|wine|cheese|herbalist)$"]["name"]{bb};
+);
+out center tags;""",
         "osm_overpass/bikeways.json": f"""[out:json][timeout:300];
 (
   way["highway"="cycleway"]{bb};

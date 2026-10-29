@@ -98,6 +98,42 @@ await run("climbs: chevrons, profile, hill-ahead in 3D ride", `${APP}?trip=rache
   }, idle);
 });
 
+await run("suggest a ride: loops, stops, one-way", `${APP}?trip=montroyal`, async (page) => {
+  return await page.evaluate(async () => {
+    const app = window.__app, s = app.state;
+    const summary = () => s.routes.map((c) => ({ title: c.label, km: +(c.r.length / 1000).toFixed(1), bike: Math.round(c.r.infraShare * 100), note: c.note }));
+    const t0 = performance.now(); app.setTab("suggest"); const ms = Math.round(performance.now() - t0);
+    const loop10 = summary();
+    // a loop starts and ends by the start pin (each end snaps to the best street within ~40 m of it)
+    const endGaps = s.routes.map((c) => [c.r.coords[0], c.r.coords.at(-1)].map((p) => Math.round(BikeRouter.distM(p[0], p[1], s.from[0], s.from[1]))));
+    const closedLoop = endGaps.every(([a, b]) => a < 100 && b < 100);
+    document.querySelector('.stop-chip[data-stop="cafe"]').click();
+    const cafe = summary();
+    const cafeStops = s.routes.every((c) => c.r.stops && c.r.stops.length === 1 && c.r.maneuvers.some((m) => /^Stop:/.test(m.text)));
+    document.querySelector('input[name="shape"][value="oneway"]').click();
+    const km = document.querySelector("#km"); km.value = 6; km.dispatchEvent(new Event("input")); km.dispatchEvent(new Event("change"));
+    document.querySelector('.stop-chip[data-stop="shop"]').click();
+    const shop = summary();
+    const endsAtShop = s.routes.every((c) => /^To /.test(c.label));
+    // ride a suggestion: the stop shows up as an instruction, and the ride ends at the right place
+    document.querySelector('input[name="shape"][value="loop"]').click();
+    document.querySelector('.stop-chip[data-stop="cafe"]').click();
+    document.querySelector('input[name="opt-view"][value="topdown"]').checked = true;
+    app.startRide(); app.pauseRide(true);
+    const rm = s.routes[s.sel].r.maneuvers, si = rm.findIndex((m) => m.stop), stopAt = rm[si].at;
+    const beforeAt = si > 0 ? rm[si - 1].at : 0;   // just after the previous instruction, the stop is next
+    s.snap = true; s.ride.seek(Math.max(beforeAt + 1, stopAt - 40));
+    const turnText = document.querySelector("#turn-text").textContent;
+    document.querySelector("#ride-exit").click();
+    app.setTab("go");
+    const backToGo = s.routes.map((c) => c.label);
+    const within = (list, D, tol) => list.length === 3 && list.every((r) => Math.abs(r.km - D) / D <= tol);
+    const checks = { loopLengths: within(loop10, 10, 0.3), closedLoop, cafeFound: cafe.length >= 2, cafeStops, shopFound: shop.length >= 2, endsAtShop,
+      stopAnnounced: /^Stop:/.test(turnText), backToGo: backToGo[0] === "Your route" };
+    return { ok: Object.values(checks).every(Boolean), checks, endGaps, msForThreeLoops: ms, loop10, cafe, shop, turnText, backToGo };
+  });
+});
+
 await run("phone layout", `${APP}?trip=rachel&safe=62,34`, async (page) => {
   return await page.evaluate(() => {
     const turnTop = (() => { const h = document.querySelector("#ride-hud"); h.hidden = false; const t = document.querySelector(".turn-card").getBoundingClientRect().top; h.hidden = true; return Math.round(t); })();

@@ -181,6 +181,15 @@ def layer_pois():
         if k == "park" and not t.get("name"):
             continue
         out.append([k, t.get("name", ""), round(c["lon"], 6), round(c["lat"], 6)])
+    # named shops (separate download, 2026-10-28)
+    shops = RAW / "osm_overpass" / "shops.json"
+    if shops.exists():
+        for el in json.loads(shops.read_text(encoding="utf-8"))["elements"]:
+            t = el.get("tags", {})
+            c = el.get("center") or {"lon": el.get("lon"), "lat": el.get("lat")}
+            if c["lon"] is None or not t.get("name") or not in_bbox(c["lon"], c["lat"]):
+                continue
+            out.append(["shop", t["name"], round(c["lon"], 6), round(c["lat"], 6)])
     # City fountains (dedupe with OSM water within ~12 m)
     water = [(p[2], p[3]) for p in out if p[0] == "water"]
     with open(RAW / "mtl_fontaines_a_boire" / "fontaine_eau_potable_v2018.csv", encoding="utf-8-sig") as fh:
@@ -451,6 +460,14 @@ def gaussian_smooth(z, sigma_cells):
     return zp[r:-r, r:-r]
 
 
+def edge_feather(shape, px):
+    """0 at the raster's edge, rising to 1 at px pixels in, so the elevation layers fade out instead of stopping in a line."""
+    h, w = shape
+    y = np.minimum(np.arange(h), np.arange(h)[::-1])[:, None]
+    x = np.minimum(np.arange(w), np.arange(w)[::-1])[None, :]
+    return np.clip(np.minimum(x, y) / px, 0, 1)
+
+
 def layer_hillshade(res=5.0, zf=2.8, sigma_m=8.0):
     """Soft relief overlay from the LiDAR terrain: transparent PNG (shadows + light highlights) in Web Mercator."""
     from PIL import Image
@@ -481,7 +498,7 @@ def layer_hillshade(res=5.0, zf=2.8, sigma_m=8.0):
     light = np.clip((hs - flat) / (1 - flat) - 0.008, 0, 1) ** 0.85
     lum = np.where(shadow > 0, 38, 255).astype(np.uint8)
     alpha = np.where(shadow > 0, np.minimum(1, shadow * 1.25) * 245, light * 175)
-    alpha = np.where(valid, np.clip(alpha, 0, 255), 0).astype(np.uint8)
+    alpha = (np.where(valid, np.clip(alpha, 0, 255), 0) * edge_feather(alpha.shape, 80)).astype(np.uint8)   # 80 px = 400 m fade
     img = Image.fromarray(np.dstack([lum, alpha]), "LA")
     img.save(OUT / "hillshade.png", optimize=True)
     # preview composited on a Positron-like background
@@ -520,7 +537,7 @@ def layer_tint(res=10.0, sigma_m=20.0):
     rgba = np.zeros(z.shape + (4,), dtype=np.uint8)
     for ch in range(4):
         rgba[..., ch] = np.interp(z, zs, [s[1][ch] for s in TINT_RAMP]).astype(np.uint8)
-    rgba[..., 3] = np.where(valid, rgba[..., 3], 0)
+    rgba[..., 3] = (np.where(valid, rgba[..., 3], 0) * edge_feather(z.shape, 40)).astype(np.uint8)   # 40 px = 400 m fade
     Image.fromarray(rgba, "RGBA").save(OUT / "elevation_tint.png", optimize=True)
     b = ds.bounds
     to_ll = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)

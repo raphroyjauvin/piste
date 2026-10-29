@@ -34,7 +34,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 - 2026-10-28 (Raph): the 3D ride camera sits lower, more behind the rider (not fully behind). Built: pitch 70°, rider at 70% of the screen height.
 - 2026-10-28 (Raph): metro and BIXI icons should look like their real signs, without copyright problems. Built from scratch: white down-arrow on a blue disc for the metro; a BIXI-red tag with a plain bike.
 - 2026-10-28 (Raph): public GitHub repo `raphroyjauvin/piste`, published with GitHub Pages.
-- 2026-10-28 (Raph), to do: **suggest a ride**: a start point, loop or one-way, an optional stop by category (coffee, food, shopping, any map category) and a distance; the app suggests three routes.
+- 2026-10-28 (Raph): **suggest a ride**: a start point, loop or one-way, an optional stop by category (coffee, food, shopping, any map category) and a distance; the app suggests three routes. Built the same day as a second tab; see `docs/06_prototypes.md`.
 - 2026-10-28 (Raph), to discuss: an AI agent that understands ride requests in plain language; simple graphics on the 3D massing by business type (cafés, shops…).
 - 2026-10-28 (Claude): phone preview page (`prototypes/phone.html`) for designing the phone layout on the monitor; the real iPhone (via Pages) stays the final check.
 
