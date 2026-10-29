@@ -1,5 +1,39 @@
 # Routing: how it works and how it compares (2026-10-25)
 
+## Update 2026-10-29: island-wide graph, winter tiers, multi-stop rides
+
+### Island-wide graph
+- **Build:** `tools/fetch_data.py island` (OSM paths and terrain for the island), then `tools/build_graph.py --extent island`. The app loads the result, `prototypes/shared/data/graph_island.js`. The study-area graph (`--extent study`) is still built; the benchmarks and `build_layers.py` read it.
+- **Size:** 37,770 nodes, 56,315 edges, 4.7 MB. (Study area: 6,645 nodes, 10,526 edges, 0.7 MB.)
+- **Inputs:**
+  - the City Géobase and bike network (island-wide)
+  - OSM bike-legal paths for the island (`osm_overpass/bike_allowed_paths_island.json`, 19,620 ways)
+  - a 5 m terrain model for the island (`nrcan_hrdem_cmm2023/dtm_island_32188_5m.tif`, 85 MB)
+  - the island box is −73.985, 45.395, −73.465, 45.715 (the island, with the Jean-Drapeau islands and Île des Sœurs)
+- **Speed:** 1–8 ms per route. Atwater Market → Pointe-Claire: 24.5 km, 82% on bike infrastructure, in 8 ms. (Study area: 0.02–0.4 ms.)
+- **The map's bike network layer** is now drawn from the graph (tiers A–C, with the REV and 4-season flags), so `network.js` is no longer loaded. The other map layers (buildings, elevation, POIs, planned/works) are still study area only.
+- **Disconnected pieces:** about 26% of the nodes fell in pieces that aren't connected to the main network, and were dropped. The build keeps the largest connected piece, as before. Most of the dropped nodes are Laval and Île-Bizard fragments and unconnected paths.
+- **Speed limits and the arterial network** only exist for the City of Montréal, not the other island municipalities. There, the build has no speed limit (it assumes 30 km/h) and no arterial flag, so a street without a bike lane counts as busy (E) only if its Géobase class is 6–7 or it is a private road. More streets read as quiet (D) there.
+
+### Winter tiers (`Router.setWinter`)
+Winter mode changes the tier of the City's bike facilities. The graph keeps its summer tiers; the router works out the winter ones once, the first time winter is switched on, and swaps between the two sets. The inputs are two per-edge flags from the City's bike network: `SAISONS4` (in the 4-season network, cleared in winter) and `PROTEGE_4S` (a protected lane that keeps its separators in winter).
+- **Not in the 4-season network:** a lane or path (tier A, B or C) that isn't cleared becomes tier D, "no bike lane". The router treats it like a street without a facility, and the warnings say "not cleared". It becomes D (quiet street) even if the street itself is busy.
+- **Unplowed off-street paths** (parks, canal paths) also cost 2.5× on top, because of the snow. In the "Most bike lanes" setting that is 3.2 × 2.5 = 8, a little more than a busy street (7).
+- **Protected lanes that lose their separators:** a tier A lane that is in the 4-season network but isn't `PROTEGE_4S` counts as tier B, a painted lane.
+- **Everything else keeps its summer tier:** streets without a facility (D, E) and closed edges (X) don't change.
+
+### Per-edge penalty and `join()` (rides with stops or waypoints)
+- **Per-edge penalty:** `route(from, to, { penalty })` accepts a list with one multiplier (1 or more) per edge. The cost of an edge is length × tier weight × penalty × winter penalty, plus climb × hill weight. Think of a cost field on a network analysis layer: a high value pushes the least-cost path elsewhere without closing the street.
+  - Suggest a ride and the classic rides use it so the way back differs: after each leg, the edges already ridden get 4× for the legs that follow. (Two classic rides, the Parc Jean-Drapeau islands and the out-and-back Pointe-Claire ride, switch this off with `avoidBack`.)
+  - The winter 2.5× for unplowed off-street paths works the same way. It is stored separately and applied automatically in winter mode.
+- **`join(parts, stopLabels)`:** chains several routes end to end into one route, for a ride through stops or waypoints. In GIS terms, it merges line features end to end into one feature. It adds up length, climb and cost, merges the pieces and gaps that meet at a join, stitches the elevation profile together and rebuilds the turn instructions across the joins. `stopLabels[i]` names the stop between parts *i* and *i* + 1 and becomes a "Stop: …" step; a sight becomes "Sight: …"; a plain waypoint gets no step.
+- **Classic rides** (`prototypes/shared/data/classics.js`) are routed live, leg by leg through their waypoints, with the "Most bike lanes" weights and a hill weight of 4, then joined. In winter mode the legs are routed again on the winter tiers.
+
+### Data issue: Habitat 67
+- A segment near Habitat 67 is one-way in the City's data. Riding from the city toward Habitat 67 can't use it, so the router detours. The other direction is fine.
+- The classic rides were designed around it. It isn't fixed in our graph.
+- To decide: ask the City about the segment, or override it in `tools/build_graph.py`.
+
 ## Decision
 The router runs **in the browser**, on a compact graph we build ourselves. It needs no server, works offline, keeps your location on the device, and re-routes instantly when you drag a pin or move the slider. On the study area it routes in **0.02–0.4 ms**. Public routing servers take 330–700 ms per request over the network, and none of them lets you choose "bike lanes only" the way we do.
 
@@ -68,7 +102,7 @@ GraphHopper needs an API key, so it wasn't tested.
 ## Next improvements
 - **Intersections:** penalise turning onto or crossing an arterial without signals (City traffic-signal layer).
 - **Time rules:** handle rush-hour-only lanes (`TYPE_VOIE2` 34, 35, 39, 94) and the summer pedestrian streets.
-- **Island-wide graph:** about 50k segments. Expect roughly 1–5 ms per route.
+- **Island-wide graph:** done 2026-10-29 (37,770 nodes, 56,315 edges; 1–8 ms per route). See the update at the top.
 - **Path names:** name off-street paths after the park they cross ("Parc La Fontaine path").
 - **Live roadworks:** route around bike lanes blocked by works (`bikepath_blockedtype`).
-- **Winter mode:** 4-season network only, for later.
+- **Winter mode:** done 2026-10-29 (4-season network only; see the update at the top). Still open: real-time clearing status, which isn't public (the City's Planif-Neige API needs a token and covers streets, not bike lanes).

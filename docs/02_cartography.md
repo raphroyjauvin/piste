@@ -1,5 +1,25 @@
 # Cartography principles (2026-10-25)
 
+## Update 2026-10-29: winter, weather, live BIXI, calmer elevation
+- **Winter palette** (the snowflake button): the same soft map, shifted to an icy light blue. "Soft map, loud route" still holds.
+  - land `#eef4f8`, parks `#e1ecf1`, water `#b9d2e2`
+  - also tinted: residential land `#e6eef4`, woods `#dbe6ed`, rivers `#a9c6d9`, buildings `#e2e9ef` (3D buildings `#f3f6f9` to `#d6e0e8`), major road casings `#c6d6e2`
+  - the elevation colours are hue-rotated toward blue (and desaturated), so hills don't look warm on a cold map
+  - contours `#7895aa`, their labels `#5c7689`
+  - the 4-season lanes stay green, as in summer, so "green = a lane that is cleared" still holds
+  - lanes that aren't cleared turn grey and dotted (`#aebbc6`). They look faded, not alarming. The warnings say "not cleared" in the same soft orange pill as any other gap.
+- **Weather card and wind streaks:**
+  - Wind streaks are thin slate-blue lines (`rgba(52, 92, 124, 0.5)`, 1.6 px). They drift across the map the way the wind blows and turn with the map. They fade slowly, which leaves short trails, and they stay quiet so the route and labels remain readable.
+  - The radar is a half-transparent overlay (50%) under the bike network and the route.
+  - The weather card is a small white card at the top of the map, in the same style as the other cards: an arrow pointing the way the wind blows, the wind, the rain outlook and, last, the line about the selected route (headwind or tailwind, and minutes). In winter mode it adds the snow and ice lines.
+- **BIXI badge colours:** green `#1d6a2c` (3 or more bikes), orange `#c26b12` (1–2), grey `#8a929a` (empty), dark grey `#5a6168` (not renting). The number is written in the badge, so colour is never the only signal (principle 4 below). The badge sits at the top right of the station icon and never hides it.
+- **Location pins:** the search fields and the map use the same two pins, so the ends are easy to tell apart. The start is mostly blue (blue pin, white dot); the destination is mostly white (white pin with a blue outline and dot).
+- **Elevation toned down**, halfway between the first prototype and the strong version of 2026-10-28:
+  - hill shading: relief factor ×2.3 (first prototype ×1.8, strong version ×2.8), smoothing 10 m, opacity about 0.85 → 0.72 from small to large zoom
+  - 3D hill-ahead boost halved: terrain ×1.6 at rest, up to about ×2.5 (was ×3.4)
+  - the profile and hill-card graphs use a larger minimum height range, so a small climb doesn't look like a cliff
+- **Contours replace the chevrons.** The uphill chevrons are gone. Extra 1 m contour lines are drawn only where the ground rises 2.5–15% (slope over about 25 m, small patches removed). A climb now reads the way it does on a topographic map: closer lines mean steeper ground. These lines are thin and light (visible from zoom 14) and use the same brown as the other contours (`#9a7c52`). The 5 m and bold 25 m contours are unchanged.
+
 ## Update 2026-10-28: elevation, and one prototype (A)
 - **Raph's direction:** keep A only. In 2D, elevation must be very clear; in 3D, you should feel a hill coming up while riding (the one idea kept from C).
 - **2D elevation, three layers working together:**
@@ -7,6 +27,7 @@
   - *Shading:* multidirectional LiDAR hillshade (5 m, ×2.8), dark shadows and light highlights, under the streets.
   - *Contours:* every 5 m, bold every 25 m with labels; a warm brown (`#9a7c52`) that doesn't fight the green bike network.
 - **Climbs on the route:** Michelin-style uphill chevrons, pointing uphill, 1–3 by steepness, dark brown with a white edge so they read on blue, light blue and orange. The profile shades climbs in the same tan.
+  - *Changed 2026-10-29: the chevrons were later replaced by extra 1 m contour lines on climbs, and the shading (×2.8) and the 3D boost (×3.4) were toned down. See above.*
 - **3D:** LiDAR terrain (×1.6). While riding, the terrain swells (up to about ×3.4) as a climb approaches; the camera sits low and behind the rider (pitch 70°).
 - **Icons that echo real signs, drawn from scratch:** metro = white down-arrow on a blue disc (the métro entrance sign idea, STM 1963), ringed by line colours; BIXI = BIXI red (`#EE3124`) tag with a plain bike. No logo artwork is copied; check STM and BIXI terms before a public launch.
 

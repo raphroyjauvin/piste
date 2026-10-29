@@ -1,4 +1,21 @@
-# Data sources and quirks (checked 2026-10-25)
+# Data sources and quirks (checked 2026-10-25, updated 2026-10-29)
+
+## Update 2026-10-29: weather, live BIXI, winter fields, island data, photos
+| Source | What it gives | Freshness | Use |
+|---|---|---|---|
+| **Open-Meteo forecast**: `api.open-meteo.com/v1/forecast` (no key; open to any website) | One point for central Montréal (45.52, −73.58). Now: temperature, rain, snowfall, wind speed, direction and gusts at 10 m, weather code. Hourly: precipitation and its probability, snowfall, snow depth, temperature, for the last day and the next two | Live; the app refreshes every 10 min | Wind and rain card, wind effect on routes, "Avoid headwinds", winter snow status (snowfall in the last 24 h, freeze–thaw warning). Free for non-commercial use; data CC BY 4.0 (verify before a public launch) |
+| **Environment Canada GeoMet radar**: `geo.weather.gc.ca/geomet` (WMS 1.3.0, 256 px tiles) | 1 km radar images: `RADAR_1KM_RRAI` (rain) and `RADAR_1KM_RSNO` (snow) | Live | Radar layer: rain in summer, snow in winter mode. Open Government Licence – Canada; the map credits "Environment and Climate Change Canada" |
+| **BIXI GBFS, live status**: `https://gbfs.velobixi.com/gbfs/2-2/en/` (`station_information.json` and `station_status.json`; open to any website) | About 1,100 stations, island-wide: bikes, e-bikes and free docks available, and whether the station is renting | Live; the app refreshes every minute | Badge with the bikes available on each station icon. Listed as CC BY 4.0 on donnees.montreal.ca; check BIXI's own terms before a public launch |
+| **City bike network, fields `SAISONS4` and `PROTEGE_4S`** (`mtl_reseau_cyclable`, the file we already have) | `SAISONS4` = "Oui" when a segment is in the 4-season network, cleared in winter (753 of the 1,101 km; see the summary below). `PROTEGE_4S` = "Oui" when a protected lane keeps its separators in winter | File of 2026-10-01 | Winter tiers in the router; grey dotted "not cleared" lanes on the map |
+| **Planif-Neige** (`deneigement`) | Street snow-removal status. It needs a token, requested by email to donneesouvertes@montreal.ca. Streets only, not bike lanes | Live | Not used. A token can't ship in a web page, so it would need a small server |
+| **OSM bike-legal paths, whole island**: `osm_overpass/bike_allowed_paths_island.json` (11.5 MB; `tools/fetch_data.py island`) | 19,620 ways: cycleways, plus paths, footways, tracks and similar ways where bicycle is yes, designated or permissive, in the island box (−73.985, 45.395, −73.465, 45.715) | Downloaded 2026-10-29 | Island routing graph |
+| **NRCan HRDEM CMM 2023 terrain, whole island at 5 m**: `nrcan_hrdem_cmm2023/dtm_island_32188_5m.tif` (85 MB) | The 1 m terrain model cut to the island box and averaged to 5 m, EPSG:32188 | 2023 | Node heights and climbs in the island graph. The study area keeps its 1 m terrain for the map layers |
+| **Wikimedia Commons photos** | 10 photos for the classic rides, free licences only: CC BY 2.0, 3.0, 4.0 and CC BY-SA 2.0, 3.0, 4.0. Author, licence and source link per photo in `prototypes/shared/photos/credits.json` | Added 2026-10-29 | Photo banners on the classic ride cards. Each card credits the author and licence |
+
+- **Island graph inputs:** the City Géobase and bike network (island-wide), plus the two island files above. `tools/fetch_data.py island` fetches those two files (`all` includes it); `tools/build_graph.py --extent island` builds the graph. See `05_routing.md`.
+- **Speed limits and the arterial network** only exist for the City of Montréal, not the other island municipalities.
+- **Winter data gap:** there is no public real-time snow-clearing status for bike lanes. Winter mode uses `SAISONS4` and the forecast instead.
+- **Ride choice:** the classic rides are based on public guides (Tourisme Montréal, Time Out Montréal, Parks Canada, Komoot, Altitude Sports), not on a dataset. See `06_prototypes.md`.
 
 ## Update 2026-10-25, afternoon: fresher sources found and used
 | Source | What it gives | Freshness | Use |
@@ -8,18 +25,19 @@
 | **NRCan HRDEM**, `QC-600023_52_CMM_2023-1m` (Cloud-Optimized GeoTIFF on AWS), DTM and DSM | 1 m terrain and surface from the **2023** CMM LiDAR. Cut to the study area with GDAL over HTTP: only the needed bytes download, about 300 MB for both | 2023 | Elevation, climbs, contours, relief shading; building heights = 70th percentile of (DSM − DTM) inside each footprint |
 | OpenStreetMap via Overpass | POIs (9,601), bike-legal paths (1,445), buildings (71,763 footprints), parks, water, rail | Continuous | Footprints (newer than the City's 2016 file), POIs, missing paths |
 | STM GTFS (`gtfs_stm.zip`) | Official metro colours (green `#00B300`, orange `#D95700`, yellow `#FFD900`, blue `#0095E6`), 68 stations, line shapes | Weekly | Theme colours, metro POIs, metro view |
-| BIXI GBFS | 1,121 stations | Live | POIs (live dock counts later) |
+| BIXI GBFS | 1,121 stations | Live | POIs; live dock counts built 2026-10-29 (see above) |
 | City roadworks (`info-travaux`) + impacts CSV | 94 works **blocking a bike lane** in the study area today (`bikepath_blockedtype`) | Daily | Yellow cone markers; later, re-route around them |
 
 - **Point clouds:** the City's 2015 LiDAR is 111 GB of LAZ. It isn't needed: NRCan already serves the derived 2023 surface and terrain as cloud rasters, and we only pull the window we need. A home NAS shouldn't serve a public app anyway. The app ships small derived files instead (relief PNG, 20 m elevation grid, building heights).
-- **Refreshing data:** `tools/fetch_data.py all --refresh`, then the two build scripts. Later this can run on a schedule (GitHub Actions: nightly for roadworks and live tiles, monthly for the rest), with the built files published next to the app.
+- **Refreshing data:** `tools/fetch_data.py all --refresh`, then the build scripts (`build_graph.py` for each extent, then `build_layers.py`). Later this can run on a schedule (GitHub Actions: nightly for roadworks and live tiles, monthly for the rest), with the built files published next to the app.
 
 All Montreal datasets below are CC BY 4.0 (credit "Ville de Montréal"), from donnees.montreal.ca. Each has a CKAN API page at `https://donnees.montreal.ca/api/3/action/package_show?id=<id>`.
 
 ## Downloaded (in `data\raw\`; provenance in `_download_log.csv`)
 | Folder | Dataset (CKAN id) | Updated | Size | What it gives us |
 |---|---|---|---|---|
-| `mtl_reseau_cyclable` | Réseau cyclable (`pistes-cyclables`), plus the 2020 data dictionary | 2026-10-01 | 11 MB GeoJSON | The bike network: 9,485 segments, 1,101 km, with type, 4-season flag, REV, Route verte and Géobase ID |
+| `mtl_reseau_cyclable` | Réseau cyclable (`pistes-cyclables`), plus the 2020 data dictionary | 2026-10-01 | 11 MB GeoJSON | The bike network: 9,485 segments, 1,101 km, with type, 4-season flag (`SAISONS4`), winter protection flag (`PROTEGE_4S`), REV, Route verte and Géobase ID |
+| `mtl_geobase` | Géobase street network (`geobase`) | see log | 41 MB GeoJSON | The routing graph's streets: IDs, direction, class and names (downloaded 2026-10-25) |
 | `mtl_reseau_express_velo` | REV (`reseau-express-velo`) | 2023-06 | 0.05 MB | Only 21 km (4 early axes), so stale |
 | `mtl_condition_chaussees_cyclable` | Bike-network pavement condition (`condition-chaussees-reseau-cyclable`), 2024 survey | 2026-04 | 4 MB GPKG | 11,545 sections rated Excellent to Très mauvais (21% of sections Mauvais or Très mauvais); joins on `id_cycl` |
 | `mtl_limites_vitesse` | Speed limits (`limites-vitesse`) | 2026-07-03 | 4 MB zipped SHP | 44,667 street segments with a speed; `ID_Troncon` = Géobase ID; EPSG:32188 |
@@ -63,7 +81,6 @@ All Montreal datasets below are CC BY 4.0 (credit "Ville de Montréal"), from do
 ## Not downloaded yet (big ones need Raph's OK)
 | Dataset (CKAN id) | Size | Use |
 |---|---|---|
-| Géobase street network (`geobase`) | 41 MB GeoJSON | Routing graph: streets, IDs, direction |
 | Géobase nodes (`geobase-noeud`) | ? | Intersections |
 | Address points (`adresses-ponctuelles`) | 134 MB GeoJSON | Address search |
 | Buildings 2D 2016 (`batiment-2d`) | 147 MB | Footprints for 3D massing |
@@ -74,7 +91,7 @@ All Montreal datasets below are CC BY 4.0 (credit "Ville de Montréal"), from do
 | Traffic signals (`feux-tous`) | small | Safer crossings |
 | Bike counters (`cyclistes`) | small | Busy corridors |
 | Mon RésoVélo trips (`trajets-individuels-velo-enregistre-mon-resovelo`) | 41 MB | Real GPS traces to check our routes against |
-| Snow clearing (`deneigement`, Planif-Neige API) | API | Winter mode |
+| Snow clearing (`deneigement`, Planif-Neige API) | API | Real-time clearing status. Not used: it needs a token and covers streets only (see the 2026-10-29 update) |
 | Parks (`grands-parcs-parcs-d-arrondissements-et-espaces-publics`) | ? | Base map and POIs |
 | Public events (`evenements-publics`), car-free events (`cyclovias`) | small | Extras |
 
@@ -86,4 +103,4 @@ All Montreal datasets below are CC BY 4.0 (credit "Ville de Montréal"), from do
 | Protomaps basemap (PMTiles) | ODbL produced work | Self-hosted base tiles |
 | NRCan Automatically Extracted Buildings | Open Government Licence – Canada | Building heights (min/max) from LiDAR |
 | Can-BICS (2018 and 2023) | verify | Comfort classes, for comparison |
-| Environment Canada (MSC Datamart / GeoMet) | Open Government Licence – Canada | Weather and wind, later |
+| Environment Canada (MSC Datamart / GeoMet) | Open Government Licence – Canada | Radar layers (GeoMet) since 2026-10-29. The wind and rain forecast comes from Open-Meteo instead (see above) |
