@@ -11,3 +11,7 @@ tools/shots/node_modules/
 .DS_Store
 Thumbs.db
 *.part
+# Built by the tools but no longer loaded by the app (it uses graph_island.js and draws the network from it)
+prototypes/shared/data/graph_study.js
+prototypes/shared/data/network.js
+prototypes/shared/data/engine_routes.js

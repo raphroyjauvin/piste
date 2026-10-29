@@ -1,0 +1,82 @@
+{
+  "oldport": {
+    "file": "photos/oldport.jpg",
+    "title": "File:Place Jacques-Cartier 062.jpg",
+    "author": "Jeangagnon",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Place_Jacques-Cartier_062.jpg"
+  },
+  "plateau": {
+    "file": "photos/plateau.jpg",
+    "title": "File:Coloured houses (23870984377).jpg",
+    "author": "Hubert Figuière",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Coloured_houses_(23870984377).jpg"
+  },
+  "montroyal": {
+    "file": "photos/montroyal.jpg",
+    "title": "File:20160903 - 02 - Montreal (Mount Royal Park).jpg",
+    "author": "Andre Carrotflower",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:20160903_-_02_-_Montreal_(Mount_Royal_Park).jpg"
+  },
+  "jeantalon": {
+    "file": "photos/jeantalon.jpg",
+    "title": "File:Marché Jean-Talon, outside view, Montréal 2005-09-04.jpg",
+    "author": "Gene.arboit",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:March%C3%A9_Jean-Talon,_outside_view,_Montr%C3%A9al_2005-09-04.jpg"
+  },
+  "olympic": {
+    "file": "photos/olympic.jpg",
+    "title": "File:BRK3180 Olympic Stadium (9836141984).jpg",
+    "author": "Boris Kasimov",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:BRK3180_Olympic_Stadium_(9836141984).jpg"
+  },
+  "jeandrapeau": {
+    "file": "photos/jeandrapeau.jpg",
+    "title": "File:Biosphere on Sainte-Hélène Ile - panoramio.jpg",
+    "author": "Jiaqian AirplaneFan",
+    "license": "CC BY 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/3.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Biosphere_on_Sainte-H%C3%A9l%C3%A8ne_Ile_-_panoramio.jpg"
+  },
+  "visitation": {
+    "file": "photos/visitation.jpg",
+    "title": "File:Parc régional de l'Île-de-la-Visitation (Ahuntsic-Cartierville) (8510428701).jpg",
+    "author": "Parcours riverain - Ville de Montréal",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Parc_r%C3%A9gional_de_l%27%C3%8Ele-de-la-Visitation_(Ahuntsic-Cartierville)_(8510428701).jpg"
+  },
+  "verdun": {
+    "file": "photos/verdun.jpg",
+    "title": "File:Vue aérienne de la plage urbaine de Verdun 3, Montréal, Québec, Canada.jpg",
+    "author": "Maxime Laterreur",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Vue_a%C3%A9rienne_de_la_plage_urbaine_de_Verdun_3,_Montr%C3%A9al,_Qu%C3%A9bec,_Canada.jpg"
+  },
+  "lachine": {
+    "file": "photos/lachine.jpg",
+    "title": "File:Écluses de Lachine, Vieux-Lachine (Lachine) (36204241805).jpg",
+    "author": "Parcours riverain - Ville de Montréal (photo: Denis Tremblay)",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:%C3%89cluses_de_Lachine,_Vieux-Lachine_(Lachine)_(36204241805).jpg"
+  },
+  "pointeclaire": {
+    "file": "photos/pointeclaire.jpg",
+    "title": "File:Pointe-Claire Windmill.jpg",
+    "author": "RedAndr",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Pointe-Claire_Windmill.jpg"
+  }
+}

@@ -21,138 +21,138 @@
 </head>
 <body>
 <div id="map" aria-label="Map"></div>
+<canvas id="wind" class="wind-layer" hidden aria-hidden="true"></canvas>
 
-<aside id="panel" class="panel">
-  <header class="brand">
+<aside id="panel" class="panel" data-sheet="half">
+  <div id="grabber" class="grabber" role="button" tabindex="0" aria-label="Resize panel"><i></i></div>
+  <header class="brand" id="brand">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#0095E6"/><path d="M9 21.5 13.2 11h5.6L23 21.5M13.2 11l3 10.5" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div><h1>Piste</h1><p>Montréal by bike lane · prototype</p></div>
+    <div><h1>Piste</h1><p data-i18n="tagline"></p></div>
   </header>
 
-  <div class="tabs" role="tablist" aria-label="What would you like to do?">
-    <button type="button" role="tab" id="tab-go" class="tab on" aria-selected="true">Go somewhere</button>
-    <button type="button" role="tab" id="tab-suggest" class="tab" aria-selected="false">Suggest a ride</button>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-go" class="tab on" aria-selected="true" data-i18n="tabGo"></button>
+    <button type="button" role="tab" id="tab-suggest" class="tab" aria-selected="false" data-i18n="tabSuggest"></button>
   </div>
 
-  <section class="search" aria-label="Plan a ride">
-    <div class="field"><span class="dot from" aria-hidden="true"></span>
-      <input id="from" placeholder="Start: address, place, or Rachel &amp; Papineau" autocomplete="off" spellcheck="false">
-      <button class="pick" data-target="from" title="Pick the start on the map" aria-label="Pick start on map"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+  <div class="seg suggest-only" role="radiogroup" hidden>
+    <label><input type="radio" name="smode" value="classics" checked><span data-i18n="classics"></span></label>
+    <label><input type="radio" name="smode" value="custom"><span data-i18n="custom"></span></label>
+  </div>
+
+  <section id="classics" class="classics classics-only" hidden>
+    <div id="classic-track" class="classic-track"></div>
+    <div id="classic-dots" class="classic-dots" aria-hidden="true"></div>
+  </section>
+
+  <section class="search go-or-custom" aria-label="Plan a ride">
+    <label for="from" class="field-label custom-only" data-i18n="startLabel" hidden></label>
+    <div class="field"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg></span>
+      <input id="from" data-i18n-ph="fromPh" autocomplete="off" spellcheck="false">
+      <button type="button" class="pick" data-target="from" data-i18n-title="pickFrom"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
     </div>
-    <div class="field go-only"><span class="dot to" aria-hidden="true"></span>
-      <input id="to" placeholder="Destination" autocomplete="off" spellcheck="false">
-      <button class="pick" data-target="to" title="Pick the destination on the map" aria-label="Pick destination on map"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+    <div class="field go-only"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#0095E6" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#0095E6"/></svg></span>
+      <input id="to" data-i18n-ph="toPh" autocomplete="off" spellcheck="false">
+      <button type="button" class="pick" data-target="to" data-i18n-title="pickTo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
     </div>
     <ul id="suggest" class="suggest" hidden></ul>
-    <div class="trips go-only"><span>Test trips</span><div id="trip-chips"></div></div>
   </section>
 
-  <section id="suggest-form" class="suggest-form suggest-only" aria-label="Suggest a ride" hidden>
-    <div class="seg" role="radiogroup" aria-label="Kind of ride">
-      <label><input type="radio" name="shape" value="loop" checked><span>Loop back here</span></label>
-      <label><input type="radio" name="shape" value="oneway"><span>One-way</span></label>
+  <section id="suggest-form" class="suggest-form custom-only" hidden>
+    <div class="seg" role="radiogroup">
+      <label><input type="radio" name="shape" value="loop" checked><span data-i18n="loopHere"></span></label>
+      <label><input type="radio" name="shape" value="oneway"><span data-i18n="oneWay"></span></label>
     </div>
-    <div class="pref-row"><label for="km">Distance</label><output id="km-out">10 km</output></div>
-    <input id="km" type="range" min="2" max="20" step="1" value="10">
-    <div class="ends"><span>2 km</span><span>20 km</span></div>
-    <div class="stop-pick"><span id="stop-label">Stop on the way <em>optional</em></span><div id="stop-chips" class="stop-chips" role="radiogroup" aria-labelledby="stop-label"></div></div>
+    <div class="pref-row"><label for="km-num" data-i18n="distance"></label>
+      <span class="km-box"><input id="km-num" type="number" min="1" max="100" step="1" value="10" inputmode="numeric"> km <output id="km-time"></output></span></div>
+    <input id="km" type="range" min="1" max="100" step="1" value="10" aria-label="km">
+    <div class="ends"><span>1 km</span><span>100 km</span></div>
+    <div class="stop-pick"><span id="stop-label"><span data-i18n="stopOnWay"></span> <em data-i18n="optional"></em></span>
+      <div id="stop-chips" class="stop-chips" role="radiogroup" aria-labelledby="stop-label"></div></div>
+    <label class="check"><input id="avoid-wind" type="checkbox"> <span data-i18n="avoidWind"></span></label>
   </section>
 
-  <section class="prefs">
-    <div class="pref-row">
-      <label for="strict">Route style</label><output id="strict-out">Bike lanes first</output>
-    </div>
-    <input id="strict" type="range" min="0" max="100" value="85" step="1" aria-describedby="strict-hint">
-    <div id="strict-hint" class="ends"><span>Most direct</span><span>Most bike lanes</span></div>
-    <label class="check"><input id="hills" type="checkbox"> Avoid hills when it costs little</label>
+  <section class="prefs go-or-custom">
+    <div class="pref-row"><label for="strict" data-i18n="routeStyle"></label><output id="strict-out"></output></div>
+    <input id="strict" type="range" min="0" max="100" value="85" step="1">
+    <div class="ends"><span data-i18n="mostDirect"></span><span data-i18n="mostLanes"></span></div>
+    <label class="check"><input id="hills" type="checkbox"> <span data-i18n="avoidHills"></span></label>
   </section>
 
   <section id="routes" class="routes" aria-live="polite"></section>
   <section id="detail" class="detail"></section>
-  <section id="explore-note" class="explore-note">
-    <h2>Explore</h2>
-    <p>Pick a test trip or type two places. Click the map to drop the start, then the destination. Turn on <b>Planned &amp; in construction</b> in Layers to see what the City is building. It only shows while you browse, never on a route.</p>
-  </section>
-  <footer class="credits">Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 · STM · BIXI · OpenFreeMap</footer>
+  <footer class="credits">Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 · STM · BIXI · Open-Meteo · ECCC · OpenFreeMap</footer>
 </aside>
 
 <div class="map-controls">
-  <button id="view-btn" class="view-btn" title="Switch to bird's-eye 3D" aria-label="Switch view">
-    <svg viewBox="0 0 32 32" aria-hidden="true"><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g></svg>
+  <button type="button" id="view-btn" class="view-btn" data-i18n-title="to3d">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g></svg>
     <span id="view-label">3D</span>
   </button>
-  <button id="layers-btn" class="ctl-btn" aria-expanded="false" aria-controls="layers">Layers</button>
+  <button type="button" id="wx-btn" class="round-btn" aria-pressed="false" data-i18n-title="weatherBtn">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path class="drop" d="M9.5 7.5c2.8 4.1 4.6 6.8 4.6 9a4.6 4.6 0 0 1-9.2 0c0-2.2 1.8-4.9 4.6-9z"/><path class="slash" d="M15.5 25 19 7"/><path d="M20.5 12.5h5.2a2.4 2.4 0 1 0-2.4-2.4M20.5 17h7.3a2.4 2.4 0 1 1-2.4 2.4M20.5 21.5h3.5"/></svg>
+  </button>
+  <button type="button" id="winter-btn" class="round-btn" aria-pressed="false" data-i18n-title="winterBtn">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 4v24M5.6 10l20.8 12M5.6 22l20.8-12M12.6 5.8 16 8.6l3.4-2.8M12.6 26.2 16 23.4l3.4 2.8M4.7 14.4l4.1-1.5L8 8.6M27.3 17.6l-4.1 1.5.8 4.3M4.7 17.6l4.1 1.5-.8 4.3M27.3 14.4l-4.1-1.5.8-4.3"/></svg>
+  </button>
+  <button type="button" id="lang-btn" class="round-btn lang-btn" data-i18n-title="langBtn">FR</button>
+  <button type="button" id="layers-btn" class="ctl-btn" aria-expanded="false" aria-controls="layers" data-i18n="layers"></button>
   <div id="layers" class="layers" hidden>
-    <h3>Map layers</h3>
-    <label><input type="checkbox" data-layer="network" checked> Bike network</label>
-    <label><input type="checkbox" data-layer="planned"> Planned &amp; in construction <em>browse only</em></label>
-    <label><input type="checkbox" data-layer="works" checked> Works blocking bike lanes</label>
-    <label><input type="checkbox" data-layer="pois-food" checked> Cafés &amp; food</label>
-    <label><input type="checkbox" data-layer="pois-shop" checked> Shops</label>
-    <label><input type="checkbox" data-layer="pois-bike" checked> BIXI, water, repair, parking</label>
-    <label><input type="checkbox" data-layer="pois-out" checked> Parks, culture, metro</label>
-    <h3>Elevation</h3>
-    <label><input type="checkbox" data-layer="tint" checked> Elevation colours</label>
-    <label><input type="checkbox" data-layer="relief" checked> Hill shading <em>LiDAR 2023</em></label>
-    <label><input type="checkbox" data-layer="contours" checked> Contours, every 5 m</label>
-    <label><input type="checkbox" data-layer="terrain" checked> Terrain relief <em>in 3D</em></label>
-    <h3>Other</h3>
-    <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
-    <label id="engines-row" hidden><input type="checkbox" data-layer="engines"> Compare other routing engines</label>
+    <h3 data-i18n="layersMap"></h3>
+    <label><input type="checkbox" data-layer="network" checked> <span data-i18n="lyNetwork"></span></label>
+    <label><input type="checkbox" data-layer="planned"> <span data-i18n="lyPlanned"></span> <em data-i18n="lyBrowseOnly"></em></label>
+    <label><input type="checkbox" data-layer="works" checked> <span data-i18n="lyWorks"></span></label>
+    <label><input type="checkbox" data-layer="pois-food" checked> <span data-i18n="lyFood"></span></label>
+    <label><input type="checkbox" data-layer="pois-shop" checked> <span data-i18n="lyShops"></span></label>
+    <label><input type="checkbox" data-layer="pois-bike" checked> <span data-i18n="lyBike"></span></label>
+    <label><input type="checkbox" data-layer="metro" checked> <span data-i18n="lyMetro"></span></label>
+    <label><input type="checkbox" data-layer="culture" checked> <span data-i18n="lyCulture"></span></label>
+    <label><input type="checkbox" data-layer="buildings" checked> <span data-i18n="lyBuildings"></span></label>
+    <h3 data-i18n="layersElev"></h3>
+    <label><input type="checkbox" data-layer="tint" checked> <span data-i18n="lyTint"></span></label>
+    <label><input type="checkbox" data-layer="relief" checked> <span data-i18n="lyRelief"></span></label>
+    <label><input type="checkbox" data-layer="contours" checked> <span data-i18n="lyContours"></span></label>
+    <label><input type="checkbox" data-layer="terrain" checked> <span data-i18n="lyTerrain"></span> <em data-i18n="lyIn3d"></em></label>
   </div>
 </div>
 
+<div id="wx-card" class="wx-card" hidden aria-live="polite"></div>
+
 <div id="legend" class="legend">
   <details>
-    <summary>Legend</summary>
-    <div class="lg-group"><b>Your route</b>
-      <span><i class="sw sw-a"></i>Protected</span><span><i class="sw sw-b"></i>Painted lane</span><span><i class="sw sw-c"></i>Shared lane</span><span><i class="sw sw-gap"></i>No bike lane</span>
-      <span><i class="sw-chev" aria-hidden="true">›››</i>Climb (more chevrons = steeper)</span>
+    <summary data-i18n="legend"></summary>
+    <div class="lg-group"><b data-i18n="lgRoute"></b>
+      <span><i class="sw sw-a"></i><span data-i18n="lgProtected"></span></span><span><i class="sw sw-b"></i><span data-i18n="lgPainted"></span></span>
+      <span><i class="sw sw-c"></i><span data-i18n="lgShared"></span></span><span><i class="sw sw-gap"></i><span data-i18n="lgNoLane"></span></span>
     </div>
-    <div class="lg-group"><b>Bike network</b>
-      <span><i class="sw sw-rev"></i>REV</span><span><i class="sw sw-net"></i>Bike lanes &amp; paths</span><span><i class="sw sw-plan"></i>Planned (browse only)</span>
+    <div class="lg-group"><b data-i18n="lgNetwork"></b>
+      <span class="summer-only"><i class="sw sw-rev"></i>REV</span><span class="summer-only"><i class="sw sw-net"></i><span data-i18n="lgLanes"></span></span>
+      <span class="summer-only"><i class="sw sw-plan"></i><span data-i18n="lgPlanned"></span></span>
+      <span class="winter-only"><i class="sw sw-4s"></i><span data-i18n="lg4s"></span></span><span class="winter-only"><i class="sw sw-not4s"></i><span data-i18n="lgNot4s"></span></span>
     </div>
-    <div class="lg-group"><b>Elevation above sea level</b>
+    <div class="lg-group"><b data-i18n="lgElev"></b>
       <div class="elev-legend"><i id="elev-ramp" class="elev-ramp"></i><div id="elev-ticks" class="elev-ticks"></div></div>
-      <span><i class="sw sw-contour"></i>Contour every 5 m, bold every 25 m</span>
+      <span><i class="sw sw-contour"></i><span data-i18n="lgContours"></span></span>
     </div>
   </details>
 </div>
 
 <div id="ride-hud" class="ride-hud" hidden>
-  <div class="turn-card"><div id="turn-icon" class="turn-icon" aria-hidden="true"></div><div><b id="turn-dist">—</b><span id="turn-text">Starting…</span></div></div>
+  <div class="turn-card"><div id="turn-icon" class="turn-icon" aria-hidden="true"></div><div><b id="turn-dist">—</b><span id="turn-text"></span></div></div>
   <div id="gap-card" class="gap-card" hidden></div>
   <div id="hill-card" class="hill-card" hidden aria-live="polite">
     <div id="hill-spark" class="hill-spark" aria-hidden="true"></div>
     <div class="hill-text"><b id="hill-title"></b><span id="hill-sub"></span></div>
   </div>
   <div class="ride-bar">
-    <div class="progress"><i id="progress"></i></div>
-    <span id="ride-remaining">—</span>
-    <button id="ride-view" class="view-btn small" title="Top-down or bird's-eye" aria-label="Switch view"><svg viewBox="0 0 32 32" aria-hidden="true"><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g></svg></button>
-    <button id="ride-speed" class="ctl-btn" title="Simulation speed">4×</button>
-    <button id="ride-pause" class="ctl-btn">Pause</button>
-    <button id="ride-exit" class="ctl-btn">End</button>
-  </div>
-</div>
-
-<div id="sheet" class="sheet-wrap" hidden>
-  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-    <h2 id="sheet-title">Before you ride</h2>
-    <fieldset>
-      <legend>Alerts</legend>
-      <label><input type="checkbox" checked disabled> On-screen alerts</label>
-      <label><input id="opt-chime" type="checkbox" checked> Soft chime before a stretch without a bike lane</label>
-      <label><input id="opt-voice" type="checkbox"> Voice prompts through the speaker</label>
-      <label><input id="opt-cmd" type="checkbox"> Voice commands: "next turn", "pause", "resume"</label>
-      <label class="off"><input type="checkbox" disabled> Watch taps (iPhone app only)</label>
-    </fieldset>
-    <fieldset>
-      <legend>View while riding</legend>
-      <label><input type="radio" name="opt-view" value="birdseye" checked> Bird's-eye 3D</label>
-      <label><input type="radio" name="opt-view" value="topdown"> Top-down</label>
-    </fieldset>
-    <p class="law">In Québec you can't handle a phone or wear earphones while cycling. Mount the phone; prompts use the speaker. Touch controls stay available.</p>
-    <div class="actions"><button id="sheet-cancel" class="ctl-btn">Cancel</button><button id="sheet-start" class="primary">Start simulated ride</button></div>
+    <div class="ride-progress"><div class="progress"><i id="progress"></i></div><span id="ride-remaining">—</span></div>
+    <div class="ride-buttons">
+      <button type="button" id="ride-sound" class="ctl-btn icon-btn" title="Sound"></button>
+      <button type="button" id="ride-view" class="view-btn small" aria-label="Switch view"><svg viewBox="0 0 32 32" aria-hidden="true"><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g></svg></button>
+      <button type="button" id="ride-speed" class="ctl-btn" title="Simulation speed">4×</button>
+      <button type="button" id="ride-pause" class="ctl-btn" data-i18n="pause"></button>
+      <button type="button" id="ride-exit" class="ctl-btn" data-i18n="end"></button>
+    </div>
   </div>
 </div>
 
@@ -160,8 +160,8 @@
 
 <script src="../vendor/maplibre/maplibre-gl.js"></script>
 <script src="../shared/router.js"></script>
-<script src="../shared/data/graph_study.js"></script>
-<script src="../shared/data/network.js"></script>
+<script src="../shared/i18n.js"></script>
+<script src="../shared/data/graph_island.js"></script>
 <script src="../shared/data/planned.js"></script>
 <script src="../shared/data/pois.js"></script>
 <script src="../shared/data/contours.js"></script>
@@ -170,9 +170,11 @@
 <script src="../shared/data/terrain_index.js"></script>
 <script src="../shared/data/buildings_packed.js"></script>
 <script src="../shared/data/trips.js"></script>
-<script src="../shared/data/engine_routes.js"></script>
+<script src="../shared/data/classics.js"></script>
 <script src="../shared/common.js"></script>
 <script src="../shared/suggest.js"></script>
+<script src="../shared/weather.js"></script>
+<script src="../shared/bixi.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-﻿// Scripted screenshots of the app (drives the installed Microsoft Edge through playwright-core).
+// Scripted screenshots of the app (drives the installed Microsoft Edge through playwright-core).
 // Usage: node C:\bikeapp\tools\shots\shoot.mjs [filter]   (server must be running on http://localhost:8765)
 import { chromium } from "playwright-core";
 import fs from "node:fs";
@@ -13,19 +13,27 @@ const desktop = { w: 1440, h: 900, scale: 1 };
 const phone = { w: 402, h: 874, scale: 2, mobile: true };   // iPhone 17 / 17 Pro size in CSS pixels
 const APP = "a-positron/index.html";
 const SHOTS = [
-  { name: "P0-phone-preview", url: "phone.html", w: 1440, h: 980, scale: 1, page: true, wait: 12000 },
+  { name: "P0-phone-preview", url: "phone.html", w: 1440, h: 980, scale: 1, page: true, wait: 14000 },
   { name: "A1-route", url: `${APP}?trip=montroyal`, ...desktop },
   { name: "A2-birdseye", url: `${APP}?trip=montroyal`, ...desktop, steps: [["eval", "window.__app.set3d(true)"], ["wait", 3500]] },
-  { name: "A3-elevation", url: `${APP}?trip=none`, ...desktop, steps: [["eval", "window.__app.map.jumpTo({center:[-73.582,45.516],zoom:14.1})"], ["wait", 2500]] },
+  { name: "A3-elevation", url: `${APP}`, ...desktop, steps: [["eval", "window.__app.map.jumpTo({center:[-73.582,45.516],zoom:14.1})"], ["wait", 2500]] },
+  { name: "A3b-contours-on-climbs", url: `${APP}`, ...desktop, steps: [["eval", "window.__app.map.jumpTo({center:[-73.5800,45.5200],zoom:15.6})"], ["wait", 2500]] },
   { name: "A4-climb-route", url: `${APP}?trip=rachel`, ...desktop, steps: [["wait", 1500]] },
   { name: "A5-ride-hill-ahead", url: `${APP}?trip=rachel&ride=bird&at=650&paused`, ...desktop, steps: [["wait", 4000]] },
   { name: "A6-ride-climbing", url: `${APP}?trip=rachel&ride=bird&at=1500&paused`, ...desktop, steps: [["wait", 4000]] },
   { name: "A7-ride-topdown", url: `${APP}?trip=biodome&ride=top&at=600&paused`, ...desktop, steps: [["wait", 3000]] },
-  { name: "A8-explore-planned", url: `${APP}?trip=none`, ...desktop, steps: [["eval", "document.querySelector('[data-layer=planned]').click(); window.__app.map.jumpTo({center:[-73.585,45.537],zoom:13.3})"], ["wait", 2500]] },
-  { name: "A9-suggest-loop", url: `${APP}?trip=montroyal&suggest=loop&km=10&stop=cafe`, ...desktop, steps: [["wait", 1500]] },
-  { name: "P3-phone-suggest", url: `${APP}?trip=montroyal&suggest=loop&km=10&safe=62,34`, ...phone, steps: [["wait", 1500]] },
+  { name: "A8-explore-planned", url: `${APP}`, ...desktop, steps: [["eval", "document.querySelector('[data-layer=planned]').click(); window.__app.map.jumpTo({center:[-73.585,45.537],zoom:13.3})"], ["wait", 2500]] },
+  { name: "A9-suggest-loop", url: `${APP}?trip=montroyal&suggest=loop&km=10&stop=cafe`, ...desktop, steps: [["wait", 2000]] },
+  { name: "A10-classics", url: `${APP}?classic=lachine`, ...desktop, steps: [["wait", 2500]] },
+  { name: "A11-winter", url: `${APP}?trip=montroyal&winter=1`, ...desktop, steps: [["wait", 3500]] },
+  { name: "A12-wind-rain", url: `${APP}?trip=rachel&wx=1`, ...desktop, steps: [["wait", 4500]] },
+  { name: "A13-french", url: `${APP}?trip=montroyal&lang=fr`, ...desktop, steps: [["wait", 1500]] },
+  { name: "A14-bixi-live", url: `${APP}`, ...desktop, steps: [["wait", 3000], ["eval", "window.__app.map.jumpTo({center:[-73.5800,45.5230],zoom:16.2})"], ["wait", 3000]] },
   { name: "P1-phone-route", url: `${APP}?trip=rachel&safe=62,34`, ...phone, steps: [["wait", 1500]] },
   { name: "P2-phone-ride", url: `${APP}?trip=rachel&ride=bird&at=650&paused&safe=62,34`, ...phone, steps: [["wait", 4000]] },
+  { name: "P3-phone-suggest", url: `${APP}?trip=montroyal&suggest=loop&km=10&safe=62,34`, ...phone, steps: [["wait", 2000]] },
+  { name: "P4-phone-classics", url: `${APP}?classic=oldport&safe=62,34`, ...phone, steps: [["wait", 2500]] },
+  { name: "P5-phone-winter-fr", url: `${APP}?trip=montroyal&winter=1&lang=fr&safe=62,34`, ...phone, steps: [["wait", 3500]] },
 ];
 
 const filter = process.argv[2];

@@ -31,25 +31,29 @@
     bag: '<path d="M5.5 8.5h13l-1.2 11.5H6.7zM9 10.5V7.3a3 3 0 0 1 6 0v3.2"/>',
   };
   const POI_KINDS = {
-    bixi: { label: "BIXI station", color: "#EE3124", glyph: "bike", minzoom: 15.6, group: "bike" },
-    metro: { label: "Metro", color: "#FFFFFF", glyph: "metro", minzoom: 12, group: "transit" },
-    cafe: { label: "Café", color: "#9A4A16", glyph: "cup", minzoom: 15.8, group: "food" },
-    food: { label: "Restaurant", color: STM.orange, glyph: "fork", minzoom: 16.8, group: "food" },
-    bakery: { label: "Bakery", color: "#C0762A", glyph: "bread", minzoom: 16.2, group: "food" },
-    icecream: { label: "Ice cream", color: "#D9677B", glyph: "cone", minzoom: 16.2, group: "food" },
-    bar: { label: "Bar", color: "#7A3420", glyph: "glass", minzoom: 17, group: "food" },
-    market: { label: "Market", color: "#B5651D", glyph: "basket", minzoom: 15.5, group: "food" },
-    shop: { label: "Shop", color: "#9C4F86", glyph: "bag", minzoom: 17, group: "shopping" },
-    water: { label: "Drinking water", color: "#0094B8", glyph: "drop", minzoom: 16.2, group: "bike" },
-    repair: { label: "Bike repair stand", color: "#006FB0", glyph: "wrench", minzoom: 15, group: "bike" },
-    bikeshop: { label: "Bike shop", color: STM.blue, glyph: "bike", minzoom: 15, group: "bike" },
-    parking: { label: "Bike parking", color: "#5C8FB8", glyph: "rack", minzoom: 17.8, group: "bike" },
-    toilets: { label: "Toilets", color: "#6B7078", glyph: "wc", minzoom: 16.8, group: "services" },
-    park: { label: "Park", color: "#3E8E57", glyph: "tree", minzoom: 14.6, group: "outdoors" },
-    viewpoint: { label: "Viewpoint", color: "#3E8E57", glyph: "peak", minzoom: 14.6, group: "outdoors" },
-    culture: { label: "Museum / culture", color: "#6E5AA0", glyph: "columns", minzoom: 15.8, group: "outdoors" },
-    works: { label: "Works blocking a bike lane", color: STM.yellow, glyph: "works", minzoom: 13, group: "alerts", dark: true },
+    bixi: { label: "BIXI station", fr: "Station BIXI", color: "#EE3124", glyph: "bike", minzoom: 15.6, group: "bike" },
+    metro: { label: "Metro", fr: "Métro", color: "#FFFFFF", glyph: "metro", minzoom: 12, group: "transit" },
+    cafe: { label: "Café", fr: "Café", color: "#9A4A16", glyph: "cup", minzoom: 15.8, group: "food" },
+    food: { label: "Restaurant", fr: "Restaurant", color: STM.orange, glyph: "fork", minzoom: 16.8, group: "food" },
+    bakery: { label: "Bakery", fr: "Boulangerie", color: "#C0762A", glyph: "bread", minzoom: 16.2, group: "food" },
+    icecream: { label: "Ice cream", fr: "Crème glacée", color: "#D9677B", glyph: "cone", minzoom: 16.2, group: "food" },
+    bar: { label: "Bar", fr: "Bar", color: "#7A3420", glyph: "glass", minzoom: 17, group: "food" },
+    market: { label: "Market", fr: "Marché", color: "#B5651D", glyph: "basket", minzoom: 15.5, group: "food" },
+    shop: { label: "Shop", fr: "Boutique", color: "#9C4F86", glyph: "bag", minzoom: 17, group: "shopping" },
+    water: { label: "Drinking water", fr: "Eau potable", color: "#0094B8", glyph: "drop", minzoom: 16.2, group: "bike" },
+    repair: { label: "Bike repair stand", fr: "Station de réparation", color: "#006FB0", glyph: "wrench", minzoom: 15, group: "bike" },
+    bikeshop: { label: "Bike shop", fr: "Boutique de vélo", color: STM.blue, glyph: "bike", minzoom: 15, group: "bike" },
+    parking: { label: "Bike parking", fr: "Stationnement vélo", color: "#5C8FB8", glyph: "rack", minzoom: 17.8, group: "bike" },
+    toilets: { label: "Toilets", fr: "Toilettes", color: "#6B7078", glyph: "wc", minzoom: 16.8, group: "services" },
+    park: { label: "Park", fr: "Parc", color: "#3E8E57", glyph: "tree", minzoom: 14.6, group: "outdoors" },
+    viewpoint: { label: "Viewpoint", fr: "Belvédère", color: "#3E8E57", glyph: "peak", minzoom: 14.6, group: "outdoors" },
+    culture: { label: "Museum / culture", fr: "Musée / culture", color: "#6E5AA0", glyph: "columns", minzoom: 15.8, group: "outdoors" },
+    works: { label: "Works blocking a bike lane", fr: "Travaux sur une voie cyclable", color: STM.yellow, glyph: "works", minzoom: 13, group: "alerts", dark: true },
   };
+
+  const lang = () => (window.BikeI18n || {}).lang || "en";
+  // POI kind label in the current language
+  function poiLabel(kind) { const k = POI_KINDS[kind] || {}; return (lang() === "fr" && k.fr) || k.label || ""; }
 
   function metroRing(lines) {
     const cols = { "1": STM.green, "2": STM.orange, "4": STM.yellow, "5": STM.blue };
@@ -149,7 +153,7 @@
     const cur = buildCursor(route);
     return {
       type: "FeatureCollection",
-      features: route.gaps.map((g, i) => {
+      features: route.gaps.filter((g) => g.length >= GAP_MIN).map((g, i) => {
         const p = cur.at(g.start + 1);
         return { type: "Feature", id: i, geometry: { type: "Point", coordinates: [p.lon, p.lat] },
           properties: { len: Math.round(g.length), busy: g.busy ? 1 : 0, name: g.names[0] || "" } };
@@ -160,9 +164,16 @@
   // ---------------------------------------------------------------- formatting
   const SPEED_KMH = 16;
   function rideMinutes(route) { return route.length / 1000 / SPEED_KMH * 60 + route.climb / 10; }
-  const fmtKm = (m) => (m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + " km" : Math.round(m / 10) * 10 + " m");
-  const fmtMin = (min) => (min < 1 ? "<1 min" : Math.round(min) + " min");
-  const fmtPct = (x) => Math.round(x * 100) + "%";
+  const fmtKm = (m) => {
+    if (m < 1000) return Math.round(m / 10) * 10 + " m";
+    const v = (m / 1000).toFixed(m >= 10000 ? 0 : 1);
+    return (lang() === "fr" ? v.replace(".", ",") : v) + " km";
+  };
+  const fmtMin = (min) => (window.BikeI18n ? window.BikeI18n.duration(min) : min < 1 ? "<1 min" : Math.round(min) + " min");
+  const fmtPct = (x) => (window.BikeI18n ? window.BikeI18n.pct(x) : Math.round(x * 100) + "%");
+  // stretches without a bike lane worth telling the rider about (shorter ones are street crossings and joins)
+  const GAP_MIN = 50;
+  const mainGaps = (route, min = GAP_MIN) => route.gaps.filter((g) => g.length >= min);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   // ---------------------------------------------------------------- route POIs & ride look-ahead
@@ -213,8 +224,9 @@
 
   function lookahead(route, d, extras) {
     const next = route.maneuvers.find((m) => m.at > d + 3);
-    const inGap = route.gaps.find((g) => d >= g.start && d < g.start + g.length);
-    const nextGap = route.gaps.find((g) => g.start > d);
+    const gaps = extras.gaps || route.gaps;
+    const inGap = gaps.find((g) => d >= g.start && d < g.start + g.length);
+    const nextGap = gaps.find((g) => g.start > d);
     const hills = extras.climbs || [];
     const hill = hills.find((h) => h.start + h.length > d && h.start - d < 600);
     const pois = (extras.pois || []).filter((p) => p.along > d - 20 && p.along < d + 320);
@@ -279,14 +291,16 @@
     const W = opts.width || 320, H = opts.height || 84, padB = 14, padT = 10;
     const pr = route.profile; if (!pr || pr.length < 2) return "";
     const zs = pr.map((p) => p[1]); let zmin = Math.min(...zs), zmax = Math.max(...zs);
-    if (zmax - zmin < 12) { const m = (zmax + zmin) / 2; zmin = m - 6; zmax = m + 6; }
+    const minRange = opts.minRange || 12;
+    if (zmax - zmin < minRange) { const m = (zmax + zmin) / 2; zmin = m - minRange / 2; zmax = m + minRange / 2; }
+    zmax += (zmax - zmin) * (opts.headroom || 0);
     const L = route.length || 1;
     const X = (d) => (d / L) * W, Y = (z) => padT + (1 - (z - zmin) / (zmax - zmin)) * (H - padT - padB);
     let line = "";
     pr.forEach(([d, z], i) => { line += `${i ? "L" : "M"}${X(d).toFixed(1)} ${Y(z).toFixed(1)}`; });
     const area = `M0 ${H - padB}L${line.slice(1)}L${W} ${H - padB}Z`;
     const band = route.pieces.map((p) => `<rect x="${X(p.start).toFixed(1)}" y="${H - padB + 3}" width="${Math.max(0.6, X(p.length)).toFixed(1)}" height="6" fill="${opts.tierColors[p.tier]}"/>`).join("");
-    const gapShade = route.gaps.map((g) => `<rect x="${X(g.start).toFixed(1)}" y="${padT}" width="${Math.max(1, X(g.length)).toFixed(1)}" height="${H - padT - padB}" fill="${opts.gapShade}"/>`).join("");
+    const gapShade = (opts.gaps || route.gaps).map((g) => `<rect x="${X(g.start).toFixed(1)}" y="${padT}" width="${Math.max(1, X(g.length)).toFixed(1)}" height="${H - padT - padB}" fill="${opts.gapShade}"/>`).join("");
     // climbs: a warmer fill under the line, and "+N m" above the bigger ones
     const cl = opts.climbs || [];
     const clipId = "pc" + Math.random().toString(36).slice(2, 8);
@@ -308,9 +322,8 @@
     const local = [];
     (window.POIS || []).forEach((p) => {
       if (!p[1] || p[0] === "parking") return;
-      local.push({ label: p[1], sub: (POI_KINDS[p[0]] || {}).label || "", lon: p[2], lat: p[3], kind: p[0], rank: p[0] === "metro" ? 3 : p[0] === "park" ? 2 : 1 });
+      local.push({ label: p[1], kind: p[0], lon: p[2], lat: p[3], rank: p[0] === "metro" ? 3 : p[0] === "park" ? 2 : 1 });
     });
-    (window.TRIPS || []).forEach((t) => { local.push({ label: t.from.label, sub: "Test trip start", lon: t.from.lonlat[0], lat: t.from.lonlat[1], rank: 2 }); local.push({ label: t.to.label, sub: "Test trip end", lon: t.to.lonlat[0], lat: t.to.lonlat[1], rank: 2 }); });
     const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
     // intersections "Rachel & Papineau"
     const nodeNames = new Map();
@@ -335,9 +348,9 @@
       const nq = norm(q.trim());
       if (nq.length < 2) return [];
       const m = nq.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
-      if (m) { const a = +m[1], b = +m[2]; return [{ label: q, sub: "Coordinates", lon: a < -60 ? a : b, lat: a < -60 ? b : a }]; }
+      if (m) { const a = +m[1], b = +m[2]; return [{ label: q, sub: lang() === "fr" ? "Coordonnées" : "Coordinates", lon: a < -60 ? a : b, lat: a < -60 ? b : a }]; }
       const res = [...intersections(q)];
-      local.filter((p) => norm(p.label).includes(nq)).sort((a, b) => b.rank - a.rank).slice(0, 6).forEach((p) => res.push(p));
+      local.filter((p) => norm(p.label).includes(nq)).sort((a, b) => b.rank - a.rank).slice(0, 6).forEach((p) => res.push(Object.assign({ sub: poiLabel(p.kind) }, p)));
       if (ctrl) ctrl.abort();
       ctrl = new AbortController();
       try {
@@ -346,7 +359,9 @@
           const j = await r.json();
           (j.items || []).forEach((it) => {
             if (!it.coordinates) return;
-            res.push({ label: it.humanReadableCode?.valueEn || it.humanReadableCode?.valueFr || q, sub: "Address (Ville de Montréal)", lon: it.coordinates.lon, lat: it.coordinates.lat });
+            const fr = lang() === "fr";
+            res.push({ label: (fr ? it.humanReadableCode?.valueFr : it.humanReadableCode?.valueEn) || it.humanReadableCode?.valueEn || it.humanReadableCode?.valueFr || q,
+              sub: fr ? "Adresse (Ville de Montréal)" : "Address (Ville de Montréal)", lon: it.coordinates.lon, lat: it.coordinates.lat });
           });
         }
       } catch (e) { /* offline or aborted: local results only */ }
@@ -362,7 +377,7 @@
       this.d = 0; this.speed = (opts.kmh || SPEED_KMH) / 3.6; this.mult = opts.mult || 4;
       this.onFrame = opts.onFrame || (() => {}); this.onEvent = opts.onEvent || (() => {});
       this.running = false; this._last = null; this._fired = new Set();
-      this.extras = { climbs: climbs(route), pois: opts.pois || [] };
+      this.extras = { climbs: climbs(route), pois: opts.pois || [], gaps: mainGaps(route) };
     }
     start() { if (this.running) return; this.running = true; this._last = performance.now(); requestAnimationFrame((t) => this._tick(t)); }
     pause() { this.running = false; }
@@ -394,7 +409,9 @@
     say(text) {
       if (!this.enabled || !window.speechSynthesis) return;
       const u = new SpeechSynthesisUtterance(text);
-      const v = speechSynthesis.getVoices().find((x) => /en-CA/i.test(x.lang)) || speechSynthesis.getVoices().find((x) => /^en/i.test(x.lang));
+      const L = lang(), vs = speechSynthesis.getVoices();
+      const v = vs.find((x) => new RegExp(`^${L}-CA`, "i").test(x.lang)) || vs.find((x) => new RegExp(`^${L}`, "i").test(x.lang));
+      u.lang = L === "fr" ? "fr-CA" : "en-CA";
       if (v) u.voice = v;
       u.rate = 1.02; speechSynthesis.cancel(); speechSynthesis.speak(u);
     },
@@ -412,12 +429,15 @@
   };
 
   function gapSentence(g, dist) {
-    const where = g.names[0] ? ` on ${g.names[0]}` : "";
-    return `In ${Math.round(dist / 10) * 10} metres, ${Math.round(g.length / 10) * 10} metres without a bike lane${where}${g.busy ? ", with traffic" : ""}.`;
+    const I = window.BikeI18n;
+    const d = Math.round(dist / 10) * 10, m = Math.round(g.length / 10) * 10;
+    if (!I) return `In ${d} metres, ${m} metres without a bike lane${g.names[0] ? ` on ${g.names[0]}` : ""}${g.busy ? ", with traffic" : ""}.`;
+    const on = g.names[0] ? (I.lang === "fr" ? ` sur ${I.place(g.names[0])}` : ` on ${I.place(g.names[0])}`) : "";
+    return I.t("gapVoice", { d, m, on, busy: g.busy ? I.t("gapVoiceBusy") : "" });
   }
 
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
-    elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON,
+    elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
     profileSVG, makeGeocoder, RideSim, voice, gapSentence, buildCursor, distM };
 })();

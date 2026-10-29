@@ -1,10 +1,17 @@
-/* Piste (prototype A, Positron light): MapLibre GL JS + our in-browser router. */
+/* Piste (prototype A, Positron light): MapLibre GL JS + our in-browser router on the island-wide graph.
+   Go somewhere · Suggest a ride (classic rides and custom loops) · simulated ride with hill-ahead 3D ·
+   winter mode (4-season network) · wind & rain · live BIXI · English / French. */
 (async function () {
   "use strict";
-  const C = window.BikeCommon;
+  const C = window.BikeCommon, I = window.BikeI18n, WX = window.BikeWeather, BX = window.BikeBixi;
   const { Router, weightsFor, PROFILES } = window.BikeRouter;
   const $ = (s) => document.querySelector(s);
+  const t = (k, v) => I.t(k, v);
   const params = new URLSearchParams(location.search);
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  I.lang = ["en", "fr"].includes(params.get("lang")) ? params.get("lang") : I.initial();
+  I.apply();
 
   // The phone preview passes simulated safe areas (?safe=top,bottom in px), because desktop browsers report 0.
   if (params.get("safe")) {
@@ -13,12 +20,12 @@
     document.documentElement.style.setProperty("--safe-bottom", `${bottom || 0}px`);
   }
   let toastT = null;
-  function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 3200); }
+  function toast(msg) { const el = $("#toast"); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (el.hidden = true), 3600); }
 
   // ------------------------------------------------------------------ palette (STM metro colours, softened gap orange)
   const COL = {
     a: "#0095E6", b: "#6cc3f2", c: "#0095E6", gap: "#ef8f45", gapQuiet: "#f2a865", closed: "#d7263d",
-    rev: "#00a62a", netA: "#2fb350", netB: "#5cc471", netC: "#8fd49d", planned: "#d9b400", alt: "#9aa5ae",
+    rev: "#00a62a", netA: "#2fb350", netB: "#5cc471", netC: "#8fd49d", planned: "#d9b400", alt: "#9aa5ae", notCleared: "#aebbc6",
   };
   const TIER_BAR = ["#0095E6", "#6cc3f2", "#a6d9f6", "#f6bf8f", "#ef8f45", "#d7263d"];
   const CLIMB = { fill: "#dcc3a3", ink: "#5b3d22", spark: "#c99b6d" };
@@ -26,18 +33,21 @@
   // ------------------------------------------------------------------ camera
   const CAM = {
     browse3d: { pitch: 60, bearing: -34, fov: 22 },          // narrow lens = near-axonometric
-    bird: { pitch: 70, zoom: 17.35, riderAt: 0.7 },          // ride: low and behind the rider; riderAt = rider height on screen (0 top, 1 bottom)
+    bird: { pitch: 70, zoom: 17.35, riderAt: 0.7 },          // ride: low and behind the rider; riderAt = rider height on screen
     top: { pitch: 0, zoom: 16.7, riderAt: 0.62 },
     terrain: 1.6,                                            // terrain exaggeration in 3D
-    hill: { boost: 1.8, pitch: 3, zoom: -0.3 },              // added as a climb comes up (bird's-eye ride)
+    hill: { boost: 0.9, pitch: 2, zoom: -0.2 },              // added as a climb comes up; 2026-10-29: halved (was 1.8, 3°, -0.3)
   };
+  const isPhone = () => matchMedia("(max-width: 760px)").matches;
 
-  // ------------------------------------------------------------------ router + data
+  // ------------------------------------------------------------------ router (island-wide graph) + data
   const t0 = performance.now();
-  const router = new Router(window.GRAPH_STUDY);
+  const G = window.GRAPH_ISLAND || window.GRAPH_STUDY;
+  const router = new Router(G);
   const geocoder = C.makeGeocoder(router);
   const suggester = new window.BikeSuggest.Suggester(router, window.POIS);
   const SK = window.BikeSuggest.STOP_KINDS;
+  const CLASSICS = window.CLASSICS || [];
   const buildings = C.unpackBuildings(window.BUILDINGS_PACKED);
   console.log(`router ready in ${(performance.now() - t0).toFixed(0)} ms: ${router.n} nodes, ${router.m} edges`);
 
@@ -47,17 +57,19 @@
     for (const v of [router.ea[e], router.eb[e]]) { let s = nodeNames.get(v); if (!s) nodeNames.set(v, (s = new Set())); s.add(nm); }
   }
   function placeLabel(lon, lat) {
-    const s = router.snap(lon, lat); if (!s) return "Dropped pin";
+    const s = router.snap(lon, lat); if (!s) return t("droppedPin");
     const v = s.t < 0.5 ? router.ea[s.e] : router.eb[s.e];
     const main = router.names[router.ename[s.e]];
     const cross = [...(nodeNames.get(v) || [])].find((n) => n !== main);
-    if (main && cross) return `${main} near ${cross}`;
-    return main || cross || "Dropped pin";
+    if (main && cross) return t("nearBy", { a: I.place(main), b: I.place(cross) });
+    return main || cross ? I.place(main || cross) : t("droppedPin");
   }
 
+  const store = { get(k, d) { try { return localStorage.getItem("piste-" + k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem("piste-" + k, v); } catch (e) { /* private */ } } };
   const state = { from: null, to: null, fromLabel: "", toLabel: "", routes: [], sel: 0, mode: "explore", is3d: false,
-    trip: null, pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
-    tab: "go", sugg: { loop: true, km: 10, stop: "" }, rideEnd: "" };
+    pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
+    tab: "go", smode: "classics", classic: 0, sugg: { loop: true, km: 10, stop: "", avoidWind: false },
+    winter: false, wx: false, wxData: null, bixi: null, sound: store.get("sound", "chime"), rideEnd: "" };
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
   let style;
@@ -71,11 +83,11 @@
   } catch (e) {
     style = { version: 8, glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf", sources: {},
       layers: [{ id: "background", type: "background", paint: { "background-color": "#f2f3f0" } }] };
-    toast("Basemap offline: showing our data only");
+    toast(t("offline"));
   }
   const map = new maplibregl.Map({
-    container: "map", style, center: [-73.567, 45.536], zoom: 13.2, maxPitch: 80,
-    attributionControl: { compact: true, customAttribution: "Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 · STM · BIXI" },
+    container: "map", style, center: [-73.585, 45.522], zoom: 12.8, maxPitch: 80,
+    attributionControl: { compact: true, customAttribution: "Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 · STM · BIXI · Open-Meteo · ECCC" },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
@@ -85,8 +97,7 @@
   const firstSymbol = (styleLayers.find((l) => l.type === "symbol") || {}).id;
   const firstRoad = (styleLayers.find((l) => /^(tunnel|highway|road)/.test(l.id)) || {}).id || firstSymbol;
   const add = (layer, before = firstSymbol) => map.addLayer(layer, before && map.getLayer(before) ? before : undefined);
-  const MARKER_SHOW = { opacity: "1", opacityWhenCovered: "1" };
-  // start with the attribution folded into its (i) button; it covers too much of a phone screen
+  const MARKER_SHOW = { opacity: "1", opacityWhenCovered: "1" };   // never fade our markers as "behind the terrain"
   const attrib = document.querySelector(".maplibregl-ctrl-attrib");
   if (attrib) { attrib.classList.remove("maplibregl-compact-show"); attrib.removeAttribute("open"); }
 
@@ -105,30 +116,46 @@
     throw new Error(`Terrain tile ${key} unavailable`);
   });
 
+  // the bike network straight from the routing graph (no separate download): tiers 0-2, with REV and 4-season flags
+  function networkGeoJSON() {
+    const REV = (G.meta && G.meta.flags && G.meta.flags.REV) || 1, S4 = router.F.S4, feats = [];
+    for (let e = 0; e < router.m; e++) {
+      const tier = router.etierBase[e]; if (tier > 2) continue;
+      const f = router.eflags[e];
+      feats.push({ type: "Feature", geometry: { type: "LineString", coordinates: router.edgeCoords(e, true) },
+        properties: { t: tier, rev: f & REV ? 1 : 0, s4: f & S4 ? 1 : 0 } });
+    }
+    return { type: "FeatureCollection", features: feats };
+  }
+
   // ------------------------------------------------------------------ sources
+  const empty = { type: "FeatureCollection", features: [] };
   map.addSource("tint", { type: "image", url: "../shared/data/" + window.ELEVATION_TINT.url, coordinates: window.ELEVATION_TINT.coordinates });
   map.addSource("relief", { type: "image", url: "../shared/data/" + window.HILLSHADE.url, coordinates: window.HILLSHADE.coordinates });
   map.addSource("contours", { type: "geojson", data: window.CONTOURS });
   map.addSource("bld", { type: "geojson", data: buildings });
-  map.addSource("network", { type: "geojson", data: window.BIKE_NETWORK });
+  map.addSource("network", { type: "geojson", data: networkGeoJSON() });
   map.addSource("planned", { type: "geojson", data: window.PLANNED });
   map.addSource("pois", { type: "geojson", data: C.poisGeoJSON(window.POIS) });
   map.addSource("terrain", { type: "raster-dem", tiles: ["piste-dem://{z}/{x}/{y}"], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
-  const empty = { type: "FeatureCollection", features: [] };
-  for (const id of ["route", "route-alts", "gaps", "ends", "engines", "climbs", "works-near", "stops"]) map.addSource(id, { type: "geojson", data: empty });
-  for (const n of [1, 2, 3]) map.addImage("chev" + n, chevronImage(n), { pixelRatio: 2 });
+  map.addSource("radar", { type: "raster", tiles: [WX.radarTiles(false)], tileSize: 256, maxzoom: 10,
+    attribution: "Radar © Environment and Climate Change Canada" });
+  for (const id of ["route", "route-alts", "gaps", "ends", "works-near", "stops", "bixi-live"]) map.addSource(id, { type: "geojson", data: empty });
 
   // ------------------------------------------------------------------ layers (bottom to top)
-  // elevation: a soft colour tint over land and parks (not water), then LiDAR hill shading and contours under the streets.
-  // The tint carries the city-scale picture and fades at street zoom, where contours and shading take over.
+  // elevation: a soft colour tint over land and parks (not water), then LiDAR hill shading and contours under the streets
   const tintBefore = map.getLayer("waterway") ? "waterway" : firstRoad;
   add({ id: "tint", type: "raster", source: "tint",
     paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 13, 1, 15, 0.7, 17, 0.45], "raster-fade-duration": 0 } }, tintBefore);
   if (map.getLayer("water") && map.getLayer(tintBefore)) map.moveLayer("water", tintBefore);
+  // 2026-10-29: shading halfway between the first prototype (0.75) and the strong version (0.95 → 0.72)
   add({ id: "relief", type: "raster", source: "relief",
-    paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.95, 15, 0.88, 18, 0.72], "raster-fade-duration": 0 } }, firstRoad);
+    paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.85, 15, 0.8, 18, 0.72], "raster-fade-duration": 0 } }, firstRoad);
   const CONTOUR = "#9a7c52";
-  add({ id: "contours-minor", type: "line", source: "contours", minzoom: 13, filter: ["!=", ["get", "i"], 1],
+  // contours: 1 m detail lines only where the ground rises 2.5-15 %, so climbs show as denser lines (replaces the chevrons)
+  add({ id: "contours-detail", type: "line", source: "contours", minzoom: 14, filter: ["==", ["get", "i"], 2],
+    paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0.16, 16, 0.32], "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.4, 17, 0.7] } }, firstRoad);
+  add({ id: "contours-minor", type: "line", source: "contours", minzoom: 13, filter: ["==", ["get", "i"], 0],
     paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.2, 15, 0.42], "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 17, 0.9] } }, firstRoad);
   add({ id: "contours-index", type: "line", source: "contours", minzoom: 11.5, filter: ["==", ["get", "i"], 1],
     paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 11.5, 0.45, 14, 0.75], "line-width": ["interpolate", ["linear"], ["zoom"], 11.5, 0.6, 16, 1.4] } }, firstRoad);
@@ -136,7 +163,8 @@
   add({ id: "bld-3d", type: "fill-extrusion", source: "bld", minzoom: 14, layout: { visibility: "none" },
     paint: { "fill-extrusion-color": ["interpolate", ["linear"], ["get", "h"], 0, "#f1eee8", 25, "#e6e2db", 90, "#d9d3ca"],
       "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.82, "fill-extrusion-vertical-gradient": true } });
-  // bike network
+  add({ id: "radar", type: "raster", source: "radar", layout: { visibility: "none" }, paint: { "raster-opacity": 0.5, "raster-fade-duration": 300 } });
+  // bike network (winter: 4-season lanes stay green, the rest turns grey and dashed)
   add({ id: "net-casing", type: "line", source: "network", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.6, 16, 6] } });
   add({ id: "net-ab", type: "line", source: "network", filter: ["<=", ["get", "t"], 1], layout: { "line-cap": "round", "line-join": "round" },
@@ -145,6 +173,8 @@
       "line-opacity": 0.9 } });
   add({ id: "net-c", type: "line", source: "network", filter: ["==", ["get", "t"], 2],
     paint: { "line-color": COL.netC, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.8, 16, 2], "line-dasharray": [2, 1.5] } });
+  add({ id: "net-not-cleared", type: "line", source: "network", filter: ["==", ["get", "s4"], 0], layout: { visibility: "none" },
+    paint: { "line-color": COL.notCleared, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.8, 16, 2.2], "line-dasharray": [1.2, 1.4] } });
   // planned & construction (browse only), closures and works (always, toggle)
   add({ id: "planned", type: "line", source: "planned", filter: ["==", ["get", "status"], "planned"], layout: { visibility: "none" },
     paint: { "line-color": COL.planned, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.2, 16, 3], "line-dasharray": [2, 1.6], "line-opacity": 0.9 } });
@@ -154,9 +184,6 @@
     paint: { "line-color": "#2a2a2a", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2, 16, 5], "line-dasharray": [0.5, 1.1] } });
   add({ id: "closed", type: "line", source: "planned", filter: ["==", ["get", "status"], "closed"],
     paint: { "line-color": COL.closed, "line-width": 3, "line-dasharray": [1, 1] } });
-  // engine comparison
-  add({ id: "engines", type: "line", source: "engines", layout: { visibility: "none", "line-cap": "round" },
-    paint: { "line-color": ["get", "color"], "line-width": 2.5, "line-opacity": 0.85, "line-offset": ["get", "off"] } });
   // routes
   add({ id: "route-alts", type: "line", source: "route-alts", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": COL.alt, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 4, 17, 9], "line-opacity": 0.55 } });
@@ -168,15 +195,9 @@
     paint: { "line-color": COL.c, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 9], "line-dasharray": [1.1, 0.8] } });
   add({ id: "route-quiet", type: "line", source: "route", filter: ["==", ["get", "tier"], 3],
     paint: { "line-color": COL.gapQuiet, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 9], "line-dasharray": [1, 0.6] } });
-  // uphill chevrons on the route's climbs (Michelin-style: more chevrons = steeper), lying on the ground in 3D
-  add({ id: "climb-chev", type: "symbol", source: "climbs", minzoom: 12.5,
-    layout: { "symbol-placement": "line", "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 13, 28, 17, 54],
-      "icon-image": ["concat", "chev", ["to-string", ["get", "n"]]], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 17, 1.15],
-      "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "map", "icon-pitch-alignment": "map", "icon-keep-upright": false } });
-  // a ring under the stop's POI icon on suggested rides
+  // a ring under the stop's or sight's POI icon
   add({ id: "stops", type: "circle", source: "stops",
-    paint: { "circle-radius": 17, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 3, "circle-pitch-alignment": "map" } });
-  // labels and points on top
+    paint: { "circle-radius": 15, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 3, "circle-pitch-alignment": "map" } });
   add({ id: "contour-labels", type: "symbol", source: "contours", minzoom: 13.5, filter: ["==", ["get", "i"], 1],
     layout: { "symbol-placement": "line", "text-field": ["concat", ["to-string", ["get", "e"]], " m"], "text-font": ["Noto Sans Regular"],
       "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, 10, 17, 12], "symbol-spacing": 360, "text-max-angle": 30, "text-padding": 2 },
@@ -184,91 +205,213 @@
 
   await C.addMapIcons(map);
   map.addImage("pill", pillImage("#fdf1e6", "#f3c29a"), { pixelRatio: 2, stretchX: [[20, 44]], stretchY: [[16, 24]], content: [14, 6, 50, 34] });
+  for (const [lvl, fill] of [["ok", "#1d6a2c"], ["low", "#c26b12"], ["empty", "#8a929a"], ["off", "#5a6168"]]) {
+    map.addImage("badge-" + lvl, pillImage(fill, "#ffffff"), { pixelRatio: 2, stretchX: [[20, 44]], stretchY: [[16, 24]], content: [14, 6, 50, 34] });
+  }
   const POI_LAYERS = [];
   for (const [kind, k] of Object.entries(C.POI_KINDS)) {
     if (kind === "works") continue;
-    const id = "poi-" + kind; POI_LAYERS.push({ id, group: k.group });
+    const id = "poi-" + kind; POI_LAYERS.push({ id, kind, group: k.group });
     map.addLayer({ id, type: "symbol", source: "pois", minzoom: k.minzoom, filter: ["==", ["get", "k"], kind],
       layout: { "icon-image": ["get", "icon"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.72, 17, 1], "icon-padding": 1,
         "text-field": ["step", ["zoom"], "", 16.5, ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 11,
         "text-offset": [0, 1.35], "text-anchor": "top", "text-optional": true, "symbol-sort-key": kind === "metro" ? 0 : kind === "bixi" ? 1 : 5 },
       paint: { "text-color": "#4a525a", "text-halo-color": "#ffffff", "text-halo-width": 1.3 } });
   }
+  // live BIXI: the station icon, plus a badge with the bikes available (green, orange when 1-2, grey when empty)
+  map.addLayer({ id: "bixi-live", type: "symbol", source: "bixi-live", minzoom: 14.6,
+    layout: { "icon-image": "poi-bixi", "icon-size": ["interpolate", ["linear"], ["zoom"], 14.6, 0.72, 17, 1], "icon-padding": 1, "symbol-sort-key": 1 } });
+  map.addLayer({ id: "bixi-count", type: "symbol", source: "bixi-live", minzoom: 15.4,
+    layout: { "icon-image": ["concat", "badge-", ["get", "level"]], "icon-text-fit": "both", "icon-text-fit-padding": [1, 4, 1, 4],
+      "text-field": ["to-string", ["get", "bikes"]], "text-font": ["Noto Sans Bold"], "text-size": 10.5, "text-offset": [1.05, -1.1],
+      "icon-allow-overlap": true, "text-allow-overlap": true, "icon-ignore-placement": true, "text-ignore-placement": true },   // never hides the station icon
+    paint: { "text-color": "#ffffff" } });
   map.addLayer({ id: "works", type: "symbol", source: "planned", filter: ["==", ["get", "status"], "works"], minzoom: 13,
     layout: { "icon-image": "poi-works", "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.6, 17, 0.95], "icon-allow-overlap": true } });
   map.addLayer({ id: "works-near", type: "symbol", source: "works-near",
     layout: { "icon-image": "poi-works", "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 17, 1], "icon-allow-overlap": true } });
   map.addLayer({ id: "gap-labels", type: "symbol", source: "gaps",
-    layout: { "icon-image": "pill", "icon-text-fit": "both", "icon-text-fit-padding": [3, 7, 3, 7], "text-field": ["concat", ["to-string", ["get", "len"]], " m no bike lane"],
+    layout: { "icon-image": "pill", "icon-text-fit": "both", "icon-text-fit-padding": [3, 7, 3, 7], "text-field": "",
       "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "bottom", "text-offset": [0, -1.2], "icon-allow-overlap": true, "text-allow-overlap": true },
     paint: { "text-color": "#8a3f0a" } });
   map.addLayer({ id: "stop-labels", type: "symbol", source: "stops",
-    layout: { "text-field": ["concat", "Stop · ", ["get", "label"]], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 1.7],
-      "text-allow-overlap": true, "text-max-width": 14 },
+    layout: { "text-field": "", "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 1.6], "text-allow-overlap": true, "text-max-width": 14 },
     paint: { "text-color": "#0072B2", "text-halo-color": "#ffffff", "text-halo-width": 1.8 } });
   map.addLayer({ id: "ends", type: "circle", source: "ends",
-    paint: { "circle-radius": 8, "circle-color": ["match", ["get", "k"], "from", "#ffffff", "#0095E6"],
-      "circle-stroke-color": ["match", ["get", "k"], "from", "#0095E6", "#ffffff"], "circle-stroke-width": 3.5 } });
-
+    paint: { "circle-radius": 8, "circle-color": ["match", ["get", "k"], "from", "#0095E6", "#ffffff"],
+      "circle-stroke-color": ["match", ["get", "k"], "from", "#ffffff", "#0095E6"], "circle-stroke-width": 3.5 } });
+  function setMapTexts() {   // map labels that carry words: redone when the language or winter mode changes
+    map.setLayoutProperty("gap-labels", "text-field", ["concat", ["to-string", ["get", "len"]], t(state.winter ? "gapPillWinter" : "gapPill")]);
+    map.setLayoutProperty("stop-labels", "text-field", ["case", ["==", ["get", "sight"], 1], ["get", "label"], ["concat", t("stopPrefix"), ["get", "label"]]]);
+  }
+  setMapTexts();
   buildElevationLegend();
 
-  // ------------------------------------------------------------------ UI: trips, search, prefs
-  const chips = $("#trip-chips");
-  for (const t of window.TRIPS) {
-    const b = document.createElement("button");
-    b.className = "chip"; b.textContent = t.name.replace("Parc La Fontaine to Avenue du Parc, along Rachel", "Rachel (easy)")
-      .replace("Mont-Royal metro to Avenue Papineau", "Mont-Royal → Papineau").replace("Assomption metro to the Biodôme", "Assomption → Biodôme")
-      .replace("Assomption metro to Ontario / Davidson", "Assomption → Ontario/Davidson");
-    b.title = t.name; b.dataset.trip = t.id;
-    b.onclick = () => useTrip(t);
-    chips.appendChild(b);
-  }
-  function useTrip(t) {
-    state.trip = t;
-    setPoint("from", t.from.lonlat, t.from.label, false);
-    setPoint("to", t.to.lonlat, t.to.label, false);
-    document.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c.dataset.trip === t.id));
-    $("#engines-row").hidden = false;
-    computeRoutes(true);
+  // ------------------------------------------------------------------ winter mode: icy colours, 4-season network, snow status
+  const WINTER_PAINT = [
+    ["background", "background-color", "#eef4f8"], ["park", "fill-color", "#e1ecf1"], ["water", "fill-color", "#b9d2e2"],
+    ["landuse_residential", "fill-color", "#e6eef4"], ["landcover_wood", "fill-color", "#dbe6ed"], ["waterway", "line-color", "#a9c6d9"],
+    ["highway_major_casing", "line-color", "#c6d6e2"], ["highway_motorway_casing", "line-color", "#c6d6e2"],
+    ["tint", "raster-hue-rotate", 170], ["tint", "raster-saturation", -0.35],
+    ["contours-detail", "line-color", "#7895aa"], ["contours-minor", "line-color", "#7895aa"], ["contours-index", "line-color", "#7895aa"],
+    ["contour-labels", "text-color", "#5c7689"], ["bld-flat", "fill-color", "#e2e9ef"], ["bld-flat", "fill-outline-color", "#cfd9e1"],
+    ["bld-3d", "fill-extrusion-color", ["interpolate", ["linear"], ["get", "h"], 0, "#f3f6f9", 25, "#e5ecf2", 90, "#d6e0e8"]],
+  ];
+  const summerPaint = {};
+  function setWinter(on) {
+    state.winter = on;
+    router.setWinter(on);
+    document.body.classList.toggle("winter", on);
+    $("#winter-btn").setAttribute("aria-pressed", String(on));
+    for (const [id, prop, val] of WINTER_PAINT) {
+      if (!map.getLayer(id)) continue;
+      const key = id + "|" + prop;
+      if (!(key in summerPaint)) summerPaint[key] = map.getPaintProperty(id, prop);
+      map.setPaintProperty(id, prop, on ? val : summerPaint[key] ?? null);
+    }
+    const s4 = ["==", ["get", "s4"], 1];
+    map.setFilter("net-ab", on ? ["all", ["<=", ["get", "t"], 1], s4] : ["<=", ["get", "t"], 1]);
+    map.setFilter("net-c", on ? ["all", ["==", ["get", "t"], 2], s4] : ["==", ["get", "t"], 2]);
+    map.getSource("radar").setTiles([WX.radarTiles(on)]);
+    setMapTexts(); applyLayers();
+    if (on) loadWeather();   // snow and ice status
+    renderWxCard();
+    classicsRouted = false;   // the classics re-route on the 4-season network
+    recompute(true);
   }
 
+  // ------------------------------------------------------------------ wind & rain
+  const wind = new WX.WindLayer(map, $("#wind"));
+  let wxTimer = null;
+  async function loadWeather(force) {
+    try {
+      state.wxData = await WX.load(force);
+      wind.set(state.wxData);
+    } catch (e) { state.wxData = null; console.warn(e); }
+    renderWxCard(); if (state.routes.length) renderRoutes();
+    return state.wxData;
+  }
+  function setWeather(on) {
+    state.wx = on;
+    $("#wx-btn").setAttribute("aria-pressed", String(on));
+    applyLayers();
+    wind.show(on && state.mode !== "ride");
+    clearInterval(wxTimer);
+    if (on) { loadWeather(); wxTimer = setInterval(() => loadWeather(true), 10 * 60e3); }
+    renderWxCard(); if (state.routes.length) renderRoutes();
+  }
+  function windLine(r) {
+    const wx = state.wxData; if (!wx) return "";
+    if (wx.now.wind < 6) return t("windNone");
+    const w = WX.windOnRoute(r, wx);
+    if (w.minutes > 0.5 && w.headShare >= 0.3) return t("windHead", { p: I.pct(w.headShare), min: Math.max(1, Math.round(w.minutes)) });
+    if (w.minutes < -0.5 && w.tailShare >= 0.3) return t("windTail", { p: I.pct(w.tailShare), min: Math.max(1, Math.round(-w.minutes)) });
+    return t("windCross");
+  }
+  function renderWxCard() {
+    const card = $("#wx-card");
+    if ((!state.wx && !state.winter) || state.mode === "ride") { card.hidden = true; return; }
+    const wx = state.wxData, rows = [];
+    if (!wx) rows.push(`<div class="wx-row">${t(state.wx ? "wxLoading" : "winterOn")}</div>`);
+    if (state.wx && wx) {
+      const dirKey = I.compassKey(wx.now.dir), to = (wx.now.dir + 180) % 360;
+      const windTxt = wx.now.wind < 3 ? t("calm") : t("windFrom", { dir: t("from_" + dirKey), v: Math.round(wx.now.wind) }) + (wx.now.gust > wx.now.wind + 8 ? ` · ${t("gusts", { v: Math.round(wx.now.gust) })}` : "");
+      rows.push(`<div class="wx-row"><svg class="wx-arrow" viewBox="0 0 24 24" style="transform:rotate(${to - map.getBearing()}deg)" aria-hidden="true"><path d="M12 21V5M6 11l6-6 6 6"/></svg><span>${windTxt}</span></div>`);
+      const rain = WX.rainOutlook(wx);
+      const rainTxt = rain.now ? t("rainNow", { mm: I.num(rain.mm) }) : rain.at ? t("rainAt", { h: rain.at, p: rain.prob != null ? I.pct(rain.prob / 100) : "" }) : t("dryFor", { n: rain.dryHours });
+      rows.push(`<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c3.5 5 6 8.2 6 11a6 6 0 0 1-12 0c0-2.8 2.5-6 6-11z"/></svg><span>${rainTxt}</span></div>`);
+      const sel = state.routes[state.sel];
+      if (sel) rows.push(`<div class="wx-row wx-route"><span>${windLine(sel.r)}</span></div>`);
+    }
+    if (state.winter) {
+      rows.push(`<div class="wx-row wx-winter"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg><span>${t("winterOn")}</span></div>`);
+      if (wx) {
+        rows.push(`<div class="wx-row wx-winter"><span>${wx.snow24 >= 0.5 ? t("snow24", { cm: I.num(wx.snow24, 0), t: I.num(wx.now.temp, 0) }) : t("noSnow", { t: I.num(wx.now.temp, 0) })}</span></div>`);
+        if (wx.icy) rows.push(`<div class="wx-row wx-winter"><span>${t("icy")}</span></div>`);
+      }
+      rows.push(`<div class="wx-row wx-note">${t("noClearing")}</div>`);
+    }
+    if (state.wx) rows.push(`<div class="wx-row wx-note">${t("radarCredit")}</div>`);
+    card.innerHTML = rows.join(""); card.hidden = false;
+  }
+  map.on("rotate", () => { const a = $("#wx-card .wx-arrow"); if (a && state.wxData) a.style.transform = `rotate(${(state.wxData.now.dir + 180) % 360 - map.getBearing()}deg)`; });
+
+  // ------------------------------------------------------------------ live BIXI
+  async function loadBixi() {
+    if (document.hidden) return;
+    try {
+      state.bixi = await BX.load();
+      map.getSource("bixi-live").setData(state.bixi);
+      applyLayers();
+    } catch (e) { console.warn("BIXI live unavailable", e); }
+  }
+  loadBixi(); setInterval(loadBixi, 60e3);
+  function bixiByName(name) { return state.bixi && state.bixi.features.find((f) => f.properties.name === name); }
+  function bixiText(p) {
+    if (!p.renting) return t("bixiClosed");
+    const parts = [t("bixiBikes", { n: p.bikes })];
+    if (p.ebikes) parts[0] += ` (${t("bixiEbikes", { n: p.ebikes })})`;
+    parts.push(t("bixiDocks", { n: p.docks }));
+    return parts.join(" · ");
+  }
+
+  // ------------------------------------------------------------------ UI: prefs
   const strict = $("#strict"), strictOut = $("#strict-out"), hills = $("#hills");
-  function strictLabel(v) { return v < 20 ? "Most direct" : v < 45 ? "Mostly direct" : v < 70 ? "Balanced" : v < 92 ? "Bike lanes first" : "Bike lanes, whatever it takes"; }
-  strict.addEventListener("input", () => { strictOut.textContent = strictLabel(+strict.value); computeRoutes(false); });
-  hills.addEventListener("change", () => computeRoutes(false));
+  function strictLabel(v) { return t(v < 20 ? "mostDirect" : v < 45 ? "mostlyDirect" : v < 70 ? "balanced" : v < 92 ? "lanesFirst" : "lanesAlways"); }
+  strict.addEventListener("input", () => { strictOut.textContent = strictLabel(+strict.value); recompute(false); });
+  hills.addEventListener("change", () => recompute(false));
   strictOut.textContent = strictLabel(+strict.value);
 
-  // ------------------------------------------------------------------ UI: "Go somewhere" / "Suggest a ride"
-  const chipsBox = $("#stop-chips");
-  chipsBox.innerHTML = [["", "None"], ...Object.entries(SK).map(([k, v]) => [k, v.label])].map(([k, label]) => {
-    const icon = k ? `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(C.iconSVG(SK[k].kinds[0], { size: 36 }))}">` : "";
-    return `<button type="button" role="radio" class="stop-chip" data-stop="${k}">${icon}${label}</button>`;
-  }).join("");
-  function markStopChips() {
-    chipsBox.querySelectorAll(".stop-chip").forEach((b) => { const on = b.dataset.stop === state.sugg.stop; b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); });
+  // ------------------------------------------------------------------ UI: tabs, suggest modes, form
+  function refreshSections() {
+    const go = state.tab === "go", custom = state.tab === "suggest" && state.smode === "custom", classics = state.tab === "suggest" && state.smode === "classics";
+    for (const [id, tb] of [["#tab-go", "go"], ["#tab-suggest", "suggest"]]) { $(id).classList.toggle("on", state.tab === tb); $(id).setAttribute("aria-selected", String(state.tab === tb)); }
+    document.querySelectorAll(".go-only").forEach((el) => (el.hidden = !go));
+    document.querySelectorAll(".suggest-only").forEach((el) => (el.hidden = go));
+    document.querySelectorAll(".custom-only").forEach((el) => (el.hidden = !custom));
+    document.querySelectorAll(".classics-only").forEach((el) => (el.hidden = !classics));
+    document.querySelectorAll(".go-or-custom").forEach((el) => (el.hidden = classics));
+    if (markers.to) markers.to.getElement().style.display = go ? "" : "none";
+    if (markers.from) markers.from.getElement().style.display = classics ? "none" : "";
   }
-  chipsBox.querySelectorAll(".stop-chip").forEach((b) => b.addEventListener("click", () => { state.sugg.stop = b.dataset.stop; markStopChips(); computeRoutes(true); }));
-  markStopChips();
-  document.querySelectorAll('input[name="shape"]').forEach((r) => r.addEventListener("change", () => {
-    state.sugg.loop = document.querySelector('input[name="shape"]:checked').value === "loop"; computeRoutes(true);
-  }));
-  const km = $("#km"), kmOut = $("#km-out");
-  const kmLabel = () => { kmOut.textContent = `${km.value} km · about ${Math.round((+km.value / 16) * 60)} min`; };
-  km.addEventListener("input", () => { state.sugg.km = +km.value; kmLabel(); });
-  km.addEventListener("change", () => computeRoutes(true));
-  kmLabel();
-  function setTab(tab) {
-    state.tab = tab;
-    for (const [id, t] of [["#tab-go", "go"], ["#tab-suggest", "suggest"]]) { $(id).classList.toggle("on", tab === t); $(id).setAttribute("aria-selected", String(tab === t)); }
-    document.querySelectorAll(".go-only").forEach((el) => (el.hidden = tab !== "go"));
-    document.querySelectorAll(".suggest-only").forEach((el) => (el.hidden = tab !== "suggest"));
-    if (markers.to) markers.to.getElement().style.display = tab === "suggest" ? "none" : "";
-    $("#engines-row").hidden = tab === "suggest" || !state.trip;
-    computeRoutes(true);
-  }
+  function setTab(tab) { state.tab = tab; refreshSections(); recompute(true); }
+  function setSuggMode(m) { state.smode = m; document.querySelector(`input[name="smode"][value="${m}"]`).checked = true; refreshSections(); recompute(true); }
   $("#tab-go").onclick = () => setTab("go");
   $("#tab-suggest").onclick = () => setTab("suggest");
+  document.querySelectorAll('input[name="smode"]').forEach((r) => r.addEventListener("change", () => setSuggMode(document.querySelector('input[name="smode"]:checked').value)));
 
+  const chipsBox = $("#stop-chips");
+  function renderStopChips() {
+    chipsBox.innerHTML = [["", t("none")], ...Object.keys(SK).map((k) => [k, t("stop_" + k)])].map(([k, label]) => {
+      const icon = k ? `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(C.iconSVG(SK[k].kinds[0], { size: 36 }))}">` : "";
+      const on = k === state.sugg.stop;
+      return `<button type="button" role="radio" class="stop-chip${on ? " on" : ""}" aria-checked="${on}" data-stop="${k}">${icon}${C.esc(label)}</button>`;
+    }).join("");
+    chipsBox.querySelectorAll(".stop-chip").forEach((b) => b.addEventListener("click", () => { state.sugg.stop = b.dataset.stop; renderStopChips(); recompute(true); }));
+  }
+  renderStopChips();
+  document.querySelectorAll('input[name="shape"]').forEach((r) => r.addEventListener("change", () => {
+    state.sugg.loop = document.querySelector('input[name="shape"]:checked').value === "loop"; recompute(true);
+  }));
+  const km = $("#km"), kmNum = $("#km-num"), kmTime = $("#km-time");
+  const kmLabel = () => { kmTime.textContent = t("aboutMin", { t: I.duration((state.sugg.km / 16) * 60) }); };
+  function setKm(v, run) {
+    const n = Math.max(1, Math.min(100, Math.round(+v || 1)));
+    state.sugg.km = n; km.value = n; if (document.activeElement !== kmNum || run) kmNum.value = n; kmLabel();
+    if (run) recompute(true);
+  }
+  km.addEventListener("input", () => setKm(km.value, false));
+  km.addEventListener("change", () => setKm(km.value, true));
+  kmNum.addEventListener("change", () => setKm(kmNum.value, true));
+  kmNum.addEventListener("keydown", (e) => { if (e.key === "Enter") { setKm(kmNum.value, true); kmNum.blur(); } });
+  kmLabel();
+  $("#avoid-wind").addEventListener("change", async (e) => {
+    state.sugg.avoidWind = e.target.checked;
+    if (state.sugg.avoidWind && !state.wxData) await loadWeather();
+    recompute(true);
+  });
+
+  // ------------------------------------------------------------------ UI: search
   const fromEl = $("#from"), toEl = $("#to"), sug = $("#suggest");
   let sugItems = [], sugActive = -1, sugTarget = null, sugTimer = null;
   for (const el of [fromEl, toEl]) {
@@ -287,63 +430,78 @@
   }
   function renderSuggest() {
     if (!sugItems.length) { sug.hidden = true; return; }
-    sug.style.top = sugTarget === "from" ? "48px" : "96px";
+    const field = (sugTarget === "from" ? fromEl : toEl).closest(".field");
+    sug.style.top = field.offsetTop + field.offsetHeight + 4 + "px";
     sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("");
     sug.hidden = false;
     sug.querySelectorAll("li").forEach((li) => li.addEventListener("mousedown", (e) => { e.preventDefault(); choose(sugItems[+li.dataset.i]); }));
   }
-  function choose(it) { sug.hidden = true; setPoint(sugTarget, [it.lon, it.lat], it.label, true); state.trip = null; markTripChips(); computeRoutes(true); }
-  function markTripChips() { document.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", state.trip && c.dataset.trip === state.trip.id)); $("#engines-row").hidden = !state.trip; if (!state.trip) setLayer("engines", false); }
+  function choose(it) { sug.hidden = true; setPoint(sugTarget, [it.lon, it.lat], it.label); recompute(true); }
 
   document.querySelectorAll(".pick").forEach((b) => b.addEventListener("click", () => {
     state.pick = state.pick === b.dataset.target ? null : b.dataset.target;
     document.querySelectorAll(".pick").forEach((x) => x.classList.toggle("on", x.dataset.target === state.pick));
     map.getCanvas().style.cursor = state.pick ? "crosshair" : "";
+    if (state.pick && isPhone()) setSheet("peek");
   }));
 
-  // draggable endpoints
+  // draggable endpoints: location pins (start mostly blue, destination mostly white with blue)
   const markers = {};
-  function endEl(kind) { const d = document.createElement("div"); d.style.cssText = `width:22px;height:22px;border-radius:50%;cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,.25);${kind === "from" ? "background:#fff;border:5px solid #0095E6" : "background:#0095E6;border:5px solid #fff;outline:2px solid #0095E6"}`; return d; }
-  function setPoint(which, lonlat, label, fromUser) {
+  const PIN = {
+    from: '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg>',
+    to: '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#0095E6" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#0095E6"/></svg>',
+  };
+  function endEl(kind) { const d = document.createElement("div"); d.className = "end-pin"; d.innerHTML = PIN[kind]; return d; }
+  function setPoint(which, lonlat, label) {
     state[which] = lonlat; state[which + "Label"] = label;
     (which === "from" ? fromEl : toEl).value = label;
     if (!markers[which]) {
-      markers[which] = new maplibregl.Marker({ element: endEl(which), draggable: true, ...MARKER_SHOW }).setLngLat(lonlat).addTo(map);
+      markers[which] = new maplibregl.Marker({ element: endEl(which), anchor: "bottom", draggable: true, ...MARKER_SHOW }).setLngLat(lonlat).addTo(map);
       let raf = null;
       markers[which].on("drag", () => {
         if (raf) return;
-        raf = requestAnimationFrame(() => { raf = null; const p = markers[which].getLngLat(); state[which] = [p.lng, p.lat]; computeRoutes(false); });
+        raf = requestAnimationFrame(() => { raf = null; const p = markers[which].getLngLat(); state[which] = [p.lng, p.lat]; recompute(false); });
       });
       markers[which].on("dragend", () => {
         const p = markers[which].getLngLat(); const lab = placeLabel(p.lng, p.lat);
         state[which] = [p.lng, p.lat]; state[which + "Label"] = lab; (which === "from" ? fromEl : toEl).value = lab;
-        state.trip = null; markTripChips(); computeRoutes(false);
+        recompute(false);
       });
     } else markers[which].setLngLat(lonlat);
-    if (fromUser) { state.trip = null; markTripChips(); }
+    refreshSections();
   }
 
+  // ------------------------------------------------------------------ map clicks
+  let layersJustClosed = false;
   map.on("click", (e) => {
+    if (layersJustClosed) { layersJustClosed = false; return; }   // a tap that only closed the layers panel
     if (state.mode === "ride") return;
-    const hit = map.queryRenderedFeatures(e.point, { layers: POI_LAYERS.map((p) => p.id).filter((id) => map.getLayer(id)) });
-    if (hit.length && !state.pick) { poiPopup(hit[0], e.lngLat); return; }
+    const live = map.getLayer("bixi-live") && map.getLayoutProperty("bixi-live", "visibility") !== "none" ? ["bixi-live", "bixi-count"] : [];
+    const hit = map.queryRenderedFeatures(e.point, { layers: [...live, ...POI_LAYERS.map((p) => p.id)].filter((id) => map.getLayer(id)) });
+    if (hit.length && !state.pick) { poiPopup(hit[0]); return; }
     const alt = map.queryRenderedFeatures(e.point, { layers: ["route-alts"] });
     if (alt.length && !state.pick) { selectRoute(alt[0].properties.i); return; }
+    if (state.tab === "suggest" && state.smode === "classics") return;
     const lonlat = [e.lngLat.lng, e.lngLat.lat];
     const which = state.tab === "suggest" ? "from" : state.pick || (!state.from ? "from" : "to");
-    setPoint(which, lonlat, placeLabel(lonlat[0], lonlat[1]), true);
+    setPoint(which, lonlat, placeLabel(lonlat[0], lonlat[1]));
     state.pick = null; document.querySelectorAll(".pick").forEach((x) => x.classList.remove("on")); map.getCanvas().style.cursor = "";
-    computeRoutes(!state.routes.length);
+    recompute(!state.routes.length);
   });
-  function poiPopup(f, lngLat) {
-    const k = C.POI_KINDS[f.properties.k] || {};
-    const html = `<div style="font:14px/1.35 var(--font-ui);min-width:160px"><b>${C.esc(f.properties.name || k.label)}</b><div style="color:#7b858f;font-size:12px">${C.esc(k.label || "")}</div>
-      <button id="poi-go" class="primary" style="margin-top:8px;padding:7px 10px;font-size:13px">Ride here</button></div>`;
+  function poiPopup(f) {
+    const isBixi = f.layer.id === "bixi-live" || f.layer.id === "bixi-count";
+    const kind = isBixi ? "bixi" : f.properties.k;
+    const name = f.properties.name || C.poiLabel(kind);
+    const extra = isBixi ? `<div class="pop-bixi"><b>${bixiText(f.properties)}</b> · ${t("bixiLive")}</div>` : "";
+    const html = `<div class="pop"><b>${C.esc(name)}</b><div class="pop-kind">${C.esc(C.poiLabel(kind))}</div>${extra}
+      <button type="button" class="primary pop-go">${t("rideHere")}</button></div>`;
     const pop = new maplibregl.Popup({ offset: 14 }).setLngLat(f.geometry.coordinates).setHTML(html).addTo(map);
-    pop.getElement().querySelector("#poi-go").onclick = () => {
-      pop.remove(); if (state.tab === "suggest") { state.tab = "go"; setTab("go"); }
-      setPoint("to", f.geometry.coordinates, f.properties.name || k.label, true);
-      if (!state.from) toast("Now pick a start: click the map or type it"); computeRoutes(true);
+    pop.getElement().querySelector(".pop-go").onclick = () => {
+      pop.remove();
+      if (state.tab !== "go") { state.tab = "go"; refreshSections(); }
+      setPoint("to", f.geometry.coordinates, name);
+      if (!state.from) toast(t("pickStartToast"));
+      recompute(true);
     };
   }
   map.on("mouseenter", "route-alts", () => (map.getCanvas().style.cursor = "pointer"));
@@ -352,21 +510,26 @@
   // ------------------------------------------------------------------ routing
   function overlap(a, b) { let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++; return c / Math.max(a.sig.size, b.sig.size); }
   let suggTimer = null;
-  function computeRoutes(fit) {
-    if (state.tab === "suggest") {   // suggestions take ~50 ms: run at once when asked, debounce while dragging
+  function recompute(fit) {
+    if (state.mode === "ride") return;
+    if (state.tab === "suggest" && state.smode === "classics") return showClassic(state.classic, fit);
+    if (state.tab === "suggest") {   // suggestions take a while on long rides: run when asked, debounce while dragging
       clearTimeout(suggTimer);
-      if (fit) computeSuggestions(true); else suggTimer = setTimeout(() => computeSuggestions(false), 140);
+      if (fit) computeSuggestions(true); else suggTimer = setTimeout(() => computeSuggestions(false), 160);
       return;
     }
+    computeRoutes(fit);
+  }
+  function computeRoutes(fit) {
     if (!state.from || !state.to) { state.routes = []; renderRoutes(); drawRoutes(); return; }
-    const t = performance.now();
+    const t1 = performance.now();
     const w = weightsFor(+strict.value / 100, hills.checked);
     const cands = [
-      { label: "Your route", r: router.route(state.from, state.to, w) },
-      { label: "Most bike lanes", r: router.route(state.from, state.to, { w: PROFILES.bikemax.w, hill: hills.checked ? 12 : 4 }) },
-      { label: "Most direct", r: router.route(state.from, state.to, { w: PROFILES.direct.w, hill: hills.checked ? 12 : 0 }) },
+      { key: "yourRoute", r: router.route(state.from, state.to, w) },
+      { key: "mostLanes", r: router.route(state.from, state.to, { w: PROFILES.bikemax.w, hill: hills.checked ? 12 : 4 }) },
+      { key: "mostDirect", r: router.route(state.from, state.to, { w: PROFILES.direct.w, hill: hills.checked ? 12 : 0 }) },
     ].filter((c) => c.r);
-    state.lastMs = performance.now() - t;
+    state.lastMs = performance.now() - t1;
     cands.forEach((c) => (c.sig = new Set(c.r.legs.map((l) => l.e))));
     const keep = [];
     for (const c of cands) if (!keep.some((k) => overlap(k, c) > 0.9)) keep.push(c);
@@ -376,137 +539,216 @@
     if (fit && keep.length) fitRoute(keep[0].r);
   }
   // "Suggest a ride": three rides from the start, loop or one-way, of about the asked length, optionally via a stop
-  function computeSuggestions(fit) {
+  let suggToken = 0;
+  async function computeSuggestions(fit) {
+    const token = ++suggToken;
     if (!state.from) { state.routes = []; renderRoutes(); drawRoutes(); return; }
-    const t = performance.now();
-    const picks = suggester.suggest({ start: state.from, km: state.sugg.km, loop: state.sugg.loop, stop: state.sugg.stop,
-      weights: weightsFor(+strict.value / 100, hills.checked) });
-    state.lastMs = performance.now() - t;
-    state.routes = picks.map((c) => {
-      const stopAt = c.route.stops && c.route.stops[0] ? `stop after ${C.fmtKm(c.route.stops[0].at)}` : "";
-      const note = [stopAt, c.via.length ? "via " + c.via.join(", ") : ""].filter(Boolean).join(" · ");
-      return { label: c.title, note, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), endLabel: c.endLabel, loop: c.loop };
-    });
+    $("#routes").innerHTML = `<div class="finding">${t("finding")}</div>`; $("#detail").innerHTML = "";
+    await tick();
+    const t1 = performance.now();
+    const wx = state.sugg.avoidWind ? state.wxData || (await loadWeather()) : null;
+    const picks = await suggester.suggest({ start: state.from, km: state.sugg.km, loop: state.sugg.loop, stop: state.sugg.stop,
+      weights: weightsFor(+strict.value / 100, hills.checked), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
+    if (token !== suggToken) return;   // a newer request started meanwhile
+    state.lastMs = performance.now() - t1;
+    state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), end: c.end, loop: c.loop }));
     state.sel = 0;
-    if (!picks.length) toast("Nothing fits from here yet: the map only covers the Plateau to the Olympic Park. Try a shorter ride.");
+    if (!picks.length) toast(t("nothingFits"));
     renderRoutes(); drawRoutes();
     if (fit && state.routes.length) fitRoute(state.routes[0].r);
   }
   function selectRoute(i) { state.sel = +i; renderRoutes(); drawRoutes(); }
   function fitRoute(r) {
     const xs = r.coords.map((c) => c[0]), ys = r.coords.map((c) => c[1]);
-    const narrow = innerWidth < 760;
-    map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]],
-      { padding: narrow ? { top: 70, bottom: innerHeight * 0.55, left: 30, right: 30 } : { top: 80, bottom: 80, left: 420, right: 90 }, maxZoom: 16, duration: 700 });
+    let padding;
+    if (isPhone()) {
+      if (sheet.state === "full") setSheet("half");
+      const top = 60 + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0);
+      padding = { top, bottom: sheetHeight(sheet.state) + 24, left: 24, right: 70 };
+    } else padding = { top: 80, bottom: 80, left: 420, right: 90 };
+    map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], { padding, maxZoom: 16, duration: 700 });
   }
   function drawRoutes() {
     const sel = state.routes[state.sel];
     map.getSource("route").setData(sel ? C.routePiecesGeoJSON(sel.r) : empty);
     map.getSource("gaps").setData(sel ? C.gapStartsGeoJSON(sel.r) : empty);
-    map.getSource("climbs").setData(sel ? C.climbsGeoJSON(sel.r, sel.climbs) : empty);
     map.getSource("route-alts").setData({ type: "FeatureCollection", features: state.routes.map((c, i) => i === state.sel ? null : C.routeLineGeoJSON(c.r, { i })).filter(Boolean) });
     const stops = (sel && sel.r.stops) || [];
-    map.getSource("stops").setData({ type: "FeatureCollection", features: stops.map((s, i) => ({ type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { label: s.label } })) });
-    // suggested one-way rides end at a place, not at a dragged pin: mark the end with a dot
-    const end = state.tab === "suggest" && sel && !sel.loop ? sel.r.coords[sel.r.coords.length - 1] : null;
-    map.getSource("ends").setData(end ? { type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "Point", coordinates: end }, properties: { k: "to" } }] } : empty);
-    updateEngines();
+    map.getSource("stops").setData({ type: "FeatureCollection", features: stops.map((s, i) => ({ type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { label: s.label, sight: s.sight ? 1 : 0 } })) });
+    // suggested and classic rides start/end at places, not at dragged pins: mark them with dots
+    const ends = [];
+    if (sel && state.tab === "suggest") {
+      if (state.smode === "classics") ends.push({ type: "Feature", geometry: { type: "Point", coordinates: sel.r.coords[0] }, properties: { k: "from" } });
+      if (!sel.loop && sel.kind !== "outback") ends.push({ type: "Feature", geometry: { type: "Point", coordinates: sel.r.coords[sel.r.coords.length - 1] }, properties: { k: "to" } });
+    }
+    map.getSource("ends").setData({ type: "FeatureCollection", features: ends });
     setMode(sel ? "route" : "explore");
+    renderWxCard();
   }
 
+  // ------------------------------------------------------------------ classic rides: swipe through, the centred card shows on the map
+  const classicCache = new Map();
+  function classicRoute(i) {
+    const c = CLASSICS[i], key = `${c.id}|${state.winter}`;
+    if (classicCache.has(key)) return classicCache.get(key);
+    const pen = new Float32Array(router.m).fill(1), parts = [], w = { w: PROFILES.bikemax.w, hill: 4 };
+    for (let k = 1; k < c.pts.length; k++) {
+      const p = router.route(c.pts[k - 1], c.pts[k], Object.assign({}, w, { penalty: pen }));
+      if (!p) { classicCache.set(key, null); return null; }
+      if (c.avoidBack) for (const l of p.legs) pen[l.e] = 4;
+      parts.push(p);
+    }
+    const labels = c.pts.slice(1, -1).map((_, k) => (c.sights && c.sights[k + 1] ? { label: c.sights[k + 1][I.lang] || c.sights[k + 1].en, sight: true } : null));
+    const r = parts.length === 1 ? parts[0] : router.join(parts, labels);
+    classicCache.set(key, r);
+    return r;
+  }
+  const PHOTO_CREDITS = {};
+  fetch("../shared/photos/credits.json").then((r) => (r.ok ? r.json() : {})).then((j) => { Object.assign(PHOTO_CREDITS, j); renderClassicCards(); }).catch(() => {});
+  const track = $("#classic-track"), dots = $("#classic-dots");
+  function renderClassicCards() {
+    const L = I.lang;
+    track.innerHTML = CLASSICS.map((c, i) => {
+      const r = classicCache.get(`${c.id}|${state.winter}`);
+      const meta = r ? `${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t(c.kind === "outback" ? "kindOutBack" : "kindLoop")} · ${C.fmtPct(r.infraShare)} ${t(state.winter ? "on4s" : "onInfra")}` : "…";
+      const cr = PHOTO_CREDITS[c.id];
+      return `<article class="classic-card${i === state.classic ? " sel" : ""}" data-i="${i}" tabindex="0" aria-label="${C.esc(c.name[L])}">
+        <div class="cc-photo" style="background-image:url('../shared/photos/${c.id}.jpg')">${cr ? `<a class="cc-credit" href="${C.esc(cr.source)}" target="_blank" rel="noopener">${C.esc(t("photoBy", { credit: `${cr.author}, ${cr.license}` }))}</a>` : ""}</div>
+        <div class="cc-body"><b class="cc-title">${C.esc(c.name[L])}</b><div class="cc-meta">${meta}</div>
+          <p class="cc-blurb">${C.esc(c.blurb[L])}</p><div class="cc-start">${C.esc(t("startAt", { name: c.start[L] }))}</div></div></article>`;
+    }).join("");
+    dots.innerHTML = CLASSICS.map((_, i) => `<i class="${i === state.classic ? "on" : ""}"></i>`).join("");
+    track.querySelectorAll(".classic-card").forEach((el) => el.addEventListener("click", () => {
+      const i = +el.dataset.i;
+      el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      if (i !== state.classic) showClassic(i, true);
+    }));
+  }
+  let classicsRouted = false;
+  async function routeAllClassics() {   // fills in the distances on the cards without blocking the page
+    for (let i = 0; i < CLASSICS.length; i++) { classicRoute(i); if (i % 3 === 2) await tick(); }
+    classicsRouted = true; renderClassicCards();
+  }
+  function showClassic(i, fit) {
+    state.classic = Math.max(0, Math.min(CLASSICS.length - 1, i));
+    const c = CLASSICS[state.classic], r = classicRoute(state.classic);
+    if (!classicsRouted) routeAllClassics(); else renderClassicCards();
+    state.routes = r ? [{ title: { raw: c.name[I.lang] }, r, climbs: C.climbs(r), end: { raw: c.start[I.lang] }, loop: c.kind === "loop", kind: c.kind, classic: true }] : [];
+    state.sel = 0;
+    renderRoutes(); drawRoutes();
+    if (fit && r) fitRoute(r);
+  }
+  let scrollT = null;
+  track.addEventListener("scroll", () => {
+    clearTimeout(scrollT);
+    scrollT = setTimeout(() => {
+      const mid = track.scrollLeft + track.clientWidth / 2;
+      let best = 0, bd = Infinity;
+      track.querySelectorAll(".classic-card").forEach((el, i) => { const d = Math.abs(el.offsetLeft + el.offsetWidth / 2 - mid); if (d < bd) { bd = d; best = i; } });
+      if (best !== state.classic) showClassic(best, true);
+    }, 140);
+  });
+
+  // ------------------------------------------------------------------ route cards and details
   function compBar(r) {
     return `<div class="bar" aria-hidden="true">${r.byTier.map((m, i) => m > 0 ? `<i style="width:${(m / r.length) * 100}%;background:${TIER_BAR[i]}"></i>` : "").join("")}</div>`;
   }
+  function placeText(p) { return !p ? "" : p.raw ? I.place(p.raw) : p.poiKind ? C.poiLabel(p.poiKind) : p.key ? t(p.key, p.vars || {}) : ""; }
+  function routeTitle(c) {
+    if (c.key) return t(c.key);
+    const ti = c.title; if (!ti) return "";
+    if (ti.raw) return ti.raw;
+    if (ti.key === "loopDir") return t("loopDir", { dir: t("dir_" + ti.vars.dirKey) });
+    return t(ti.key, { place: placeText(ti.vars.place) });
+  }
+  function routeNote(c) {
+    if (!c.via) return "";
+    const stopAt = c.r.stops && c.r.stops[0] && !c.r.stops[0].sight ? t("stopAfter", { d: C.fmtKm(c.r.stops[0].at) }) : "";
+    return [stopAt, c.via.length ? t("via", { streets: c.via.map(I.place).join(", ") }) : ""].filter(Boolean).join(" · ");
+  }
   function climbSummary(r, list) {
-    if (!list.length) return `Mostly flat · ${Math.round(r.climb)} m of climbing in all`;
+    if (!list.length) return t("flat", { m: Math.round(r.climb) });
     const steep = list.map((c) => ({ c, max: C.climbMaxGrade(r, c) })).sort((a, b) => b.max - a.max)[0];
     const name = C.climbName(r, steep.c);
-    return `${list.length} climb${list.length > 1 ? "s" : ""}, ${Math.round(r.climb)} m up in all. Steepest: ${Math.round(steep.max * 100)}%` +
-      `${name ? " on " + C.esc(name) : ""} (+${Math.round(steep.c.rise)} m over ${C.fmtKm(steep.c.length)})`;
+    return t(list.length > 1 ? "climbsN" : "climbs1", { n: list.length, m: Math.round(r.climb), g: I.pct(steep.max),
+      on: name ? t("onStreet", { name: C.esc(I.place(name)) }) : "", rise: Math.round(steep.c.rise), d: C.fmtKm(steep.c.length) }).replace(/\s+\(/, " (");
   }
-  const NOTES = {
-    go: `<h2>Explore</h2><p>Pick a test trip or type two places. Click the map to drop the start, then the destination. Turn on <b>Planned &amp; in construction</b> in Layers to see what the City is building. It only shows while you browse, never on a route.</p>`,
-    suggest: `<h2>Suggest a ride</h2><p>Set where you start: type it, or click the map. Then choose a loop or a one-way ride, a distance and, if you like, a stop on the way. You get three rides that stay on bike lanes as much as they can.</p>`,
-  };
   function renderRoutes() {
     const box = $("#routes"), det = $("#detail");
-    const note = $("#explore-note");
-    note.hidden = state.routes.length > 0; note.innerHTML = NOTES[state.tab];
     if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
-    box.innerHTML = state.routes.map((c, i) => {
-      const r = c.r;
-      return `<button class="route-card ${i === state.sel ? "sel" : ""}" data-i="${i}">
-        <div class="rc-top"><b>${C.esc(c.label)}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
-        ${c.note ? `<div class="rc-note">${C.esc(c.note)}</div>` : ""}
-        <div class="rc-sub">${C.fmtKm(r.length)} · climb ${Math.round(r.climb)} m · ${r.gaps.length ? r.gaps.length + (r.gaps.length > 1 ? " stretches" : " stretch") + " without a bike lane" : "bike lanes all the way"}</div>
+    const classic = state.routes[0] && state.routes[0].classic;
+    box.innerHTML = classic ? "" : state.routes.map((c, i) => {
+      const r = c.r, gaps = C.mainGaps(r), note = routeNote(c);
+      return `<button type="button" class="route-card ${i === state.sel ? "sel" : ""}" data-i="${i}">
+        <div class="rc-top"><b>${C.esc(routeTitle(c))}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
+        ${note ? `<div class="rc-note">${C.esc(note)}</div>` : ""}
+        <div class="rc-sub">${C.fmtKm(r.length)} · ${t("climbM", { m: Math.round(r.climb) })} · ${gaps.length ? (gaps.length > 1 ? t("gapsN", { n: gaps.length }) : t("gaps1")) : t("lanesAllWay")}</div>
         ${compBar(r)}
-        <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> on bike infrastructure</div></button>`;
-    }).join("") + `<div style="font-size:11px;color:var(--ink-3)">Routed on this device in ${state.lastMs.toFixed(1)} ms</div>`;
+        <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></button>`;
+    }).join("") + `<div class="routed-in">${t("routedIn", { ms: state.lastMs.toFixed(1) })}</div>`;
     box.querySelectorAll(".route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
-    const sel = state.routes[state.sel], r = sel.r;
-    const gaps = r.gaps.length
-      ? `<div class="gaps">${r.gaps.map((g, i) => `<button class="gap-item" data-g="${i}"><span class="gi-icon">${i + 1}</span><span>${Math.round(g.length)} m on ${C.esc(g.names.slice(0, 2).join(", ") || "a street")}<br><small>${g.busy ? "Busy street, ride with traffic" : "Quiet street"} · after ${C.fmtKm(g.start)}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>`
-      : `<div class="no-gaps">Bike infrastructure the whole way.</div>`;
-    const turns = r.maneuvers.map((m) => `<li>${C.esc(m.text)} <span style="color:var(--ink-3)">· ${C.fmtKm(m.at)}</span></li>`).join("");
-    det.innerHTML = `<h2>Elevation</h2><div class="profile">${C.profileSVG(r, { width: 336, height: 92, tierColors: TIER_BAR, gapShade: "rgba(239,143,69,.14)",
-        fill: "#e6edf2", stroke: "#6f8799", text: "#7b858f", climbs: sel.climbs, climbFill: CLIMB.fill, climbText: "#7a5a3a" })}</div>
-      <p class="climb-note"><span class="chev-mini" aria-hidden="true">›</span>${climbSummary(r, sel.climbs)}</p>
-      <h2>Without a bike lane</h2>${gaps}
-      <details class="turns"><summary>Turn by turn (${r.maneuvers.length})</summary><ol>${turns}</ol></details>
-      <button id="ride-go" class="ride-go">Ride this route</button>`;
+    const sel = state.routes[state.sel], r = sel.r, gaps = C.mainGaps(r);
+    const gapHtml = gaps.length
+      ? `<div class="gaps">${gaps.map((g, i) => `<button type="button" class="gap-item" data-g="${i}"><span class="gi-icon">${i + 1}</span><span>${C.esc(t("gapOn", { m: Math.round(g.length), name: g.names.slice(0, 2).map(I.place).join(", ") || t("aStreet") }))}<br><small>${t(g.busy ? "busyStreet" : "quietStreet")} · ${t("after", { d: C.fmtKm(g.start) })}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>`
+      : `<div class="no-gaps">${t("lanesWhole")}</div>`;
+    const turns = r.maneuvers.map((m) => `<li>${C.esc(I.maneuver(m))} <span class="turn-at">· ${C.fmtKm(m.at)}</span></li>`).join("");
+    const classicHead = classic ? `<div class="classic-summary"><b>${C.esc(routeTitle(sel))}</b><span>${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t("climbM", { m: Math.round(r.climb) })}</span>${compBar(r)}<div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></div>` : "";
+    const wl = state.wx && state.wxData ? `<p class="wind-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3"/></svg>${C.esc(windLine(r))}</p>` : "";
+    det.innerHTML = `${classicHead}<h2>${t("elevation")}</h2><div class="profile">${C.profileSVG(r, { width: 336, height: 92, tierColors: TIER_BAR, gapShade: "rgba(239,143,69,.14)",
+        fill: "#e6edf2", stroke: "#6f8799", text: "#7b858f", climbs: sel.climbs, climbFill: CLIMB.fill, climbText: "#7a5a3a", minRange: 30, headroom: 0.25, gaps })}</div>
+      <p class="climb-note">${climbSummary(r, sel.climbs)}</p>${wl}
+      <h2>${t(state.winter ? "withoutLaneWinter" : "withoutLane")}</h2>${gapHtml}
+      <details class="turns"><summary>${t("turnByTurn", { n: r.maneuvers.length })}</summary><ol>${turns}</ol></details>
+      <button type="button" id="ride-go" class="ride-go">${t("rideThis")}</button>`;
     det.querySelectorAll(".gap-item").forEach((b) => b.addEventListener("click", () => {
-      const g = r.gaps[+b.dataset.g]; const cur = C.buildCursor(r); const p = cur.at(g.start + g.length / 2);
+      const g = gaps[+b.dataset.g]; const cur = C.buildCursor(r); const p = cur.at(g.start + g.length / 2);
       map.easeTo({ center: [p.lon, p.lat], zoom: 17, duration: 600 });
     }));
-    $("#ride-go").onclick = openSheet;
-  }
-
-  // ------------------------------------------------------------------ engines comparison
-  const ENGINE_COLORS = { "OSRM bike (OSM)": "#7a7f87", "Valhalla bicycle, use_roads 0.0": "#8e5bd0", "BRouter safety": "#0f9d8f" };
-  function updateEngines() {
-    const t = state.trip; const feats = [];
-    if (t && window.ENGINE_ROUTES && window.ENGINE_ROUTES[t.id]) {
-      let off = -4;
-      for (const [name, color] of Object.entries(ENGINE_COLORS)) {
-        const c = window.ENGINE_ROUTES[t.id][name]; if (!c) continue;
-        feats.push({ type: "Feature", geometry: { type: "LineString", coordinates: c }, properties: { name, color, off } }); off += 4;
-      }
-    }
-    map.getSource("engines").setData({ type: "FeatureCollection", features: feats });
+    $("#ride-go").onclick = () => startRide();
   }
 
   // ------------------------------------------------------------------ layers panel & modes
   const layerBtn = $("#layers-btn"), layersBox = $("#layers");
-  layerBtn.onclick = () => { layersBox.hidden = !layersBox.hidden; layerBtn.setAttribute("aria-expanded", String(!layersBox.hidden)); };
+  function openLayers(open) { layersBox.hidden = !open; layerBtn.setAttribute("aria-expanded", String(open)); }
+  layerBtn.onclick = () => openLayers(layersBox.hidden);
+  // a tap anywhere outside the panel closes it (and doesn't also drop a pin on the map)
+  document.addEventListener("pointerdown", (e) => {
+    if (layersBox.hidden || layersBox.contains(e.target) || layerBtn.contains(e.target)) return;
+    openLayers(false);
+    if (map.getCanvas().contains(e.target)) { layersJustClosed = true; setTimeout(() => (layersJustClosed = false), 500); }
+  }, true);
   const toggles = {};
-  document.querySelectorAll("#layers input[data-layer]").forEach((cb) => { toggles[cb.dataset.layer] = cb.checked; cb.addEventListener("change", () => setLayer(cb.dataset.layer, cb.checked)); });
+  document.querySelectorAll("#layers input[data-layer]").forEach((cb) => { toggles[cb.dataset.layer] = cb.checked; cb.addEventListener("change", () => { toggles[cb.dataset.layer] = cb.checked; applyLayers(); }); });
   function vis(id, on) { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none"); }
-  function setLayer(name, on) {
-    toggles[name] = on;
-    const cb = document.querySelector(`#layers input[data-layer="${name}"]`); if (cb) cb.checked = on;
-    applyLayers();
-  }
   function setTerrain(on) {
     if (on === state.terrainOn) return;   // re-creating terrain is costly: only on a real change
     state.terrainOn = on;
     map.setTerrain(on ? { source: "terrain", exaggeration: CAM.terrain } : null);
   }
+  function poiOn(p) {   // parks and viewpoints are always on
+    if (p.group === "outdoors" && p.kind !== "culture") return true;
+    if (p.kind === "metro") return toggles.metro;
+    if (p.kind === "culture") return toggles.culture;
+    if (p.group === "food") return toggles["pois-food"];
+    if (p.group === "shopping") return toggles["pois-shop"];
+    return toggles["pois-bike"];   // BIXI, water, repair, parking, toilets
+  }
   function applyLayers() {
-    const browse = state.mode === "explore";
+    const browse = state.mode === "explore", riding = state.mode === "ride";
     ["net-casing", "net-ab", "net-c"].forEach((id) => vis(id, toggles.network));
+    vis("net-not-cleared", toggles.network && state.winter);
     if (map.getLayer("net-ab")) map.setPaintProperty("net-ab", "line-opacity", browse ? 0.9 : 0.45);
-    ["planned", "construction", "construction-tape"].forEach((id) => vis(id, toggles.planned && browse));
+    ["planned", "construction", "construction-tape"].forEach((id) => vis(id, toggles.planned && browse && !state.winter));
     vis("closed", toggles.works);
     // while riding, roadside pop-ups replace the map's POI icons (only metro stations stay)
-    const riding = state.mode === "ride";
-    POI_LAYERS.forEach((p) => vis(p.id, riding ? p.id === "poi-metro" && toggles["pois-out"]
-      : (p.group === "food" && toggles["pois-food"]) || (p.group === "shopping" && toggles["pois-shop"]) || ((p.group === "bike" || p.group === "services") && toggles["pois-bike"]) || ((p.group === "outdoors" || p.group === "transit") && toggles["pois-out"])));
+    const liveBixi = !!state.bixi;
+    POI_LAYERS.forEach((p) => vis(p.id, riding ? p.kind === "metro" && toggles.metro : poiOn(p) && !(p.kind === "bixi" && liveBixi)));
+    vis("bixi-live", liveBixi && toggles["pois-bike"] && !riding); vis("bixi-count", liveBixi && toggles["pois-bike"] && !riding);
     document.body.classList.toggle("riding", riding);
     vis("tint", toggles.tint); vis("relief", toggles.relief);
-    ["contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
-    vis("climb-chev", !browse);
+    ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
     vis("bld-flat", toggles.buildings && !state.is3d); vis("bld-3d", toggles.buildings && state.is3d);
-    vis("engines", toggles.engines && !!state.trip && state.mode !== "ride");
+    vis("radar", state.wx);
     setTerrain(toggles.terrain && state.is3d);
     // with a route on screen, keep only the POIs and works along it (plus metro stations) to cut clutter
     const sel = state.routes[state.sel];
@@ -518,67 +760,136 @@
     vis("works", toggles.works && browse); vis("works-near", toggles.works && !browse);
     const ids = sel && !browse ? C.routePOIs(sel.r, window.POIS, 90).map((p) => p.i) : null;
     POI_LAYERS.forEach((p) => {
-      const kind = p.id.slice(4);
-      const base = ["==", ["get", "k"], kind];
-      map.setFilter(p.id, ids && kind !== "metro" ? ["all", base, ["in", ["id"], ["literal", ids]]] : base);
+      const base = ["==", ["get", "k"], p.kind];
+      map.setFilter(p.id, ids && p.kind !== "metro" ? ["all", base, ["in", ["id"], ["literal", ids]]] : base);
     });
+    if (liveBixi) {
+      let f = null;
+      if (sel && !browse) {
+        const cur = C.buildCursor(sel.r), xs = sel.r.coords.map((c) => c[0]), ys = sel.r.coords.map((c) => c[1]);
+        const w = Math.min(...xs) - 0.002, e = Math.max(...xs) + 0.002, s = Math.min(...ys) - 0.0015, n = Math.max(...ys) + 0.0015;
+        const near = state.bixi.features.filter((ft) => { const [x, y] = ft.geometry.coordinates; return x > w && x < e && y > s && y < n && cur.locate(x, y).d < 120; }).map((ft) => ft.id);
+        f = ["in", ["id"], ["literal", near]];
+      }
+      map.setFilter("bixi-live", f); map.setFilter("bixi-count", f);
+    }
   }
   function setMode(m) { state.mode = m; applyLayers(); }
 
-  // 2D / 3D (bird's-eye with a narrow lens = near-axonometric)
+  // 2D / 3D: the button shows the view you switch to (cube + "3D" while flat, square + "2D" while in 3D)
   const viewBtn = $("#view-btn");
   function set3d(on, animate = true) {
     state.is3d = on;
     viewBtn.classList.toggle("is3d", on); $("#ride-view").classList.toggle("is3d", on);
-    $("#view-label").textContent = on ? "2D" : "3D";   // the label names the view you switch to
-    viewBtn.title = on ? "Switch to top-down 2D" : "Switch to bird's-eye 3D";
+    $("#view-label").textContent = on ? "2D" : "3D";
+    viewBtn.dataset.i18nTitle = on ? "to2d" : "to3d"; viewBtn.title = t(viewBtn.dataset.i18nTitle); viewBtn.setAttribute("aria-label", viewBtn.title);
     map.setVerticalFieldOfView(on ? CAM.browse3d.fov : 36.87);
     applyLayers();
     if (state.mode !== "ride" && animate) map.easeTo({ pitch: on ? CAM.browse3d.pitch : 0, bearing: on ? CAM.browse3d.bearing : 0, zoom: Math.max(map.getZoom(), on ? 15.2 : map.getZoom()), duration: 900 });
   }
   viewBtn.onclick = () => set3d(!state.is3d);
-  applyLayers();
+  $("#wx-btn").onclick = () => setWeather(!state.wx);
+  $("#winter-btn").onclick = () => setWinter(!state.winter);
+
+  // ------------------------------------------------------------------ language
+  function setLang(l) {
+    I.lang = l; I.save(); I.apply();
+    $("#lang-btn").textContent = l === "fr" ? "EN" : "FR";
+    viewBtn.title = t(viewBtn.dataset.i18nTitle || "to3d");
+    strictOut.textContent = strictLabel(+strict.value); kmLabel(); renderStopChips();
+    classicCache.clear(); classicsRouted = false;   // sight names are part of the route
+    if (state.tab === "suggest" && state.smode === "classics") showClassic(state.classic, false); else renderClassicCards();
+    if (state.from) fromEl.value = state.fromLabel; if (state.to) toEl.value = state.toLabel;
+    setMapTexts(); renderRoutes(); renderWxCard(); renderSound(); buildElevationLegend();
+    if (!state.ride) $("#ride-pause").textContent = t("pause");
+  }
+  $("#lang-btn").onclick = () => setLang(I.lang === "fr" ? "en" : "fr");
+  $("#lang-btn").textContent = I.lang === "fr" ? "EN" : "FR";
+
+  // ------------------------------------------------------------------ bottom panel on phones: drag it up (full) or down (map)
+  const panel = $("#panel"), sheet = { state: "half" };
+  function sheetHeight(s) {
+    const H = innerHeight, top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
+    return { peek: 150, half: Math.round(H * 0.5), full: H - top - 8 }[s];
+  }
+  function setSheet(s, animate = true) {
+    sheet.state = s; panel.dataset.sheet = s;
+    if (!isPhone()) { panel.style.height = ""; return; }
+    panel.classList.toggle("dragging", !animate);
+    panel.style.height = sheetHeight(s) + "px";
+  }
+  (function dragSheet() {
+    let y0 = 0, h0 = 0, lastY = 0, lastT = 0, vy = 0, moved = false, active = false;
+    const zone = [$("#grabber"), $("#brand")];
+    const down = (e) => {
+      if (!isPhone()) return;
+      active = true; moved = false; y0 = lastY = e.clientY; lastT = performance.now(); h0 = panel.getBoundingClientRect().height; vy = 0;
+      panel.classList.add("dragging"); e.currentTarget.setPointerCapture(e.pointerId);
+    };
+    const move = (e) => {
+      if (!active) return;
+      const now = performance.now(); vy = (e.clientY - lastY) / Math.max(1, now - lastT); lastY = e.clientY; lastT = now;
+      if (Math.abs(e.clientY - y0) > 4) moved = true;
+      panel.style.height = Math.max(sheetHeight("peek") - 40, Math.min(sheetHeight("full"), h0 + (y0 - e.clientY))) + "px";
+    };
+    const up = () => {
+      if (!active) return; active = false; panel.classList.remove("dragging");
+      const order = ["peek", "half", "full"];
+      if (!moved) { setSheet(order[(order.indexOf(sheet.state) + 1) % 3]); return; }   // a tap steps through the sizes
+      const h = panel.getBoundingClientRect().height;
+      let i = order.reduce((b, s, k) => (Math.abs(sheetHeight(s) - h) < Math.abs(sheetHeight(order[b]) - h) ? k : b), 0);
+      if (vy < -0.5) i = Math.min(2, Math.max(i, order.indexOf(sheet.state) + 1));   // a quick flick moves one step
+      if (vy > 0.5) i = Math.max(0, Math.min(i, order.indexOf(sheet.state) - 1));
+      setSheet(order[i]);
+    };
+    for (const z of zone) { z.addEventListener("pointerdown", down); z.addEventListener("pointermove", move); z.addEventListener("pointerup", up); z.addEventListener("pointercancel", up); }
+    $("#grabber").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSheet({ peek: "half", half: "full", full: "peek" }[sheet.state]); } });
+    addEventListener("resize", () => setSheet(sheet.state, false));
+  })();
+  setSheet("half", false);
 
   // ------------------------------------------------------------------ ride (simulation)
-  const sheet = $("#sheet");
-  function openSheet() {
-    $("#opt-cmd").disabled = !C.voice.commandsSupported;
-    if (!C.voice.commandsSupported) $("#opt-cmd").parentElement.classList.add("off");
-    sheet.hidden = false; $("#sheet-start").focus();
-  }
-  $("#sheet-cancel").onclick = () => (sheet.hidden = true);
-  $("#sheet-start").onclick = () => { sheet.hidden = true; startRide(); };
-
   let audio = null;
   function chime() {
-    if (!$("#opt-chime").checked) return;
+    if (state.sound === "off") return;
     try {
       audio = audio || new AudioContext();
       [660, 880].forEach((f, i) => {
         const o = audio.createOscillator(), g = audio.createGain(); o.type = "sine"; o.frequency.value = f;
-        const t = audio.currentTime + i * 0.16; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.09, t + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-        o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.32);
+        const t2 = audio.currentTime + i * 0.16; g.gain.setValueAtTime(0, t2); g.gain.linearRampToValueAtTime(0.09, t2 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t2 + 0.3);
+        o.connect(g).connect(audio.destination); o.start(t2); o.stop(t2 + 0.32);
       });
     } catch (e) { /* no audio */ }
   }
+  const SOUND_ICON = {
+    chime: '<svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0"/></svg>',
+    voice: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
+    off: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>',
+  };
+  function renderSound() {
+    const b = $("#ride-sound"); b.innerHTML = SOUND_ICON[state.sound];
+    b.title = t({ chime: "soundChime", voice: "soundVoice", off: "soundOff" }[state.sound]); b.setAttribute("aria-label", b.title);
+    C.voice.enabled = state.sound === "voice";
+  }
+  $("#ride-sound").onclick = () => { state.sound = { chime: "voice", voice: "off", off: "chime" }[state.sound]; store.set("sound", state.sound); renderSound(); };
+  renderSound();
 
   const TURN_SVG = {
     straight: '<path d="M23 38V10M14 19l9-9 9 9"/>', left: '<path d="M30 38V22a6 6 0 0 0-6-6H12M19 9l-7 7 7 7"/>',
     right: '<path d="M16 38V22a6 6 0 0 1 6-6h12M27 9l7 7-7 7"/>', slightL: '<path d="M28 38V24L16 12M16 21v-9h9"/>',
     slightR: '<path d="M18 38V24l12-12M30 21v-9h-9"/>', arrive: '<path d="M14 38V8M14 9h17l-4 6 4 6H14"/>',
   };
-  function turnKind(text) { return /^Stop:/.test(text) ? "arrive" : /Sharp left|Turn left/.test(text) ? "left" : /Sharp right|Turn right/.test(text) ? "right" : /Slight left/.test(text) ? "slightL" : /Slight right/.test(text) ? "slightR" : "straight"; }
+  const turnIcon = (m) => ({ stop: "arrive", sight: "arrive", left: "left", sharpL: "left", right: "right", sharpR: "right", slightL: "slightL", slightR: "slightR" }[m.kind] || "straight");
 
   // you: a heading cone lying on the street + an upright cyclist badge facing the camera
   const coneEl = document.createElement("div"); coneEl.className = "rider-cone";
   coneEl.innerHTML = '<svg viewBox="0 0 120 120"><defs><radialGradient id="cg" cx="50%" cy="100%" r="90%"><stop offset="0" stop-color="#0095E6" stop-opacity=".55"/><stop offset="1" stop-color="#0095E6" stop-opacity="0"/></radialGradient></defs><path d="M60 64 28 6h64z" fill="url(#cg)"/><circle cx="60" cy="64" r="13" fill="#0095E6" stroke="#fff" stroke-width="5"/></svg>';
-  // MARKER_SHOW: never fade our markers as "behind the terrain" (MapLibre misjudges it with the narrow 3D lens)
   const riderMarker = new maplibregl.Marker({ element: coneEl, rotationAlignment: "map", pitchAlignment: "map", ...MARKER_SHOW });
   const badgeEl = document.createElement("div"); badgeEl.className = "rider-badge";
   badgeEl.innerHTML = '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="3.5"/><g fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="21.5" cy="38" r="6.5"/><circle cx="42.5" cy="38" r="6.5"/><path d="M21.5 38l6-12h9.5l5.5 12M27.5 26l5 12h-11M34.5 21.5h5"/></g></svg>';
   const badgeMarker = new maplibregl.Marker({ element: badgeEl, anchor: "bottom", pitchAlignment: "viewport", rotationAlignment: "viewport", ...MARKER_SHOW });
   const poiMarkers = new Map();
-  let rec = null, smoothBearing = 0, afterGapUntil = 0, lastGapId = null, sparkAt = -1e9;
+  let smoothBearing = 0, afterGapUntil = 0, lastGapId = null, sparkAt = -1e9;
 
   // keep the rider low on the screen so you see more of what's ahead
   function setRidePadding() {
@@ -588,29 +899,26 @@
   }
   addEventListener("resize", () => { if (state.mode === "ride") setRidePadding(); });
 
-  function startRide() {
+  // the ride starts straight away (bird's-eye 3D); sound is a button in the ride bar
+  function startRide(view = "birdseye") {
     const sel = state.routes[state.sel]; if (!sel) return;
     const r = sel.r;
-    state.rideEnd = sel.endLabel || state.toLabel || "destination";
-    C.voice.enabled = $("#opt-voice").checked;
-    state.rideView = document.querySelector('input[name="opt-view"]:checked').value;
+    state.rideEnd = placeText(sel.end) || state.toLabel || t("destination");
+    state.rideView = view;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
-    $("#ride-hud").hidden = false; setMode("ride");
+    $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false);
     set3d(state.rideView === "birdseye", false);
     setRidePadding();
     riderMarker.setLngLat(r.coords[0]).addTo(map); badgeMarker.setLngLat(r.coords[0]).addTo(map);
     Object.values(markers).forEach((m) => (m.getElement().style.display = "none"));
     smoothBearing = map.getBearing(); state.hillK = 0; sparkAt = -1e9;
+    $("#ride-pause").textContent = t("pause");
     const pois = C.routePOIs(r, window.POIS, 70);
     state.ride = new C.RideSim(r, { mult: 4, pois, onFrame: rideFrame, onEvent: rideEvent });
-    if ($("#opt-cmd").checked && C.voice.commandsSupported) {
-      rec = C.voice.listen({ pause: () => pauseRide(true), resume: () => pauseRide(false), "next": () => C.voice.say($("#turn-text").textContent) });
-      toast('Voice commands on: say "pause", "resume" or "next turn"');
-    }
     state.ride.start();
   }
-  function lerpAngle(a, b, t) { const d = ((b - a + 540) % 360) - 180; return a + d * t; }
-  const smoothstep = (x) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
+  function lerpAngle(a, b, k) { const d = ((b - a + 540) % 360) - 180; return a + d * k; }
+  const smoothstep = (x) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v); };
 
   // 0..1: how much "hill ahead" to show. Builds from 520 m before a climb, full on it, fades just after the top.
   function hillFactor(d, list) {
@@ -621,7 +929,7 @@
       if (ahead > 0 && ahead < 520) v = smoothstep((520 - ahead) / 360);
       else if (ahead <= 0 && d < end) v = 1;
       else if (d >= end && d - end < 90) v = 1 - (d - end) / 90;
-      k = Math.max(k, v * Math.min(1, Math.max(0.45, (c.grade - 0.015) / 0.045)));   // steeper climbs get the full effect
+      k = Math.max(k, v * Math.min(1, Math.max(0.45, (c.grade - 0.015) / 0.045)));
     }
     return k;
   }
@@ -631,7 +939,6 @@
     const target = hillFactor(f.d, climbList);
     if (state.snap) { state.hillK = target; smoothBearing = f.pos.heading; state.snap = false; }
     else { state.hillK += (target - state.hillK) * 0.05; smoothBearing = lerpAngle(smoothBearing, f.pos.heading, 0.12); }
-    // hill ahead: in 3D the terrain swells and the camera eases back, so the climb reads before you reach it
     const k = bird ? state.hillK : 0;
     if (map.terrain) {
       const ex = CAM.terrain + k * CAM.hill.boost;
@@ -643,19 +950,21 @@
     badgeMarker.setLngLat([f.pos.lon, f.pos.lat]);
     // turn card
     const L = f.look;
-    if (L.next) { $("#turn-dist").textContent = C.fmtKm(L.nextDist); $("#turn-text").textContent = L.next.text; $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG[turnKind(L.next.text)]}</svg>`; }
-    else { $("#turn-dist").textContent = C.fmtKm(f.total - f.d); $("#turn-text").textContent = "Arrive at " + state.rideEnd; $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`; }
-    // gap card: calm, specific
+    if (L.next) { $("#turn-dist").textContent = C.fmtKm(L.nextDist); $("#turn-text").textContent = I.maneuver(L.next); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`; }
+    else { $("#turn-dist").textContent = C.fmtKm(f.total - f.d); $("#turn-text").textContent = t("arrive", { name: state.rideEnd }); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`; }
+    // gap card: calm, specific (only stretches of 50 m or more)
     const card = $("#gap-card");
+    const on = (g) => (g.names[0] ? (I.lang === "fr" ? " sur " : " on ") + C.esc(I.place(g.names[0])) : "");
     if (L.inGap) {
       const left = L.inGap.start + L.inGap.length - f.d; lastGapId = L.inGap.start;
       card.className = "gap-card inside"; card.hidden = false;
-      card.innerHTML = `<span class="gc-icon">!</span><span>No bike lane for <b>${C.fmtKm(left)}</b>${L.inGap.names[0] ? " on " + C.esc(L.inGap.names[0]) : ""}. ${L.inGap.busy ? "Ride with traffic." : "Quiet street."}</span>`;
+      card.innerHTML = `<span class="gc-icon">!</span><span>${state.winter ? t("gapInsideWinter", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })
+        : t("gapInside", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap), tip: t(L.inGap.busy ? "rideTraffic" : "quietTip") })}</span>`;
     } else if (L.nextGap && L.nextGapDist <= 400) {
       card.className = "gap-card"; card.hidden = false;
-      card.innerHTML = `<span class="gc-icon">!</span><span>In <b>${C.fmtKm(L.nextGapDist)}</b>: ${Math.round(L.nextGap.length)} m without a bike lane${L.nextGap.names[0] ? " on " + C.esc(L.nextGap.names[0]) : ""}${L.nextGap.busy ? " · busy street" : ""}</span>`;
+      card.innerHTML = `<span class="gc-icon">!</span><span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: Math.round(L.nextGap.length), on: on(L.nextGap), busy: L.nextGap.busy ? t("busyTag") : "" })}</span>`;
     } else if (lastGapId !== null && performance.now() < afterGapUntil) {
-      card.className = "gap-card ok"; card.hidden = false; card.innerHTML = `<span class="gc-icon">✓</span><span>Back on a bike lane</span>`;
+      card.className = "gap-card ok"; card.hidden = false; card.innerHTML = `<span class="gc-icon">✓</span><span>${t("backOnLane")}</span>`;
     } else card.hidden = true;
     if (lastGapId !== null && !L.inGap && afterGapUntil === 0) afterGapUntil = performance.now() + 5000;
     if (L.inGap) afterGapUntil = 0;
@@ -672,7 +981,9 @@
       let mk = poiMarkers.get(p.i);
       if (!mk) {
         const el = document.createElement("div"); el.className = "poi-pop";
-        el.innerHTML = `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(C.iconSVG(p.kind, { size: 60, lines: p.extra }))}"><span>${C.esc(p.name || C.POI_KINDS[p.kind].label)}</span>`;
+        const b = p.kind === "bixi" ? bixiByName(p.name) : null;
+        const label = (p.name || C.poiLabel(p.kind)) + (b ? ` · ${t("bixiBikes", { n: b.properties.bikes })}` : "");
+        el.innerHTML = `<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(C.iconSVG(p.kind, { size: 60, lines: p.extra }))}"><span>${C.esc(label)}</span>`;
         mk = new maplibregl.Marker({ element: el, anchor: p.side < 0 ? "right" : "left", offset: [p.side < 0 ? -6 : 6, 0], ...MARKER_SHOW }).setLngLat([p.lon, p.lat]).addTo(map);
         poiMarkers.set(p.i, mk);
       }
@@ -697,19 +1008,18 @@
     const c = cur || topped || (next && next.start - f.d < 600 ? next : null);
     if (!c) { card.hidden = true; return; }
     card.hidden = false; card.classList.toggle("on-climb", !!cur);
-    const pct = (g) => Math.round(Math.max(0, g) * 100) + "%";
     let title, sub;
     if (cur) {
       const end = c.start + c.length, span = Math.max(5, Math.min(30, end - f.d));
       const now = (C.elevAt(r, f.d + span) - C.elevAt(r, f.d)) / span;
-      title = `Climbing · ${pct(now)}`;
-      sub = `${C.fmtKm(end - f.d)} to the top · +${Math.max(0, Math.round(C.elevAt(r, end) - C.elevAt(r, f.d)))} m to go`;
+      title = t("climbing", { g: I.pct(Math.max(0, now)) });
+      sub = t("toTop", { d: C.fmtKm(end - f.d), m: Math.max(0, Math.round(C.elevAt(r, end) - C.elevAt(r, f.d))) });
     } else if (topped) {
-      title = "Top of the climb"; sub = `+${Math.round(c.rise)} m done`;
+      title = t("topOfClimb"); sub = t("riseDone", { m: Math.round(c.rise) });
     } else {
       const max = c.maxGrade ?? (c.maxGrade = C.climbMaxGrade(r, c));
-      title = `Climb in ${C.fmtKm(c.start - f.d)}`;
-      sub = `+${Math.round(c.rise)} m over ${C.fmtKm(c.length)} · ${pct(c.grade)} avg${max > c.grade + 0.01 ? `, ${pct(max)} max` : ""}`;
+      title = t("climbIn", { d: C.fmtKm(c.start - f.d) });
+      sub = t("climbStats", { rise: Math.round(c.rise), d: C.fmtKm(c.length), avg: I.pct(c.grade), max: max > c.grade + 0.01 ? t("maxPart", { g: I.pct(max) }) : "" });
     }
     $("#hill-title").textContent = title; $("#hill-sub").textContent = sub;
     if (Math.abs(f.d - sparkAt) > 4) { $("#hill-spark").innerHTML = sparkSVG(r, f.d, list); sparkAt = f.d; }
@@ -718,7 +1028,7 @@
     const W = 132, H = 44, d0 = d - 60, d1 = d + 740;
     const pts = C.profileWindow(r, d0, d1, 10);
     let zmin = Math.min(...pts.map((p) => p[1])), zmax = Math.max(...pts.map((p) => p[1]));
-    if (zmax - zmin < 12) { const m = (zmax + zmin) / 2; zmin = m - 6; zmax = m + 6; }
+    if (zmax - zmin < 24) { const m = (zmax + zmin) / 2; zmin = m - 12; zmax = m + 12; }   // 2026-10-29: gentler (was 12 m)
     const X = (v) => ((v - d0) / (d1 - d0)) * W, Y = (z) => 5 + (1 - (z - zmin) / (zmax - zmin)) * (H - 11);
     const line = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)} ${Y(p[1]).toFixed(1)}`).join("");
     const area = `${line}L${W} ${H}L0 ${H}Z`;
@@ -731,11 +1041,11 @@
   }
   function rideEvent(ev) {
     if (ev.type === "gap") { chime(); C.voice.say(C.gapSentence(ev.gap, ev.dist)); }
-    if (ev.type === "turn") C.voice.say(ev.m.text);
-    if (ev.type === "hill") C.voice.say(`Climb ahead, plus ${Math.round(ev.hill.rise)} metres.`);
-    if (ev.type === "arrived") { C.voice.say("You have arrived."); toast("Arrived. Nice ride."); setTimeout(endRide, 2500); }
+    if (ev.type === "turn") C.voice.say(I.maneuver(ev.m));
+    if (ev.type === "hill") C.voice.say(t("climbVoice", { m: Math.round(ev.hill.rise) }));
+    if (ev.type === "arrived") { C.voice.say(t("arrivedVoice")); toast(t("arrived")); setTimeout(endRide, 2500); }
   }
-  function pauseRide(p) { if (!state.ride) return; if (p) { state.ride.pause(); $("#ride-pause").textContent = "Resume"; } else { state.ride.start(); $("#ride-pause").textContent = "Pause"; } }
+  function pauseRide(p) { if (!state.ride) return; if (p) { state.ride.pause(); $("#ride-pause").textContent = t("resume"); } else { state.ride.start(); $("#ride-pause").textContent = t("pause"); } }
   $("#ride-pause").onclick = () => pauseRide(state.ride && state.ride.running);
   $("#ride-speed").onclick = () => { if (!state.ride) return; const m = { 1: 4, 4: 10, 10: 1 }[state.ride.mult] || 4; state.ride.mult = m; $("#ride-speed").textContent = m + "×"; };
   $("#ride-view").onclick = () => {
@@ -746,14 +1056,13 @@
   $("#ride-exit").onclick = endRide;
   function endRide() {
     if (state.ride) state.ride.pause(); state.ride = null;
-    if (rec) { rec._keep = false; rec.stop(); rec = null; }
     if (map.terrain) map.terrain.exaggeration = CAM.terrain;
     state.hillK = 0;
     riderMarker.remove(); badgeMarker.remove(); for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
-    Object.values(markers).forEach((m) => (m.getElement().style.display = ""));
     $("#ride-hud").hidden = true; $("#hill-card").hidden = true; $("#panel").hidden = false; $("#legend").hidden = false; document.querySelector(".map-controls").hidden = false;
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapId = null;
+    refreshSections(); wind.show(state.wx); renderWxCard();
     if (state.routes.length) fitRoute(state.routes[state.sel].r);
   }
 
@@ -763,19 +1072,6 @@
     x.fillStyle = fill; x.strokeStyle = stroke; x.lineWidth = 2;
     x.beginPath(); x.roundRect(2, 2, 60, 36, 14); x.fill(); x.stroke();
     return x.getImageData(0, 0, 64, 40);
-  }
-  // n chevrons pointing along the line (uphill), dark brown with a white edge, drawn at 2x
-  function chevronImage(n) {
-    const w = 16 + (n - 1) * 8, h = 16, s = 2;
-    const c = document.createElement("canvas"); c.width = w * s; c.height = h * s; const x = c.getContext("2d");
-    x.scale(s, s); x.lineCap = "round"; x.lineJoin = "round";
-    const draw = (col, lw) => {
-      x.strokeStyle = col; x.lineWidth = lw; x.beginPath();
-      for (let i = 0; i < n; i++) { const ox = 5 + i * 8; x.moveTo(ox, 3.5); x.lineTo(ox + 6, 8); x.lineTo(ox, 12.5); }
-      x.stroke();
-    };
-    draw("rgba(255,255,255,0.95)", 5.2); draw(CLIMB.ink, 2.4);
-    return x.getImageData(0, 0, w * s, h * s);
   }
   // legend: the elevation colours as they look on the map (tint over the Positron background)
   function buildElevationLegend() {
@@ -787,38 +1083,46 @@
       return `rgb(${mix(r, 0)},${mix(g, 1)},${mix(b, 2)}) ${((i / (ramp.length - 1)) * 100).toFixed(1)}%`;
     });
     $("#elev-ramp").style.background = `linear-gradient(90deg, ${stops.join(", ")})`;
-    const ticks = [10, 50, 110, 200];
-    $("#elev-ticks").innerHTML = ticks.map((m) => {
+    $("#elev-ticks").innerHTML = [10, 50, 110, 200].map((m) => {
       const i = ramp.findIndex((s) => s[0] === m);
       return i < 0 ? "" : `<small style="left:${((i / (ramp.length - 1)) * 100).toFixed(1)}%">${m}${m === 200 ? " m" : ""}</small>`;
     }).join("");
   }
 
-  // ------------------------------------------------------------------ start: a deep link (?from=lon,lat&to=lon,lat), a test trip, or Mont-Royal → Papineau
+  // ------------------------------------------------------------------ start: deep links for tests, screenshots and sharing
+  // ?trip=rachel|montroyal|biodome|davidson · ?from=lon,lat&to=lon,lat · ?suggest=loop|oneway&km=&stop= · ?classic=<id>
+  // ?view=3d · ?winter=1 · ?wx=1 · ?lang=fr · ?ride=bird|top&at=<m>&paused
+  refreshSections(); applyLayers();
   const lonlat = (s) => { const v = (s || "").split(",").map(Number); return v.length === 2 && v.every(Number.isFinite) ? v : null; };
   const pFrom = lonlat(params.get("from")), pTo = lonlat(params.get("to"));
-  if (pFrom && pTo) {
-    setPoint("from", pFrom, placeLabel(pFrom[0], pFrom[1]), true); setPoint("to", pTo, placeLabel(pTo[0], pTo[1]), true);
-    computeRoutes(true);
-  } else {
-    const startTrip = window.TRIPS.find((t) => t.id === (params.get("trip") || "montroyal"));
-    if (startTrip) useTrip(startTrip);
+  const trip = (window.TRIPS || []).find((x) => x.id === params.get("trip"));
+  if (pFrom) setPoint("from", pFrom, placeLabel(pFrom[0], pFrom[1]));
+  if (pTo) setPoint("to", pTo, placeLabel(pTo[0], pTo[1]));
+  if (trip) { setPoint("from", trip.from.lonlat, trip.from.label); setPoint("to", trip.to.lonlat, trip.to.label); }
+  if (params.get("winter") === "1") setWinter(true);
+  if (params.get("wx") === "1") setWeather(true);
+  if (params.get("suggest") || params.get("classic")) {
+    state.tab = "suggest";
+    if (params.get("classic")) { state.smode = "classics"; state.classic = Math.max(0, CLASSICS.findIndex((c) => c.id === params.get("classic"))); }
+    else {
+      state.smode = "custom";
+      state.sugg.loop = params.get("suggest") !== "oneway";
+      document.querySelector(`input[name="shape"][value="${state.sugg.loop ? "loop" : "oneway"}"]`).checked = true;
+      if (params.get("km")) setKm(params.get("km"), false);
+      if (SK[params.get("stop")]) { state.sugg.stop = params.get("stop"); renderStopChips(); }
+    }
+    document.querySelector(`input[name="smode"][value="${state.smode}"]`).checked = true;
+    refreshSections();
   }
-  // ?suggest=loop|oneway&km=10&stop=cafe opens "Suggest a ride"
-  if (params.get("suggest")) {
-    state.sugg.loop = params.get("suggest") !== "oneway";
-    document.querySelector(`input[name="shape"][value="${state.sugg.loop ? "loop" : "oneway"}"]`).checked = true;
-    if (params.get("km")) { km.value = params.get("km"); state.sugg.km = +km.value; kmLabel(); }
-    if (SK[params.get("stop")]) { state.sugg.stop = params.get("stop"); markStopChips(); }
-    setTab("suggest");
-  }
+  if (state.tab === "suggest" && state.smode === "custom") await computeSuggestions(true); else recompute(true);
+  if (state.tab === "suggest" && state.smode === "classics") requestAnimationFrame(() => { const el = track.children[state.classic]; if (el) track.scrollLeft = el.offsetLeft - (track.clientWidth - el.offsetWidth) / 2; });
+  renderClassicCards();
   if (params.get("view") === "3d") set3d(true);
-  // ?ride=bird|top starts the simulated ride; &at=<metres> jumps along it; &paused holds it still (screenshots, tests)
   if (params.get("ride") && state.routes.length) {
-    document.querySelector(`input[name="opt-view"][value="${params.get("ride") === "top" ? "topdown" : "birdseye"}"]`).checked = true;
-    startRide();
+    startRide(params.get("ride") === "top" ? "topdown" : "birdseye");
     if (params.has("at")) { state.snap = true; state.ride.seek(+params.get("at")); }
     if (params.has("paused")) pauseRide(true);
   }
-  window.__app = { map, router, state, useTrip, set3d, startRide, computeRoutes, computeSuggestions, setTab, suggester, pauseRide, CAM };
+  window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
+    setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute };
 })();

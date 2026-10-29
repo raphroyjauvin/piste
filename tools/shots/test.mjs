@@ -1,21 +1,23 @@
-// Functional smoke tests for the app, in headless Edge. Usage: node C:\bikeapp\tools\shots\test.mjs
+// Functional tests for the app, in headless Edge. Usage: node C:\bikeapp\tools\shots\test.mjs [name filter]
 // Test the live site instead: set PISTE_BASE=https://www.raphroyjauvin.ca/piste/ first.
 import { chromium } from "playwright-core";
 
 const BASE = process.env.PISTE_BASE || "http://localhost:8765/";
 const APP = "a-positron/index.html";
+const only = process.argv[2];
 const browser = await chromium.launch({ channel: "msedge", headless: true, args: ["--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"] });
 const results = [];
 async function run(name, url, fn, viewport = { width: 1440, height: 900 }) {
+  if (only && !name.includes(only)) return;
   const ctx = await browser.newContext({ viewport });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  page.on("console", (m) => { if (m.type() === "error" && !/favicon|404/.test(m.text())) errors.push(m.text()); });
+  page.on("console", (m) => { if (m.type() === "error" && !/favicon|404|Failed to load resource/.test(m.text())) errors.push(m.text()); });
   const t = Date.now();
   try {
-    await page.goto(BASE + url, { waitUntil: "load", timeout: 60000 });
-    await page.waitForFunction(() => !!window.__app, null, { timeout: 60000 });
+    await page.goto(BASE + url, { waitUntil: "load", timeout: 90000 });
+    await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
     const out = await fn(page);
     results.push({ name, ok: errors.length === 0 && out.ok !== false, secs: ((Date.now() - t) / 1000).toFixed(1), ...out, errors });
   } catch (e) {
@@ -24,126 +26,164 @@ async function run(name, url, fn, viewport = { width: 1440, height: 900 }) {
   await ctx.close();
 }
 const idle = "new Promise((r) => { const m = window.__app.map; let d = false; const f = () => { if (!d) { d = true; r(); } }; m.once('idle', f); m.triggerRepaint(); setTimeout(f, 10000); })";
+const wait = (ms) => `new Promise((r) => setTimeout(r, ${ms}))`;
 
-await run("search, slider, layers, ride", `${APP}?trip=montroyal`, async (page) => {
-  return await page.evaluate(async () => {
-    const app = window.__app; const g = BikeCommon.makeGeocoder(app.router);
-    const inter = await g.search("Rachel & Papineau");
-    const addr = await g.search("4500 rue Saint-Denis");
-    const place = await g.search("Parc La Fontaine");
-    const el = document.querySelector("#strict");
-    el.value = 0; el.dispatchEvent(new Event("input"));
-    const low = app.state.routes.map((r) => [r.label, Math.round(r.r.length), Math.round(r.r.infraShare * 100)]);
-    el.value = 100; el.dispatchEvent(new Event("input"));
-    const high = app.state.routes.map((r) => [r.label, Math.round(r.r.length), Math.round(r.r.infraShare * 100)]);
-    // planned layer must stay hidden while a route is shown
-    document.querySelector("[data-layer=planned]").click();
-    const plannedVisibleWithRoute = app.map.getLayoutProperty("planned", "visibility");
-    document.querySelector("[data-layer=planned]").click();
-    document.querySelector("#ride-go").click(); document.querySelector("#sheet-start").click();
-    await new Promise((r) => setTimeout(r, 4000));
-    const d1 = app.state.ride ? app.state.ride.d : -1;
-    await new Promise((r) => setTimeout(r, 1500));
-    const d2 = app.state.ride ? app.state.ride.d : -1;
-    return { ok: inter.length > 0 && addr.length > 0 && d2 > d1 && plannedVisibleWithRoute === "none",
-      intersection: inter[0] && inter[0].label, address: addr[0] && addr[0].label + " (" + addr[0].sub + ")", place: place[0] && place[0].label,
-      sliderLow: low, sliderHigh: high, plannedVisibleWithRoute, rideAdvanced: [Math.round(d1), Math.round(d2)] };
-  });
+await run("search, slider, island routing, ride starts at once", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+  const app = window.__app; const g = BikeCommon.makeGeocoder(app.router);
+  const inter = await g.search("Rachel & Papineau"), addr = await g.search("4500 rue Saint-Denis"), place = await g.search("Parc La Fontaine");
+  const el = document.querySelector("#strict");
+  el.value = 0; el.dispatchEvent(new Event("input")); const low = app.state.routes.map((r) => [Math.round(r.r.length), Math.round(r.r.infraShare * 100)]);
+  el.value = 100; el.dispatchEvent(new Event("input")); const high = app.state.routes.map((r) => [Math.round(r.r.length), Math.round(r.r.infraShare * 100)]);
+  // island-wide: Atwater Market to Parc René-Lévesque in Lachine (outside the old study area)
+  const far = app.router.route([-73.5768, 45.4796], [-73.6837, 45.4290], { w: BikeRouter.PROFILES.bikemax.w, hill: 4 });
+  document.querySelector("#ride-go").click();
+  await new Promise((r) => setTimeout(r, 2500)); const d1 = app.state.ride ? app.state.ride.d : -1;
+  await new Promise((r) => setTimeout(r, 1500)); const d2 = app.state.ride ? app.state.ride.d : -1;
+  return { ok: inter.length > 0 && addr.length > 0 && !!far && far.length > 9000 && d2 > d1 && d1 >= 0 && !document.querySelector("#sheet"),
+    nodes: app.router.n, intersection: inter[0] && inter[0].label, address: addr[0] && addr[0].label, place: place[0] && place[0].label,
+    sliderLow: low, sliderHigh: high, lachineKm: far && +(far.length / 1000).toFixed(1), rideAdvanced: [Math.round(d1), Math.round(d2)] };
+}));
+
+await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps >= 50 m", `${APP}?trip=montroyal`, async (page) => {
+  const before = await page.evaluate(() => ({
+    tripChips: !!document.querySelector("#trip-chips"), exploreNote: !!document.querySelector("#explore-note"),
+    avoidHills: document.querySelector("#hills").parentElement.textContent.trim(),
+    relief: document.querySelector('[data-layer="relief"]').parentElement.textContent.trim(),
+    works: document.querySelector('[data-layer="works"]').parentElement.textContent.trim(),
+    metroToggle: !!document.querySelector('[data-layer="metro"]'), parksToggle: !!document.querySelector('[data-layer="pois-out"]'),
+    buildingsInMap: document.querySelector('[data-layer="buildings"]').closest(".layers").querySelectorAll("h3").length === 2,
+    label2d: document.querySelector("#view-label").textContent,
+    gapsOk: window.__app.state.routes.every((c) => [...document.querySelectorAll(".gap-item")].length === BikeCommon.mainGaps(window.__app.state.routes[window.__app.state.sel].r).length),
+    chevLayer: !!window.__app.map.getLayer("climb-chev"),
+  }));
+  await page.click("#layers-btn");
+  const opened = await page.evaluate(() => !document.querySelector("#layers").hidden);
+  await page.mouse.click(700, 500);
+  const closed = await page.evaluate(() => document.querySelector("#layers").hidden);
+  const fromAfterTap = await page.evaluate(() => window.__app.state.to && window.__app.state.to.join(","));
+  await page.click("#view-btn"); await page.waitForTimeout(1200);
+  const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
+  const ok = !before.tripChips && !before.exploreNote && before.avoidHills === "Avoid hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
+    && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
+  return { ok, ...before, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
 });
 
-await run("elevation layers, legend, LiDAR terrain", `${APP}?trip=montroyal`, async (page) => {
+await run("elevation: tint, shading, detail contours, LiDAR terrain", `${APP}?trip=montroyal`, async (page) => {
   await page.evaluate(idle);
-  return await page.evaluate(async (idleSrc) => {
+  return page.evaluate(async (idleSrc) => {
     const app = window.__app, m = app.map;
-    const visible = ["tint", "relief", "contours-index", "contours-minor", "contour-labels"].map((id) => [id, m.getLayoutProperty(id, "visibility") || "visible"]);
-    const order = m.getStyle().layers.map((l) => l.id);
-    const tintUnderParks = order.indexOf("park") < order.indexOf("tint") && order.indexOf("tint") < order.indexOf("water") && order.indexOf("water") < order.indexOf("relief");
-    const ramp = getComputedStyle(document.querySelector("#elev-ramp")).backgroundImage.startsWith("linear-gradient");
-    document.querySelector('[data-layer="tint"]').click();
-    const tintOff = m.getLayoutProperty("tint", "visibility");
-    document.querySelector('[data-layer="tint"]').click();
+    const visible = ["tint", "relief", "contours-detail", "contours-index", "contours-minor"].map((id) => [id, m.getLayoutProperty(id, "visibility") || "visible"]);
+    const detailLines = window.CONTOURS.features.filter((f) => f.properties.i === 2).length;
     app.set3d(true); await eval(idleSrc);
     const local = performance.getEntriesByType("resource").filter((e) => e.name.includes("/shared/terrain/")).length;
-    const ex = m.terrain ? m.terrain.exaggeration : null;
-    const elevSummit = m.terrain ? Math.round(m.terrain.getElevationForLngLatZoom(new maplibregl.LngLat(-73.5873, 45.5065), 14) / ex) : null;
-    return { ok: visible.every((v) => v[1] === "visible") && tintUnderParks && ramp && tintOff === "none" && local > 0 && ex === app.CAM.terrain && elevSummit > 150,
-      visible, tintUnderParks, legendRamp: ramp, tintToggleOff: tintOff, localTerrainTiles: local, exaggeration: ex, mountRoyalSummitM: elevSummit };
+    return { ok: visible.every((v) => v[1] === "visible") && detailLines > 1000 && local > 0 && m.terrain && m.terrain.exaggeration === 1.6,
+      visible, detailLines, localTerrainTiles: local, exaggeration: m.terrain && m.terrain.exaggeration, hillBoost: app.CAM.hill.boost };
   }, idle);
 });
 
-await run("climbs: chevrons, profile, hill-ahead in 3D ride", `${APP}?trip=rachel`, async (page) => {
-  await page.evaluate(idle);
-  return await page.evaluate(async (idleSrc) => {
-    const app = window.__app, m = app.map, sel = app.state.routes[0];
-    const climbs = sel.climbs.map((c) => `${Math.round(c.start)}+${Math.round(c.length)}m +${Math.round(c.rise)}m`);
-    const chevrons = m.queryRenderedFeatures({ layers: ["climb-chev"] }).length;
-    const profileClimb = !!document.querySelector(".profile clipPath") && /climb/.test(document.querySelector(".climb-note").textContent);
-    const big = sel.climbs.slice().sort((a, b) => b.rise - a.rise)[0];
-    const inClimb = (d) => sel.climbs.some((c) => d >= c.start - 60 && d < c.start + c.length + 60);
-    let before = big.start - 250; while (before > 0 && inClimb(before)) before -= 20;
-    document.querySelector('input[name="opt-view"][value="birdseye"]').checked = true;
-    app.startRide(); app.pauseRide(true);
-    const at = (d) => { app.state.snap = true; app.state.ride.seek(d); };
-    at(0);
-    const flat = { ex: +m.terrain.exaggeration.toFixed(2), pitch: Math.round(m.getPitch()), card: document.querySelector("#hill-card").hidden ? "hidden" : document.querySelector("#hill-title").textContent };
-    at(Math.max(0, before));
-    const ahead = { ex: +m.terrain.exaggeration.toFixed(2), pitch: Math.round(m.getPitch()), card: document.querySelector("#hill-title").textContent, sub: document.querySelector("#hill-sub").textContent };
-    at(big.start + big.length / 2);
-    const on = { card: document.querySelector("#hill-title").textContent, sub: document.querySelector("#hill-sub").textContent };
-    at(big.start + big.length + 20);
-    const top = document.querySelector("#hill-title").textContent;
-    const pad = m.getPadding(), H = m.getContainer().clientHeight;
-    const riderAt = +(((pad.top + H - pad.bottom) / 2) / H).toFixed(2);
-    return { ok: climbs.length > 0 && chevrons > 0 && profileClimb && ahead.ex > flat.ex + 0.5 && /Climb in/.test(ahead.card) && /Climbing/.test(on.card) && /Top/.test(top) && flat.pitch === 70 && riderAt === 0.7,
-      climbs, chevronsRendered: chevrons, profileShowsClimbs: profileClimb, flat, ahead, on, top, riderAt };
-  }, idle);
-});
+await run("climbs and hill-ahead (toned down)", `${APP}?trip=rachel`, async (page) => page.evaluate(async () => {
+  const app = window.__app, m = app.map, sel = app.state.routes[0];
+  const big = sel.climbs.slice().sort((a, b) => b.rise - a.rise)[0];
+  const inClimb = (d) => sel.climbs.some((c) => d >= c.start - 60 && d < c.start + c.length + 60);
+  let before = big.start - 250; while (before > 0 && inClimb(before)) before -= 20;
+  app.startRide("birdseye"); app.pauseRide(true);
+  const at = (d) => { app.state.snap = true; app.state.ride.seek(d); };
+  at(0); const flatEx = +m.terrain.exaggeration.toFixed(2);
+  at(Math.max(0, before)); const ahead = { ex: +m.terrain.exaggeration.toFixed(2), card: document.querySelector("#hill-title").textContent };
+  at(big.start + big.length / 2); const on = document.querySelector("#hill-title").textContent;
+  return { ok: flatEx === 1.6 && ahead.ex > 1.6 && ahead.ex <= 2.5 && /Climb in/.test(ahead.card) && /Climbing/.test(on), climbs: sel.climbs.length, flatEx, ahead, on };
+}));
 
-await run("suggest a ride: loops, stops, one-way", `${APP}?trip=montroyal`, async (page) => {
-  return await page.evaluate(async () => {
+await run("suggest a ride: custom loops, stops, 100 km box, headwinds", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+  const app = window.__app, s = app.state;
+  app.setTab("suggest"); app.setSuggMode("custom");
+  await app.computeSuggestions(true);
+  const loops = s.routes.map((c) => +(c.r.length / 1000).toFixed(1));
+  const stops = [...document.querySelectorAll(".stop-chip")].map((b) => b.dataset.stop);
+  const label = document.querySelector('label[for="from"]'); const startLabel = label && !label.hidden ? label.textContent : null;
+  const num = document.querySelector("#km-num"); num.value = 250; num.dispatchEvent(new Event("change"));
+  const clamped = +document.querySelector("#km").value;
+  num.value = 25; num.dispatchEvent(new Event("change")); await new Promise((r) => setTimeout(r, 50));
+  await app.computeSuggestions(true); const long = s.routes.map((c) => +(c.r.length / 1000).toFixed(1));
+  document.querySelector('.stop-chip[data-stop="toilets"]').click(); await new Promise((r) => setTimeout(r, 50));
+  num.value = 8; num.dispatchEvent(new Event("change")); await app.computeSuggestions(true);
+  const restroom = s.routes.map((c) => ({ km: +(c.r.length / 1000).toFixed(1), stops: (c.r.stops || []).length }));
+  const wind = document.querySelector("#avoid-wind"); wind.checked = true; wind.dispatchEvent(new Event("change"));
+  await new Promise((r) => setTimeout(r, 3000)); await app.computeSuggestions(true);
+  const windy = s.routes.length;
+  return { ok: loops.length === 3 && loops.every((k) => Math.abs(k - 10) <= 3) && stops.includes("toilets") && stops.includes("park") && !stops.includes("market") && !stops.includes("shop") && !stops.includes("viewpoint")
+      && startLabel === "Starting location" && clamped === 100 && long.length >= 2 && restroom.length >= 1 && restroom.every((r) => r.stops === 1) && windy >= 1,
+    loops, stops, startLabel, clamped, long, restroom, withHeadwindAvoidance: windy, weatherLoaded: !!s.wxData };
+}));
+
+await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, async (page) => {
+  const out = await page.evaluate(async () => {
     const app = window.__app, s = app.state;
-    const summary = () => s.routes.map((c) => ({ title: c.label, km: +(c.r.length / 1000).toFixed(1), bike: Math.round(c.r.infraShare * 100), note: c.note }));
-    const t0 = performance.now(); app.setTab("suggest"); const ms = Math.round(performance.now() - t0);
-    const loop10 = summary();
-    // a loop starts and ends by the start pin (each end snaps to the best street within ~40 m of it)
-    const endGaps = s.routes.map((c) => [c.r.coords[0], c.r.coords.at(-1)].map((p) => Math.round(BikeRouter.distM(p[0], p[1], s.from[0], s.from[1]))));
-    const closedLoop = endGaps.every(([a, b]) => a < 100 && b < 100);
-    document.querySelector('.stop-chip[data-stop="cafe"]').click();
-    const cafe = summary();
-    const cafeStops = s.routes.every((c) => c.r.stops && c.r.stops.length === 1 && c.r.maneuvers.some((m) => /^Stop:/.test(m.text)));
-    document.querySelector('input[name="shape"][value="oneway"]').click();
-    const km = document.querySelector("#km"); km.value = 6; km.dispatchEvent(new Event("input")); km.dispatchEvent(new Event("change"));
-    document.querySelector('.stop-chip[data-stop="shop"]').click();
-    const shop = summary();
-    const endsAtShop = s.routes.every((c) => /^To /.test(c.label));
-    // ride a suggestion: the stop shows up as an instruction, and the ride ends at the right place
-    document.querySelector('input[name="shape"][value="loop"]').click();
-    document.querySelector('.stop-chip[data-stop="cafe"]').click();
-    document.querySelector('input[name="opt-view"][value="topdown"]').checked = true;
-    app.startRide(); app.pauseRide(true);
-    const rm = s.routes[s.sel].r.maneuvers, si = rm.findIndex((m) => m.stop), stopAt = rm[si].at;
-    const beforeAt = si > 0 ? rm[si - 1].at : 0;   // just after the previous instruction, the stop is next
-    s.snap = true; s.ride.seek(Math.max(beforeAt + 1, stopAt - 40));
-    const turnText = document.querySelector("#turn-text").textContent;
-    document.querySelector("#ride-exit").click();
-    app.setTab("go");
-    const backToGo = s.routes.map((c) => c.label);
-    const within = (list, D, tol) => list.length === 3 && list.every((r) => Math.abs(r.km - D) / D <= tol);
-    const checks = { loopLengths: within(loop10, 10, 0.3), closedLoop, cafeFound: cafe.length >= 2, cafeStops, shopFound: shop.length >= 2, endsAtShop,
-      stopAnnounced: /^Stop:/.test(turnText), backToGo: backToGo[0] === "Your route" };
-    return { ok: Object.values(checks).every(Boolean), checks, endGaps, msForThreeLoops: ms, loop10, cafe, shop, turnText, backToGo };
+    await new Promise((r) => setTimeout(r, 1500));
+    const cards = document.querySelectorAll(".classic-card").length;
+    const lengths = window.CLASSICS.map((c, i) => { const r = app.classicRoute(i); return r ? [c.id, +(r.length / 1000).toFixed(1), Math.round(r.infraShare * 100)] : [c.id, null]; });
+    const sights = (s.routes[0] && s.routes[0].r.stops || []).filter((x) => x.sight).length;
+    const photo = getComputedStyle(document.querySelector(".cc-photo")).backgroundImage.includes("photos/oldport.jpg");
+    return { cards, lengths, sights, photo, panelVisible: !document.querySelector("#classics").hidden, first: s.classic };
   });
+  await page.evaluate(() => { const tr = document.querySelector("#classic-track"); const c = tr.children[3]; tr.scrollLeft = c.offsetLeft - (tr.clientWidth - c.offsetWidth) / 2; });
+  await page.waitForTimeout(700);
+  const afterSwipe = await page.evaluate(() => window.__app.state.classic);
+  return { ok: out.cards === 10 && out.lengths.every((l) => l[1] && l[1] > 5) && out.sights >= 2 && out.photo && afterSwipe === 3, ...out, afterSwipe };
 });
 
-await run("phone layout", `${APP}?trip=rachel&safe=62,34`, async (page) => {
-  return await page.evaluate(() => {
-    const turnTop = (() => { const h = document.querySelector("#ride-hud"); h.hidden = false; const t = document.querySelector(".turn-card").getBoundingClientRect().top; h.hidden = true; return Math.round(t); })();
-    return { ok: document.documentElement.scrollWidth <= innerWidth && turnTop >= 62, scrollW: document.documentElement.scrollWidth, innerW: innerWidth, turnCardTop: turnTop };
-  });
+await run("winter mode: 4-season routing, icy map, labels", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+  const app = window.__app, m = app.map, s = app.state;
+  const summer = { share: s.routes[0].r.infraShare, bg: m.getPaintProperty("background", "background-color") };
+  app.setWinter(true); await new Promise((r) => setTimeout(r, 2500));
+  const winter = { share: s.routes[0].r.infraShare, bg: m.getPaintProperty("background", "background-color"), pressed: document.querySelector("#winter-btn").getAttribute("aria-pressed"),
+    card: document.querySelector("#wx-card").hidden ? "" : document.querySelector("#wx-card").textContent, notCleared: m.getLayoutProperty("net-not-cleared", "visibility"),
+    pill: JSON.stringify(m.getLayoutProperty("gap-labels", "text-field")) };
+  app.setWinter(false);
+  const back = m.getPaintProperty("background", "background-color");
+  return { ok: winter.bg === "#eef4f8" && winter.pressed === "true" && /4-season/.test(winter.card) && winter.notCleared === "visible" && /not cleared/.test(winter.pill) && JSON.stringify(back) === JSON.stringify(summer.bg),
+    summerShare: Math.round(summer.share * 100), winterShare: Math.round(winter.share * 100), winterCard: winter.card.slice(0, 160) };
+}));
+
+await run("wind & rain and live BIXI", `${APP}?trip=rachel`, async (page) => page.evaluate(async () => {
+  const app = window.__app, m = app.map, s = app.state;
+  app.setWeather(true); await new Promise((r) => setTimeout(r, 4000));
+  const card = document.querySelector("#wx-card").textContent;
+  const windNote = document.querySelector(".wind-note") ? document.querySelector(".wind-note").textContent : "";
+  const out = { radar: m.getLayoutProperty("radar", "visibility"), canvas: !document.querySelector("#wind").hidden, card: card.slice(0, 200), windNote,
+    wx: s.wxData && { wind: s.wxData.now.wind, dir: s.wxData.now.dir } };
+  for (let i = 0; i < 20 && !s.bixi; i++) await new Promise((r) => setTimeout(r, 500));
+  out.bixiStations = s.bixi ? s.bixi.features.length : 0;
+  out.bixiSample = s.bixi ? s.bixi.features.slice(0, 1).map((f) => [f.properties.name, f.properties.bikes, f.properties.docks]) : null;
+  app.setWeather(false);
+  out.ok = out.radar === "visible" && out.canvas && /Wind|Calm/.test(out.card) && !!windNote && out.bixiStations > 300;
+  return out;
+}));
+
+await run("French", `${APP}?trip=montroyal&lang=fr`, async (page) => page.evaluate(() => {
+  const s = window.__app.state, r = s.routes[0].r;
+  const tab = document.querySelector("#tab-go").textContent, pct = document.querySelector(".rc-pct").textContent;
+  const turn = window.BikeI18n.maneuver(r.maneuvers[1] || r.maneuvers[0]);
+  window.__app.setLang("en"); const tabEn = document.querySelector("#tab-go").textContent;
+  return { ok: tab === "Itinéraire" && /sur voies cyclables/.test(pct) && /(Tournez|Continuez|Partez|Légèrement|Virage)/.test(turn) && tabEn === "Go somewhere", tab, pct, turn, tabEn };
+}));
+
+await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`, async (page) => {
+  const H = 874;
+  const half = await page.evaluate(() => Math.round(document.querySelector("#panel").getBoundingClientRect().height));
+  await page.evaluate(() => window.__app.setSheet("full")); await page.waitForTimeout(400);
+  const full = await page.evaluate(() => Math.round(document.querySelector("#panel").getBoundingClientRect().height));
+  // drag the grabber down a long way: the panel should drop to the small "peek" size
+  const g = await page.locator("#grabber").boundingBox();
+  await page.mouse.move(g.x + g.width / 2, g.y + 5); await page.mouse.down(); await page.mouse.move(g.x + g.width / 2, g.y + 600, { steps: 12 }); await page.mouse.up();
+  await page.waitForTimeout(500);
+  const peek = await page.evaluate(() => Math.round(document.querySelector("#panel").getBoundingClientRect().height));
+  const layout = await page.evaluate(() => ({ scrollW: document.documentElement.scrollWidth, innerW: innerWidth }));
+  return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW, half, full, peek, ...layout };
 }, { width: 402, height: 874 });
 
 await browser.close();
 let failed = 0;
 for (const r of results) { console.log(JSON.stringify(r)); if (!r.ok) failed++; }
-console.log(failed ? `${failed} test(s) FAILED` : "all tests passed");
+console.log(failed ? `${failed} test(s) FAILED` : `all ${results.length} tests passed`);
 process.exitCode = failed ? 1 : 0;

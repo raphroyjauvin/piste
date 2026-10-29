@@ -90,6 +90,11 @@
       this.ea = Int32Array.from(g.a); this.eb = Int32Array.from(g.b);
       this.elen = Float32Array.from(g.len, (v) => v / 10);
       this.etier = Uint8Array.from(g.tier); this.edir = Uint8Array.from(g.dir);
+      this.etierBase = this.etier;
+      this.eflags = g.flags ? Uint16Array.from(g.flags) : new Uint16Array(ne);
+      const fb = (g.meta && g.meta.flags) || {};
+      this.F = { S4: fb["4S"] ?? 2, OFF: fb.OFFSTREET ?? 32, PROT4S: fb.PROT4S ?? 0 };
+      this.winter = false;
       this.ename = Int32Array.from(g.name);
       this.ecf = g.cf ? Float32Array.from(g.cf, (v) => v / 10) : new Float32Array(ne);
       this.ecb = g.cb ? Float32Array.from(g.cb, (v) => v / 10) : new Float32Array(ne);
@@ -114,6 +119,25 @@
       this.gScore = new Float64Array(nn + 2);
       this.prevArc = new Int32Array(nn + 2);
       this.closed = new Uint8Array(nn + 2);
+    }
+
+    // ---------- winter: only the 4-season network counts as bike infrastructure ----------
+    // Lanes the City doesn't clear become "no bike lane"; off-street paths that aren't cleared also cost 2.5x (snow);
+    // cleared protected lanes that lose their separators in winter count as painted lanes.
+    setWinter(on) {
+      if (on && !this.etierWinter) {
+        const t = new Uint8Array(this.m), pen = new Float32Array(this.m).fill(1), F = this.F;
+        for (let e = 0; e < this.m; e++) {
+          const base = this.etierBase[e], f = this.eflags[e];
+          t[e] = base;
+          if (base > 2) continue;
+          if (!(f & F.S4)) { t[e] = 3; if (f & F.OFF) pen[e] = 2.5; }
+          else if (base === 0 && F.PROT4S && !(f & F.PROT4S)) t[e] = 1;
+        }
+        this.etierWinter = t; this.winterPen = pen;
+      }
+      this.winter = !!on;
+      this.etier = this.winter ? this.etierWinter : this.etierBase;
     }
 
     // ---------- spatial index on edge vertices (for snapping) ----------
@@ -222,11 +246,11 @@
       const wmin = Math.min(...w);
       const h = (i) => Math.max(0, distM(this.lon[i], this.lat[i], tl, tla) - 45) * wmin;
       // opts.penalty: optional per-edge cost multipliers (>= 1), e.g. so a loop's way back avoids the way out
-      const pen = opts.penalty || null;
+      const pen = opts.penalty || null, wpen = this.winter ? this.winterPen : null;
       const cost = (e, fwd, part) => {
         const L = this.elen[e] * part;
         const climb = (fwd ? this.ecf[e] : this.ecb[e]) * part;
-        return L * w[this.etier[e]] * (pen ? pen[e] : 1) + climb * hill;
+        return L * w[this.etier[e]] * (pen ? pen[e] : 1) * (wpen ? wpen[e] : 1) + climb * hill;
       };
       const usable = (c) => this.edir[c.e] !== 3 && this.etier[c.e] !== 5;
       // virtual arcs from the start point to both ends of every candidate edge (respecting one-ways)
@@ -375,12 +399,13 @@
         if (lc.length < 2) continue;
         const b0 = bearing(lc[0][0], lc[0][1], lc[1][0], lc[1][1]);
         if (name !== curName) {
-          let turn = "Start on";
+          let kind = "start";
           if (curName !== null && lastBearing !== null) {
             const d = ((b0 - lastBearing + 540) % 360) - 180;
-            turn = Math.abs(d) < 25 ? "Continue on" : d > 0 ? (d > 120 ? "Sharp right onto" : d > 50 ? "Turn right onto" : "Slight right onto") : (d < -120 ? "Sharp left onto" : d < -50 ? "Turn left onto" : "Slight left onto");
+            kind = Math.abs(d) < 25 ? "continue" : d > 0 ? (d > 120 ? "sharpR" : d > 50 ? "right" : "slightR") : (d < -120 ? "sharpL" : d < -50 ? "left" : "slightL");
           }
-          out.push({ at: leg.dist0, text: `${turn} ${name}`, tier: leg.tier, lon: lc[0][0], lat: lc[0][1] });
+          // kind + name let the app word it in any language; text stays as the English version
+          out.push({ at: leg.dist0, kind, name, text: `${TURN_EN[kind]} ${name}`, tier: leg.tier, lon: lc[0][0], lat: lc[0][1] });
           curName = name; groupStart = leg.dist0;
         }
         const n = lc.length; lastBearing = bearing(lc[n - 2][0], lc[n - 2][1], lc[n - 1][0], lc[n - 1][1]);
@@ -414,14 +439,15 @@
         for (const [d, z] of r.profile) out.profile.push([d + off, z]);
         r.byTier.forEach((m, k) => (out.byTier[k] += m));
         out.length += r.length; out.climb += r.climb; out.descent += r.descent; out.cost += r.cost; out.visited += r.visited || 0;
-        if (i < parts.length - 1 && stopLabels[i]) {
+        const lab = stopLabels[i];
+        if (i < parts.length - 1 && lab) {
           const end = r.coords[r.coords.length - 1];
-          out.stops.push({ at: out.length, label: stopLabels[i], lon: end[0], lat: end[1] });
+          out.stops.push({ at: out.length, label: lab.label || lab, sight: !!lab.sight, lon: end[0], lat: end[1] });
         }
       });
       // at the same spot, "Stop: …" comes before the turn that leaves it
       out.maneuvers = this._maneuvers(out.legs)
-        .concat(out.stops.map((s) => ({ at: s.at, text: `Stop: ${s.label}`, tier: 0, lon: s.lon, lat: s.lat, stop: true })))
+        .concat(out.stops.map((s) => ({ at: s.at, kind: s.sight ? "sight" : "stop", name: s.label, text: `${s.sight ? "Sight" : "Stop"}: ${s.label}`, tier: 0, lon: s.lon, lat: s.lat, stop: true })))
         .sort((a, b) => a.at - b.at || (b.stop ? 1 : 0) - (a.stop ? 1 : 0));
       const infra = out.byTier[0] + out.byTier[1] + out.byTier[2];
       out.infraShare = out.length ? infra / out.length : 0;
@@ -443,6 +469,9 @@
       return res;
     }
   }
+
+  const TURN_EN = { start: "Start on", continue: "Continue on", slightL: "Slight left onto", left: "Turn left onto", sharpL: "Sharp left onto",
+    slightR: "Slight right onto", right: "Turn right onto", sharpR: "Sharp right onto" };
 
   // Along-route helpers for ride simulation
   function buildCursor(route) {

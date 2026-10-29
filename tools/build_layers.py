@@ -64,10 +64,10 @@ def to_ll_geom(g):
     return shp_transform(lambda x, y, z=None: TO_LL.transform(x, y), g)
 
 
-def round_geom(geo):
+def round_geom(geo, nd=6):
     def rec(c):
         if isinstance(c[0], (int, float)):
-            return r6(c)
+            return r6(c) if nd == 6 else [round(c[0], nd), round(c[1], nd)]
         return [rec(x) for x in c]
     return {"type": geo["type"], "coordinates": rec(geo["coordinates"])}
 
@@ -390,7 +390,38 @@ def layer_contours(step=5):
         e = round(f["properties"]["e"])
         feats.append({"type": "Feature", "geometry": round_geom(mapping(to_ll_geom(g))),
                       "properties": {"e": e, "i": int(e % 25 == 0)}})
-    print(f"  contours: {len(feats)} lines")
+    # 2026-10-29: extra 1 m lines where the ground rises 2.5-15 %, so the climbs riders feel show as denser lines
+    # (steeper ground already has dense 5 m lines). i: 1 = every 25 m, 0 = every 5 m, 2 = 1 m detail.
+    smooth = BUILD / "dtm_5m_moderate.tif"
+    detail = BUILD / "contours_1m_detail.geojson"
+    with rasterio.open(dtm5) as ds:
+        z = ds.read(1, masked=True).filled(np.nan).astype("float64")
+        prof = ds.profile
+    valid = np.isfinite(z)
+    zfill = np.where(valid, z, np.nanmedian(z))
+    zs = gaussian_smooth(zfill, 2.0)                                        # ~10 m smoothing for the lines themselves
+    gy, gx = np.gradient(gaussian_smooth(zfill, 5.0), 5.0)                  # slope over ~25 m, so the mask follows real climbs
+    slope = np.hypot(gx, gy)
+    keep = (slope >= 0.025) & (slope <= 0.15)
+    keep = valid & (gaussian_smooth(keep.astype("float64"), 3.0) > 0.55)    # drop small patches and fill small holes
+    prof.update(dtype="float32", nodata=-9999.0, compress="deflate")
+    with rasterio.open(smooth, "w", **prof) as out:
+        out.write(np.where(keep, zs, -9999.0).astype("float32"), 1)
+    if detail.exists():
+        detail.unlink()
+    subprocess.run([str(QGIS_BIN / "gdal_contour.exe"), "-a", "e", "-i", "1", "-f", "GeoJSON", str(smooth), str(detail)],
+                   check=True, env=env, stdout=subprocess.DEVNULL)
+    n_detail = 0
+    for f in json.loads(detail.read_text(encoding="utf-8"))["features"]:
+        e = round(f["properties"]["e"])
+        if e % 5 == 0:
+            continue
+        g = shape(f["geometry"])
+        if g.length < 120:
+            continue
+        feats.append({"type": "Feature", "geometry": round_geom(mapping(to_ll_geom(g.simplify(3.0))), 5), "properties": {"e": e, "i": 2}})
+        n_detail += 1
+    print(f"  contours: {len(feats)} lines ({n_detail} 1 m detail lines on moderate slopes)")
     write_js("contours.js", "CONTOURS", fc(feats))
 
 
@@ -468,7 +499,8 @@ def edge_feather(shape, px):
     return np.clip(np.minimum(x, y) / px, 0, 1)
 
 
-def layer_hillshade(res=5.0, zf=2.8, sigma_m=8.0):
+def layer_hillshade(res=5.0, zf=2.3, sigma_m=10.0):
+    # 2026-10-29 (Raph): halfway between the first prototype (zf 1.8, sigma 12) and the strong version of 10-28 (zf 2.8, sigma 8)
     """Soft relief overlay from the LiDAR terrain: transparent PNG (shadows + light highlights) in Web Mercator."""
     from PIL import Image
     env = dict(os.environ, PROJ_DATA=str(QGIS_BIN.parent / "share" / "proj"),
@@ -494,10 +526,10 @@ def layer_hillshade(res=5.0, zf=2.8, sigma_m=8.0):
         a = math.radians(az)
         hs += wgt * (math.cos(zen) * np.cos(slope) + math.sin(zen) * np.sin(slope) * np.cos(a - aspect))
     flat = math.cos(zen)
-    shadow = np.clip((flat - hs) / flat - 0.008, 0, 1) ** 0.7
-    light = np.clip((hs - flat) / (1 - flat) - 0.008, 0, 1) ** 0.85
-    lum = np.where(shadow > 0, 38, 255).astype(np.uint8)
-    alpha = np.where(shadow > 0, np.minimum(1, shadow * 1.25) * 245, light * 175)
+    shadow = np.clip((flat - hs) / flat - 0.009, 0, 1) ** 0.75
+    light = np.clip((hs - flat) / (1 - flat) - 0.009, 0, 1) ** 0.92
+    lum = np.where(shadow > 0, 39, 255).astype(np.uint8)
+    alpha = np.where(shadow > 0, np.minimum(1, shadow * 1.12) * 238, light * 158)
     alpha = (np.where(valid, np.clip(alpha, 0, 255), 0) * edge_feather(alpha.shape, 80)).astype(np.uint8)   # 80 px = 400 m fade
     img = Image.fromarray(np.dstack([lum, alpha]), "LA")
     img.save(OUT / "hillshade.png", optimize=True)

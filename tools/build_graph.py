@@ -40,6 +40,7 @@ CONTRAFLOW_TV2 = {11, 30, 31, 33, 41, 43, 83, 84}
 
 F_REV, F_4S, F_STRUCT, F_CLOSED_TMP, F_ROUTE_VERTE, F_OFFSTREET, F_UNPAVED, F_OSM, F_CONNECTOR = (
     1, 2, 4, 8, 16, 32, 64, 128, 256)
+F_PROT4S = 512  # keeps its protection (separators) in winter: City PROTEGE_4S
 
 
 def norm_id(v):
@@ -253,7 +254,7 @@ def snap_into(movers, targets, tol_node, tol_edge, tol_conn, conn_tier_from_move
 
 def osm_paths(box, existing):
     """OSM ways where riding is legal and that the City data doesn't already cover."""
-    p = RAW / "osm_overpass" / "bike_allowed_paths.json"
+    p = RAW / "osm_overpass" / ("bike_allowed_paths.json" if box else "bike_allowed_paths_island.json")
     if not p.exists():
         return []
     ways = []
@@ -354,6 +355,7 @@ def main(extent):
             "bidir": str(p.get("NBR_VOIE")) == "2" or int(p.get("TYPE_VOIE2_CODE") or 0) in CONTRAFLOW_TV2,
             "rev": (lv.get("revAxes") == "Oui") or (p.get("REV_AVANCEMENT_CODE") not in (None, "SO")),
             "4s": p.get("SAISONS4") == "Oui",
+            "prot4s": p.get("PROTEGE_4S") == "Oui",
             "rv": p.get("ROUTE_VERTE") == "Oui",
             "closed_tmp": lv.get("avancementCode") == "FT",
             "struct": lv.get("structureCode") in ("2", "3", "4", "5"),
@@ -393,6 +395,7 @@ def main(extent):
         if bikes:
             if any(b["rev"] for b in bikes): flags |= F_REV
             if any(b["4s"] for b in bikes): flags |= F_4S
+            if any(b["prot4s"] for b in bikes): flags |= F_PROT4S
             if any(b["rv"] for b in bikes): flags |= F_ROUTE_VERTE
             if any(b["unpaved"] for b in bikes): flags |= F_UNPAVED
         if int(p["POSITION"]) != 5 or any(b.get("struct") for b in bikes):
@@ -407,7 +410,7 @@ def main(extent):
     for coords, info in offstreet:
         if len(coords) < 2:
             continue
-        fl = F_OFFSTREET | (F_REV if info["rev"] else 0) | (F_4S if info["4s"] else 0) | \
+        fl = F_OFFSTREET | (F_REV if info["rev"] else 0) | (F_4S if info["4s"] else 0) | (F_PROT4S if info["prot4s"] else 0) | \
             (F_ROUTE_VERTE if info["rv"] else 0) | (F_STRUCT if info["struct"] else 0) | (F_UNPAVED if info["unpaved"] else 0)
         city_off.append({"xy": to_metric(coords), "tier": 5 if info["closed_tmp"] else info["tier"],
                          "dir": 3 if info["closed_tmp"] else 0,
@@ -479,7 +482,7 @@ def main(extent):
         e["a"] = remap[e["a"]]; e["b"] = remap[e["b"]]
 
     # ---- elevation (bare-earth DTM; bridges/tunnels interpolated between ends) ----
-    dem_path = RAW / "nrcan_hrdem_cmm2023" / "dtm_study_area_32188_1m.tif"
+    dem_path = RAW / "nrcan_hrdem_cmm2023" / ("dtm_study_area_32188_1m.tif" if extent == "study" else "dtm_island_32188_5m.tif")
     elev = None
     if dem_path.exists():
         dem = DEM(dem_path)
@@ -510,7 +513,8 @@ def main(extent):
                                 "NRCan HRDEM CMM 2023 1 m DTM (OGL-Canada)"],
                     "tiers": ["A protected", "B painted/calm", "C shared", "D no bike lane (quiet)", "E no bike lane (busy)", "X closed"],
                     "flags": {"REV": F_REV, "4S": F_4S, "STRUCT": F_STRUCT, "CLOSED_TMP": F_CLOSED_TMP, "ROUTE_VERTE": F_ROUTE_VERTE,
-                              "OFFSTREET": F_OFFSTREET, "UNPAVED": F_UNPAVED, "OSM": F_OSM, "CONNECTOR": F_CONNECTOR}},
+                              "OFFSTREET": F_OFFSTREET, "UNPAVED": F_UNPAVED, "OSM": F_OSM, "CONNECTOR": F_CONNECTOR,
+                              "PROT4S": F_PROT4S}},
            "nodes": [], "elev": [], "a": [], "b": [], "len": [], "tier": [], "dir": [], "name": [], "cf": [], "cb": [],
            "flags": [], "geom": [], "names": names}
     lons, lats = TO_LL.transform([p[0] for p in node_xy], [p[1] for p in node_xy])

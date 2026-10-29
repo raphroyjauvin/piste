@@ -262,8 +262,53 @@ def task_dem(refresh, res=1):
         print(f"ok {out.name}: {out.stat().st_size / 1e6:.1f} MB in {time.time() - t:.0f}s")
 
 
+# Island of Montréal (with the Jean-Drapeau islands and Île des Sœurs), for island-wide routing (2026-10-29)
+ISLAND_BBOX = (-73.985, 45.395, -73.465, 45.715)
+
+
+def task_island(refresh):
+    """What the island-wide routing graph needs beyond the study area: OSM bike-legal paths and a 5 m terrain model.
+    Written to their own files, so the study-area downloads stay as they are."""
+    w, s, e, n = ISLAND_BBOX
+    bb = f"({s},{w},{n},{e})"
+    out = RAW / "osm_overpass" / "bike_allowed_paths_island.json"
+    if out.exists() and not refresh:
+        print(f"skip (exists) {out.name}")
+    else:
+        t = time.time()
+        data = overpass(f"""[out:json][timeout:900][maxsize:1073741824];
+(
+  way["highway"~"^(path|footway|pedestrian|track|bridleway|living_street|service)$"]["bicycle"~"^(yes|designated|permissive)$"]{bb};
+  way["highway"="cycleway"]{bb};
+);
+out geom tags;""")
+        out.write_text(json.dumps(data), encoding="utf-8")
+        log("osm_overpass\\bike_allowed_paths_island.json", OVERPASS + " (query in tools/fetch_data.py, island bbox)",
+            "OpenStreetMap contributors", "ODbL 1.0", out)
+        print(f"ok {out.name}: {len(data.get('elements', []))} elements, {out.stat().st_size / 1e6:.1f} MB in {time.time() - t:.0f}s")
+    from pyproj import Transformer
+    tr = Transformer.from_crs("EPSG:4326", "EPSG:32188", always_xy=True)
+    xs, ys = zip(*[tr.transform(lon, lat) for lon, lat in [(w, s), (w, n), (e, s), (e, n)]])
+    te = [str(round(v)) for v in (min(xs), min(ys), max(xs), max(ys))]
+    env = dict(os.environ, PROJ_DATA=str(QGIS_BIN.parent / "share" / "proj"),
+               PATH=str(QGIS_BIN) + os.pathsep + os.environ["PATH"],
+               GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR", GDAL_HTTP_MULTIRANGE="YES",
+               GDAL_HTTP_MERGE_CONSECUTIVE_RANGES="YES", VSI_CACHE="TRUE")
+    dem = RAW / "nrcan_hrdem_cmm2023" / "dtm_island_32188_5m.tif"
+    if dem.exists() and not refresh:
+        print(f"skip (exists) {dem.name}")
+        return
+    t = time.time()
+    subprocess.run([str(QGIS_BIN / "gdalwarp.exe"), "-overwrite", "-t_srs", "EPSG:32188", "-te", *te, "-tr", "5", "5",
+                    "-r", "average", "-multi", "-wo", "NUM_THREADS=ALL_CPUS", "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
+                    "-co", "TILED=YES", "-co", "BIGTIFF=IF_SAFER", "/vsicurl/" + DEM["dtm"], str(dem)], check=True, env=env)
+    log(f"nrcan_hrdem_cmm2023\\{dem.name}", DEM["dtm"] + " (island bbox, averaged to 5 m)", "NRCan HRDEM (CMM 2023 LiDAR)",
+        "Open Government Licence - Canada", dem)
+    print(f"ok {dem.name}: {dem.stat().st_size / 1e6:.1f} MB in {time.time() - t:.0f}s")
+
+
 TASKS = {"opendata": task_opendata, "gtfs": task_gtfs, "osm": task_osm, "mtl_tiles": task_mtl_tiles,
-         "dem": task_dem}
+         "dem": task_dem, "island": task_island}
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
