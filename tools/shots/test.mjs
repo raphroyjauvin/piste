@@ -7,9 +7,10 @@ const APP = "a-positron/index.html";
 const only = process.argv[2];
 const browser = await chromium.launch({ channel: "msedge", headless: true, args: ["--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"] });
 const results = [];
-async function run(name, url, fn, viewport = { width: 1440, height: 900 }) {
+// ctxOpts: extra browser-context options (touch, location permission and position for the GPS tests); fn gets (page, ctx)
+async function run(name, url, fn, viewport = { width: 1440, height: 900 }, ctxOpts = {}) {
   if (only && !name.includes(only)) return;
-  const ctx = await browser.newContext({ viewport });
+  const ctx = await browser.newContext({ viewport, ...ctxOpts });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -18,7 +19,7 @@ async function run(name, url, fn, viewport = { width: 1440, height: 900 }) {
   try {
     await page.goto(BASE + url, { waitUntil: "load", timeout: 90000 });
     await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
-    const out = await fn(page);
+    const out = await fn(page, ctx);
     results.push({ name, ok: errors.length === 0 && out.ok !== false, secs: ((Date.now() - t) / 1000).toFixed(1), ...out, errors });
   } catch (e) {
     results.push({ name, ok: false, error: e.message.split("\n")[0], errors });
@@ -59,6 +60,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     stopRadius: window.__app.map.getPaintProperty("stops", "circle-radius"),
     popTransition: (() => { const d = document.createElement("div"); d.className = "poi-pop"; document.body.appendChild(d); const v = getComputedStyle(d).transitionDuration; d.remove(); return v; })(),
     rideText: document.querySelector("#ride-go") && document.querySelector("#ride-go").textContent,
+    previewLink: !!document.querySelector("#ride-preview"),   // desktop: "Let's ride!" is the preview, so no separate link
     windNextToHills: document.querySelector("#hills").closest(".pref-checks") === document.querySelector("#avoid-wind").closest(".pref-checks"),
   }));
   const noFloatingCopy = await page.evaluate(() => !document.querySelector("#ride-fab"));
@@ -69,7 +71,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
   const fromAfterTap = await page.evaluate(() => window.__app.state.to && window.__app.state.to.join(","));
   await page.click("#view-btn"); await page.waitForTimeout(1200);
   const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
-  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && before.windNextToHills && noFloatingCopy
+  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windNextToHills && noFloatingCopy
     && !before.tripChips && !before.exploreNote && before.avoidHills === "Avoid hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
     && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
   return { ok, ...before, noFloatingCopy, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
@@ -261,6 +263,168 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
       && list.shown && list.aboveCard && !cancelled.searching && cancelled.same && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
     half, full, peek, ...layout, docked, list, cancelled, moved, done };
 }, { width: 402, height: 874 });
+
+// ------------------------------------------------------------------ GPS ride (2026-10-30)
+// ?gps=replay feeds a pretend ride (1 fix a second, sped up by gpsx, a few metres of noise, a poor fix now and then)
+// through navigator.geolocation's interface, so it runs the same code as a real phone.
+await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-center, arrives", `${APP}?trip=montroyal&gps=replay&gpsx=3`, async (page) => {
+  const follow = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const app = window.__app, m = app.map, s = app.state, C = BikeCommon;
+    document.querySelector("#ride-go").click();
+    const ride = s.ride, geo = ride.geo;
+    const ui = { gps: !!(ride && ride.gps), speedHidden: document.querySelector("#ride-speed").hidden, pauseHidden: document.querySelector("#ride-pause").hidden,
+      gpsShown: !document.querySelector("#ride-gps").hidden, first: document.querySelector("#ride-gps").textContent };
+    // at every map draw: is the rider on the route, near the latest fix and the true position, with the camera on it?
+    const st = { frames: 0, backwards: 0, offLine: 0, fixMax: 0, fixSum: 0, trueMax: 0, trueSum: 0, camMax: 0, stepMax: 0 };
+    let prevD = -1, prevLL = null;
+    const onRender = () => {
+      if (s.ride !== ride || !ride.fix || ride.blend > 0) return;
+      const ll = app.riderMarker.getLngLat(), c = m.getCenter(), p = ride.cursor.at(ride.d);
+      const last = geo.log.filter((e) => !e.bad).at(-1);   // the latest good fix, snapped to the route
+      const fixAlong = ride.track.locate(last.fix[0], last.fix[1], ride.d - 100, ride.d + 100).along;
+      const trueAlong = Math.min(ride.cursor.total, last.d + (geo.v * geo.k * (performance.now() - last.t)) / 1000);   // where the pretend rider is now
+      const ef = Math.abs(ride.d - fixAlong), et = Math.abs(ride.d - trueAlong);
+      st.frames++; if (ride.d < prevD - 0.01) st.backwards++;
+      st.offLine = Math.max(st.offLine, C.distM(ll.lng, ll.lat, p.lon, p.lat));
+      st.fixMax = Math.max(st.fixMax, ef); st.fixSum += ef; st.trueMax = Math.max(st.trueMax, et); st.trueSum += et;
+      st.camMax = Math.max(st.camMax, C.distM(c.lng, c.lat, ll.lng, ll.lat));
+      if (prevLL) st.stepMax = Math.max(st.stepMax, C.distM(prevLL.lng, prevLL.lat, ll.lng, ll.lat));
+      prevD = ride.d; prevLL = ll;
+    };
+    m.on("render", onRender); await sleep(8000); m.off("render", onRender);
+    const r = (v) => +v.toFixed(2);
+    return { ...ui, now: document.querySelector("#ride-gps").textContent, d: Math.round(ride.d), fixes: ride.stats.fixes, ignored: ride.stats.ignored, wake: s.wake,
+      frames: st.frames, backwards: st.backwards, offLineM: r(st.offLine), toFixMaxM: r(st.fixMax), toFixMeanM: r(st.fixSum / Math.max(1, st.frames)),
+      toTrueMaxM: r(st.trueMax), toTrueMeanM: r(st.trueSum / Math.max(1, st.frames)), cameraM: r(st.camMax), stepMaxM: r(st.stepMax) };
+  });
+  // drag the map by hand: it stops following and offers "Re-center"; a tap there follows again
+  await page.mouse.move(720, 420); await page.mouse.down(); await page.mouse.move(560, 330, { steps: 8 }); await page.mouse.up();
+  await page.waitForTimeout(600);
+  const dragged = await page.evaluate(() => { const a = window.__app, ll = a.riderMarker.getLngLat(), c = a.map.getCenter();
+    return { follow: a.state.follow, button: !document.querySelector("#ride-recenter").hidden, centerToRiderM: Math.round(BikeCommon.distM(c.lng, c.lat, ll.lng, ll.lat)) }; });
+  await page.click("#ride-recenter"); await page.waitForTimeout(900);
+  const recentered = await page.evaluate(() => { const a = window.__app, ll = a.riderMarker.getLngLat(), c = a.map.getCenter();
+    return { follow: a.state.follow, button: !document.querySelector("#ride-recenter").hidden, centerToRiderM: +BikeCommon.distM(c.lng, c.lat, ll.lng, ll.lat).toFixed(2) }; });
+  // arrival: start again 160 m before the end
+  const arrival = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const app = window.__app, s = app.state, total = s.routes[s.sel].r.length;
+    app.endRide(); app.startGpsRide({ replay: { speedup: 3, startAt: total - 160 } });
+    const ride = s.ride, t0 = performance.now(); let toast = "";
+    while (!ride.arrived && performance.now() - t0 < 25000) { await sleep(200); }
+    const secs = +((performance.now() - t0) / 1000).toFixed(1);
+    toast = document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent;
+    await sleep(3000);
+    return { arrived: ride.arrived, secs, toast, endedAfter: s.ride === null && !document.querySelector("#panel").hidden, wakeAfter: s.wake };
+  });
+  const f = follow;
+  const ok = f.gps && f.speedHidden && f.pauseHidden && f.gpsShown && /Waiting for GPS/.test(f.first) && /km\/h/.test(f.now) && f.d > 80 && f.ignored >= 2
+    && f.frames > 40 && f.backwards === 0 && f.offLineM < 0.5 && f.toFixMaxM < 12 && f.toFixMeanM < 6 && f.toTrueMeanM < 8 && f.cameraM < 0.5 && f.stepMaxM < 3
+    && !dragged.follow && dragged.button && dragged.centerToRiderM > 30 && recentered.follow && !recentered.button && recentered.centerToRiderM < 0.5
+    && arrival.arrived && /Arrived/.test(arrival.toast) && arrival.endedAfter && arrival.wakeAfter === "off";
+  return { ok, follow, dragged, recentered, arrival };
+});
+
+await run("GPS ride (replayed track): a detour triggers exactly one reroute", `${APP}?trip=montroyal&gps=replay&gpsx=3&gpsat=300&detour=400`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, m = app.map, s = app.state, C = BikeCommon;
+  const said = [], say = C.voice.say; C.voice.say = (text) => said.push(text);
+  const toasts = new Set(), toastEl = document.querySelector("#toast");
+  new MutationObserver(() => { if (!toastEl.hidden) toasts.add(toastEl.textContent); }).observe(toastEl, { childList: true, attributes: true, characterData: true, subtree: true });
+  const planned = s.routes[s.sel].r, plannedTrack = C.makeTrack(planned);
+  document.querySelector("#ride-go").click();
+  const ride = s.ride, geo = ride.geo;
+  let offDrawn = 0;   // while off route, the rider is drawn where the phone is, not on the route
+  const onRender = () => { if (s.ride === ride && ride.route === planned) { const ll = app.riderMarker.getLngLat(); offDrawn = Math.max(offDrawn, plannedTrack.locate(ll.lng, ll.lat).off); } };
+  m.on("render", onRender);
+  const t0 = performance.now();
+  while (s.reroutes < 1 && performance.now() - t0 < 30000) await sleep(200);
+  m.off("render", onRender);
+  const secsToReroute = +((performance.now() - t0) / 1000).toFixed(1);
+  await sleep(12000);   // long enough for a second reroute, if there were one
+  const log = s.rerouteLog[0] || {}, det = geo.det || {};
+  const fixToStartM = log.start ? Math.round(C.distM(log.at[0], log.at[1], log.start[0], log.start[1])) : null;
+  const detourToStartM = log.start && det.lon ? Math.round(C.distM(det.lon, det.lat, log.start[0], log.start[1])) : null;
+  const drawn = (await m.getSource("route").getData()).features.length, newPieces = C.routePiecesGeoJSON(ride.route).features.length;
+  const out = { reroutes: s.reroutes, attempts: ride.stats.reroutes, secsToReroute, fixToStartM, detourToStartM, plannedM: Math.round(planned.length), newM: Math.round(ride.route.length),
+    dOnNewRoute: Math.round(ride.d), backOnRoute: ride.offCount === 0, offDrawnM: Math.round(offDrawn), drawnPieces: drawn, newPieces, said, toasts: [...toasts], ms: log.ms };
+  app.endRide();
+  out.restored = (await m.getSource("route").getData()).features.length === C.routePiecesGeoJSON(planned).features.length && s.routes[s.sel].r === planned;
+  C.voice.say = say;
+  out.ok = out.reroutes === 1 && out.attempts === 1 && fixToStartM !== null && fixToStartM < 70 && detourToStartM < 200 && out.newM !== out.plannedM && out.dOnNewRoute > 60 && out.backOnRoute
+    && out.offDrawnM > 30 && drawn === newPieces && said.includes("Rerouting") && out.toasts.includes("New route from here") && out.restored;
+  return out;
+}));
+
+await run("GPS ride (replayed track): on a classic ride, a reroute rejoins the ride ahead", `${APP}?classic=oldport&gps=replay&gpsx=4&gpsat=1500&detour=1600`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, s = app.state;
+  const planned = s.routes[0].r;
+  document.querySelector("#ride-go").click();
+  const t0 = performance.now();
+  while (s.reroutes < 1 && performance.now() - t0 < 25000) await sleep(200);
+  await sleep(1500);
+  const r = s.ride.route, log = s.rerouteLog[0] || {}, left = planned.length - (log.d || 0);   // what was left of the ride when you went off it
+  const out = { reroutes: s.reroutes, rejoin: s.rideOpts.rejoin, leftM: Math.round(left), newM: Math.round(r.length), plannedSights: planned.stops.map((x) => x.label),
+    sights: r.stops.map((x) => x.label), piecesM: Math.round(r.pieces.reduce((a, p) => a + p.length, 0)), onNewRoute: s.ride.offCount === 0 };
+  app.endRide();
+  out.ok = out.reroutes === 1 && out.rejoin && Math.abs(out.newM - out.leftM) < 400 && out.sights.length >= 1
+    && out.sights.join() === planned.stops.filter((x) => x.at > log.d + 250).map((x) => x.label).join() && Math.abs(out.piecesM - out.newM) <= 1 && out.onNewRoute;
+  return out;
+}));
+
+await run("GPS: location refused shows a calm message, and the preview still works", `${APP}?trip=montroyal&gps=1`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const s = window.__app.state;
+  const previewLink = !!document.querySelector("#ride-preview");
+  document.querySelector("#ride-go").click();   // headless Edge refuses location when nobody grants it
+  const t0 = performance.now();
+  while (document.querySelector("#notice").hidden && performance.now() - t0 < 8000) await sleep(100);
+  const notice = document.querySelector("#notice").hidden ? "" : document.querySelector("#notice-text").textContent;
+  const back = { ride: s.ride === null, panel: !document.querySelector("#panel").hidden, hudHidden: document.querySelector("#ride-hud").hidden, previewButton: !document.querySelector("#notice-preview").hidden };
+  window.__app.setLang("fr"); const fr = document.querySelector("#notice-text").textContent; window.__app.setLang("en");
+  document.querySelector("#notice-preview").click();
+  await sleep(1200); const d1 = s.ride ? s.ride.d : -1; await sleep(1200); const d2 = s.ride ? s.ride.d : -1;
+  const preview = { sim: !!s.ride && !s.ride.gps, speedShown: !document.querySelector("#ride-speed").hidden, gpsHidden: document.querySelector("#ride-gps").hidden, noticeGone: document.querySelector("#notice").hidden };
+  return { ok: previewLink && /can't use your location/.test(notice) && /accès à votre position/.test(fr) && back.ride && back.panel && back.hudHidden && back.previewButton
+      && preview.sim && preview.speedShown && preview.gpsHidden && preview.noticeGone && d1 >= 0 && d2 > d1,
+    previewLink, notice: notice.slice(0, 70), fr: fr.slice(0, 50), back, preview, previewAdvanced: [Math.round(d1), Math.round(d2)] };
+}));
+
+await run("GPS: the browser's own location moves the ride", `${APP}?trip=montroyal&gps=1`, async (page, ctx) => {
+  // positions along the planned route, fed one by one through the browser's real geolocation
+  const pts = await page.evaluate(() => { const cur = BikeCommon.buildCursor(window.__app.state.routes[0].r);
+    return Array.from({ length: 15 }, (_, i) => { const p = cur.at(40 + i * 10); return [p.lon, p.lat]; }); });
+  await ctx.setGeolocation({ longitude: pts[0][0], latitude: pts[0][1], accuracy: 8 });
+  await page.evaluate(() => document.querySelector("#ride-go").click());
+  for (const [lon, lat] of pts) { await ctx.setGeolocation({ longitude: lon, latitude: lat, accuracy: 8 }); await page.waitForTimeout(450); }
+  await page.waitForTimeout(800);
+  return page.evaluate(() => {
+    const s = window.__app.state, r = s.ride, status = document.querySelector("#ride-gps").textContent;
+    const out = { gps: !!(r && r.gps), fixes: r && r.stats.fixes, d: r && Math.round(r.d), status, rider: getComputedStyle(document.querySelector(".rider-badge")).visibility, reroutes: s.reroutes };
+    out.ok = out.gps && out.fixes >= 8 && out.d > 140 && /km\/h/.test(status) && /±8 m/.test(status) && out.rider === "visible" && out.reroutes === 0;
+    window.__app.endRide();
+    return out;
+  });
+}, { width: 1440, height: 900 }, { permissions: ["geolocation"], geolocation: { latitude: 45.5246, longitude: -73.58165, accuracy: 8 } });
+
+await run("phone: GPS ride bar, preview link", `${APP}?trip=rachel&gps=replay&gpsx=2&safe=62,34`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, s = app.state, go = document.querySelector("#ride-go"), pv = document.querySelector("#ride-preview");
+  const link = { coarse: matchMedia("(pointer: coarse)").matches, preview: !!pv, below: !!pv && pv.getBoundingClientRect().top >= go.getBoundingClientRect().bottom, text: pv && pv.textContent };
+  go.click(); await sleep(3500);
+  const bar = document.querySelector(".ride-bar").getBoundingClientRect();
+  const shown = [...document.querySelectorAll(".ride-buttons > *")].filter((el) => !el.hidden);
+  const ui = { gps: !!(s.ride && s.ride.gps), shown: shown.map((el) => el.id).join(","), status: document.querySelector("#ride-gps").textContent,
+    fits: shown.every((el) => { const r = el.getBoundingClientRect(); return r.left >= bar.left - 0.5 && r.right <= bar.right + 0.5 && r.bottom <= bar.bottom + 0.5; }),
+    scrollW: document.documentElement.scrollWidth, innerW: innerWidth };
+  app.endRide(); pv.click(); await sleep(800);
+  const preview = { sim: !!s.ride && !s.ride.gps, speedShown: !document.querySelector("#ride-speed").hidden, gpsHidden: document.querySelector("#ride-gps").hidden };
+  app.endRide();
+  return { ok: link.coarse && link.preview && link.below && link.text === "Preview the ride" && ui.gps && ui.shown === "ride-sound,ride-view,ride-gps,ride-exit" && /km\/h/.test(ui.status)
+      && ui.fits && ui.scrollW <= ui.innerW && preview.sim && preview.speedShown && preview.gpsHidden, link, ui, preview };
+}), { width: 402, height: 874 }, { hasTouch: true, isMobile: true });
 
 await browser.close();
 let failed = 0;

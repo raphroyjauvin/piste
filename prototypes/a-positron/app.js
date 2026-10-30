@@ -1,5 +1,5 @@
 /* Piste (prototype A, Positron light): MapLibre GL JS + our in-browser router on the island-wide graph.
-   Go somewhere · Suggest a ride (classic rides and custom loops) · simulated ride with hill-ahead 3D ·
+   Go somewhere · Suggest a ride (classic rides and custom loops) · GPS ride (and a simulated preview) with hill-ahead 3D ·
    winter mode (4-season network) · wind & rain · live BIXI · English / French. */
 (async function () {
   "use strict";
@@ -39,6 +39,14 @@
     hill: { boost: 0.9, pitch: 2, zoom: -0.2 },              // added as a climb comes up; 2026-10-29: halved (was 1.8, 3°, -0.3)
   };
   const isPhone = () => matchMedia("(max-width: 760px)").matches;
+  // "Let's ride!" rides with GPS on touch devices that have location (phones, tablets); desktops get the preview.
+  // ?gps=1 forces GPS, ?gps=replay a pretend GPS ride for tests and screenshots, ?gps=0 the preview.
+  const gpsParam = params.get("gps");
+  function gpsDefault() {
+    if (gpsParam === "0") return false;
+    if (gpsParam === "1" || gpsParam === "replay") return true;
+    return "geolocation" in navigator && matchMedia("(pointer: coarse)").matches;
+  }
 
   // ------------------------------------------------------------------ router (island-wide graph) + data
   const t0 = performance.now();
@@ -68,7 +76,8 @@
   const state = { from: null, to: null, fromLabel: "", toLabel: "", routes: [], sel: 0, mode: "explore", is3d: false,
     pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
     tab: "go", smode: "classics", classic: 0, sugg: { loop: true, km: 10, stop: "" }, avoidWind: false,
-    winter: false, wx: false, wxData: null, bixi: null, sound: store.get("sound", "chime"), rideEnd: "" };
+    winter: false, wx: false, wxData: null, bixi: null, sound: store.get("sound", "chime"), rideEnd: "",
+    follow: true, holding: false, reroutes: 0, rerouteLog: [], rideOpts: null, gpsState: null, wake: "off" };
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
   let style;
@@ -635,6 +644,17 @@
 
   // ------------------------------------------------------------------ routing
   function overlap(a, b) { let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++; return c / Math.max(a.sig.size, b.sig.size); }
+  // the router settings behind each kind of route (a GPS reroute uses the same ones as the route you started)
+  function routeWeights(key) {
+    const wind = windWeights();
+    if (key === "mostLanes") return Object.assign({ w: PROFILES.bikemax.w, hill: hills.checked ? 12 : 4 }, wind);
+    if (key === "mostDirect") return { w: PROFILES.direct.w, hill: hills.checked ? 12 : 0 };
+    return Object.assign({}, weightsFor(+strict.value / 100, hills.checked), wind);   // "Your route" and suggested rides
+  }
+  function selWeights(sel) {
+    if (sel.classic) return { w: PROFILES.bikemax.w, hill: 4 };   // as classicRoute()
+    return routeWeights(sel.key || "yourRoute");
+  }
   let suggTimer = null;
   function recompute(fit) {
     if (state.mode === "ride") return;
@@ -649,13 +669,7 @@
   function computeRoutes(fit) {
     if (!state.from || !state.to) { state.routes = []; renderRoutes(); drawRoutes(); return; }
     const t1 = performance.now();
-    const wind = windWeights();
-    const w = Object.assign({}, weightsFor(+strict.value / 100, hills.checked), wind);
-    const cands = [
-      { key: "yourRoute", r: router.route(state.from, state.to, w) },
-      { key: "mostLanes", r: router.route(state.from, state.to, Object.assign({ w: PROFILES.bikemax.w, hill: hills.checked ? 12 : 4 }, wind)) },
-      { key: "mostDirect", r: router.route(state.from, state.to, { w: PROFILES.direct.w, hill: hills.checked ? 12 : 0 }) },
-    ].filter((c) => c.r);
+    const cands = ["yourRoute", "mostLanes", "mostDirect"].map((key) => ({ key, r: router.route(state.from, state.to, routeWeights(key)) })).filter((c) => c.r);
     state.lastMs = performance.now() - t1;
     cands.forEach((c) => (c.sig = new Set(c.r.legs.map((l) => l.e))));
     const keep = [];
@@ -685,6 +699,10 @@
     if (fit && state.routes.length) fitRoute(state.routes[0].r);
   }
   function selectRoute(i) { state.sel = +i; renderRoutes(); drawRoutes(); }
+  function stopsData(r) {   // the stop's or sights' rings and labels
+    const stops = (r && r.stops) || [];
+    return { type: "FeatureCollection", features: stops.map((s, i) => ({ type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { label: s.label, sight: s.sight ? 1 : 0 } })) };
+  }
   function fitRoute(r) {
     const xs = r.coords.map((c) => c[0]), ys = r.coords.map((c) => c[1]);
     let padding;
@@ -699,8 +717,7 @@
     const sel = state.routes[state.sel];
     map.getSource("route").setData(sel ? C.routePiecesGeoJSON(sel.r) : empty);
     map.getSource("route-alts").setData({ type: "FeatureCollection", features: state.routes.map((c, i) => i === state.sel ? null : C.routeLineGeoJSON(c.r, { i })).filter(Boolean) });
-    const stops = (sel && sel.r.stops) || [];
-    map.getSource("stops").setData({ type: "FeatureCollection", features: stops.map((s, i) => ({ type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { label: s.label, sight: s.sight ? 1 : 0 } })) });
+    map.getSource("stops").setData(stopsData(sel && sel.r));
     // suggested and classic rides start/end at places, not at dragged pins: mark them with dots
     const ends = [];
     if (sel && state.tab === "suggest") {
@@ -825,12 +842,14 @@
       <p class="climb-note">${climbSummary(r, sel.climbs)}</p>${wl}
       <h2>${t(state.winter ? "withoutLaneWinter" : "withoutLane")}</h2>${gapHtml}
       <details class="turns"><summary>${t("turnByTurn", { n: r.maneuvers.length })}</summary><ol>${turns}</ol></details>
-      <button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>`;
+      <button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>
+      ${gpsDefault() ? `<button type="button" id="ride-preview" class="ride-preview">${t("previewRide")}</button>` : ""}`;
     det.querySelectorAll(".gap-item").forEach((b) => b.addEventListener("click", () => {
       const g = gaps[+b.dataset.g]; const cur = C.buildCursor(r); const p = cur.at(g.start + g.length / 2);
       map.easeTo({ center: [p.lon, p.lat], zoom: 17, duration: 600 });
     }));
-    $("#ride-go").onclick = () => startRide();
+    $("#ride-go").onclick = () => rideTap(gpsDefault());
+    if ($("#ride-preview")) $("#ride-preview").onclick = () => rideTap(false);
   }
 
   // ------------------------------------------------------------------ layers panel & modes
@@ -928,6 +947,7 @@
     if (state.from) fromEl.value = state.fromLabel; if (state.to) toEl.value = state.toLabel;
     setMapTexts(); renderRoutes(); renderWxCard(); renderSound(); buildElevationLegend();
     if (!state.ride) $("#ride-pause").textContent = t("pause");
+    if (state.gpsState) gpsStatus(state.gpsState);
   }
   $("#lang-btn").onclick = () => setLang(I.lang === "fr" ? "en" : "fr");
   $("#lang-btn").textContent = I.lang === "fr" ? "EN" : "FR";
@@ -976,6 +996,14 @@
 
   // ------------------------------------------------------------------ ride (simulation)
   let audio = null;
+  // iPhone Safari keeps sound and speech silent unless they start from a tap: unlock both inside "Let's ride!" (and the sound button)
+  function unlockAudio() {
+    try {
+      audio = audio || new AudioContext();
+      if (audio.state === "suspended") audio.resume();
+      const s = audio.createBufferSource(); s.buffer = audio.createBuffer(1, 1, 22050); s.connect(audio.destination); s.start(0);
+    } catch (e) { /* no audio */ }
+  }
   function chime() {
     if (state.sound === "off") return;
     try {
@@ -997,7 +1025,10 @@
     b.title = t({ chime: "soundChime", voice: "soundVoice", off: "soundOff" }[state.sound]); b.setAttribute("aria-label", b.title);
     C.voice.enabled = state.sound === "voice";
   }
-  $("#ride-sound").onclick = () => { state.sound = { chime: "voice", voice: "off", off: "chime" }[state.sound]; store.set("sound", state.sound); renderSound(); };
+  $("#ride-sound").onclick = () => {
+    state.sound = { chime: "voice", voice: "off", off: "chime" }[state.sound]; store.set("sound", state.sound); renderSound();
+    if (state.sound === "voice") C.voice.prime(); else if (state.sound === "chime") unlockAudio();   // a tap: iPhone allows sound from here on
+  };
   renderSound();
 
   const TURN_SVG = {
@@ -1025,10 +1056,17 @@
   }
   addEventListener("resize", () => { if (state.mode === "ride") setRidePadding(); });
 
-  // the ride starts straight away (bird's-eye 3D); sound is a button in the ride bar
-  function startRide(view = "birdseye") {
-    const sel = state.routes[state.sel]; if (!sel) return;
+  // "Let's ride!" and "Preview the ride": this runs inside the tap, so iPhone lets the chime and the voice play later
+  function rideTap(gps) {
+    unlockAudio();
+    if (state.sound === "voice") C.voice.prime();
+    if (gps) startGpsRide(); else startRide();
+  }
+  // the ride starts straight away (bird's-eye 3D); sound is a button in the ride bar. Shared by the GPS ride and the preview.
+  function prepareRide(view, gps) {
+    const sel = state.routes[state.sel]; if (!sel) return null;
     const r = sel.r;
+    hideNotice();
     state.rideEnd = placeText(sel.end) || state.toLabel || t("destination");
     state.rideView = view;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
@@ -1038,10 +1076,143 @@
     riderMarker.setLngLat(r.coords[0]).addTo(map); badgeMarker.setLngLat(r.coords[0]).addTo(map);
     Object.values(markers).forEach((m) => (m.getElement().style.display = "none"));
     smoothBearing = map.getBearing(); state.hillK = 0; sparkAt = -1e9;
-    $("#ride-pause").textContent = t("pause");
+    // the preview has a speed and a pause button; a GPS ride shows your speed and the GPS instead
+    $("#ride-speed").hidden = gps; $("#ride-pause").hidden = gps; $("#ride-gps").hidden = !gps;
+    state.follow = true; state.holding = false; glide = null; $("#ride-recenter").hidden = true; showRider(true);
+    state.reroutes = 0; state.rerouteLog = []; state.rerouteFailAt = -1e9;
+    return sel;
+  }
+  function startRide(view = "birdseye") {   // the preview: a simulated ride at 4× speed
+    const sel = prepareRide(view, false); if (!sel) return;
+    const r = sel.r;
+    $("#ride-pause").textContent = t("pause"); $("#ride-speed").textContent = "4×";
     const pois = C.routePOIs(r, window.POIS, 70);
     state.ride = new C.RideSim(r, { mult: 4, pois, onFrame: rideFrame, onEvent: rideEvent });
     state.ride.start();
+  }
+
+  // ------------------------------------------------------------------ GPS ride
+  // The phone's location moves you along the route (common.js RideGPS); the cards, voice and roadside places work as in the preview.
+  // opts.replay: a pretend GPS ride ({ speedup, startAt, detourAt }) for tests; ?gps=replay&gpsx=&gpsat=&detour= does the same.
+  function startGpsRide(opts = {}) {
+    let geo = navigator.geolocation || null;
+    const rp = opts.replay || (gpsParam === "replay" ? { speedup: +params.get("gpsx") || 1, startAt: +params.get("gpsat") || 0,
+      detourAt: params.has("detour") ? +params.get("detour") : null, deny: params.has("gpsdeny") } : null);
+    if (rp) geo = new C.ReplayGeo(Object.assign({ getRoute: () => state.ride && state.ride.route }, rp));
+    if (!geo) { showNotice("gpsUnavailable"); return; }
+    const sel = prepareRide("birdseye", true); if (!sel) return;
+    const r = sel.r;
+    // a reroute uses the same settings as this route: to the destination (Go somewhere),
+    // or back onto the planned ride a little ahead (suggested and classic rides, which may loop or have stops)
+    state.rideOpts = { w: selWeights(sel), dest: state.tab === "go" && state.to ? state.to : null, rejoin: state.tab !== "go" };
+    gpsStatus({ state: "wait" });
+    state.ride = new C.RideGPS(r, { geo, pois: C.routePOIs(r, window.POIS, 70), onFrame: rideFrame, onEvent: rideEvent,
+      onStatus: gpsStatus, onOffRoute: rerouteFrom, onError: gpsError });
+    keepAwake(true);
+    state.ride.start();
+  }
+  function gpsStatus(s) {
+    const el = $("#ride-gps"); state.gpsState = s;
+    el.classList.toggle("waiting", s.state === "wait"); el.classList.toggle("off", s.state === "off");
+    if (s.state === "wait") { $("#gps-main").textContent = t("gpsWaiting"); $("#gps-sub").textContent = ""; return; }
+    $("#gps-main").textContent = t("kmh", { v: Math.round(s.kmh || 0) });
+    $("#gps-sub").textContent = s.state === "off" ? t("offRoute") : t("gpsAcc", { m: Math.round(s.acc) });
+  }
+  function gpsError(e) {   // location refused (or no location at all): back to the route, with the preview on offer
+    endRide();
+    showNotice(e && e.code === 1 ? "gpsDenied" : "gpsUnavailable");
+  }
+  function showNotice(key, preview = true) {
+    const p = $("#notice-text"); p.dataset.i18n = key; p.textContent = t(key);
+    $("#notice-preview").hidden = !preview; $("#notice").hidden = false;
+  }
+  function hideNotice() { $("#notice").hidden = true; }
+  $("#notice-ok").onclick = hideNotice;
+  $("#notice-preview").onclick = () => { hideNotice(); rideTap(false); };
+
+  // off route for a while: a new route from where you are, with the same settings, then carry on along it
+  function newRouteFrom(from, ride, ro) {
+    const cur = ride.route;
+    if (ro.rejoin) {
+      const D = ride.d + 250;
+      if (D < cur.length - 100) {
+        const p = ride.cursor.at(D), a = router.route(from, [p.lon, p.lat], ro.w);
+        if (a) return C.joinRoutes(a, C.tailRoute(cur, D));
+      }
+      return router.route(from, cur.coords[cur.coords.length - 1], ro.w);
+    }
+    return router.route(from, ro.dest || cur.coords[cur.coords.length - 1], ro.w);
+  }
+  function rerouteFrom(p) {
+    const ride = state.ride, ro = state.rideOpts; if (!ride || !ro) return false;
+    const t1 = performance.now();
+    let nr = null;
+    try { nr = newRouteFrom([p.lon, p.lat], ride, ro); } catch (e) { console.warn("reroute failed", e); }
+    state.rerouteLog.push({ at: [p.lon, p.lat], d: ride.d, ok: !!nr, ms: +(performance.now() - t1).toFixed(1), start: nr && nr.coords[0], length: nr && Math.round(nr.length) });
+    if (!nr || nr.length < 1) {   // keep the old route, and say so (once a minute at most)
+      if (performance.now() - state.rerouteFailAt > 60000) { toast(t("rerouteFailed")); chime(); C.voice.say(t("rerouteFailedVoice")); }
+      state.rerouteFailAt = performance.now();
+      return false;
+    }
+    state.reroutes++;
+    for (const mk of poiMarkers.values()) mk.remove();
+    poiMarkers.clear(); afterGapUntil = 0; lastGapId = null; sparkAt = -1e9;
+    ride.setRoute(nr, C.routePOIs(nr, window.POIS, 70));
+    map.getSource("route").setData(C.routePiecesGeoJSON(nr));
+    map.getSource("route-alts").setData(empty);
+    map.getSource("stops").setData(stopsData(nr));
+    chime(); C.voice.say(t("rerouting")); toast(t("rerouted"));
+    return true;
+  }
+
+  // keep the screen on during a GPS ride (Screen Wake Lock); it is released when the page hides, so ask again when it's back
+  let wakeLock = null;
+  async function keepAwake(on) {
+    if (!on) { const w = wakeLock; wakeLock = null; state.wake = "off"; if (w) { try { await w.release(); } catch (e) { /* gone */ } } return; }
+    if (!("wakeLock" in navigator)) { state.wake = "unsupported"; return; }
+    if (wakeLock || document.visibilityState !== "visible") return;
+    try {
+      const w = await navigator.wakeLock.request("screen");
+      if (!state.ride || !state.ride.gps) { w.release(); return; }   // the ride ended meanwhile
+      wakeLock = w; state.wake = "on";
+      w.addEventListener("release", () => { if (wakeLock === w) { wakeLock = null; state.wake = "released"; } });
+    } catch (e) { state.wake = "refused"; }   // unsupported or refused: carry on
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !state.ride || !state.ride.gps) return;
+    keepAwake(true); state.ride.wake();   // pick up again from the next fix
+  });
+
+  // move the map by hand during a GPS ride: it stops following you until you tap "Re-center"
+  let glide = null;
+  function setFollow(on) {
+    state.follow = on; $("#ride-recenter").hidden = on;
+    if (on) {
+      glide = { t0: performance.now(), c: map.getCenter(), z: map.getZoom(), p: map.getPitch(), b: map.getBearing() };   // ease back to the rider
+      if (state.ride && state.ride.kick) state.ride.kick();
+    }
+  }
+  // jumpTo() every frame would cancel a gesture as it starts, so the camera holds still while a finger (or the mouse) is down on the map;
+  // a real move (or a second finger, or the mouse wheel) stops following, a plain tap doesn't
+  const gpsRiding = () => state.mode === "ride" && !!state.ride && !!state.ride.gps;
+  let press = null;
+  map.getCanvasContainer().addEventListener("pointerdown", (e) => {
+    if (!gpsRiding()) return;
+    press = { x: e.clientX, y: e.clientY, n: (press ? press.n : 0) + 1 }; state.holding = true;
+  }, true);
+  addEventListener("pointermove", (e) => {
+    if (press && state.follow && (press.n > 1 || Math.hypot(e.clientX - press.x, e.clientY - press.y) > 6)) setFollow(false);
+  }, true);
+  for (const ev of ["pointerup", "pointercancel"]) addEventListener(ev, () => { press = null; state.holding = false; }, true);
+  map.getCanvasContainer().addEventListener("wheel", () => { if (gpsRiding() && state.follow) setFollow(false); }, { capture: true, passive: true });
+  for (const ev of ["dragstart", "zoomstart", "rotatestart", "pitchstart"]) {
+    map.on(ev, (e) => { if (e.originalEvent && gpsRiding() && state.follow) setFollow(false); });
+  }
+  $("#ride-recenter").onclick = () => setFollow(true);
+  let riderShown = true;
+  function showRider(on) {   // hidden until the first good GPS fix
+    if (on === riderShown) return;
+    riderShown = on; coneEl.style.visibility = badgeEl.style.visibility = on ? "" : "hidden";
   }
   function lerpAngle(a, b, k) { const d = ((b - a + 540) % 360) - 180; return a + d * k; }
   const smoothstep = (x) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v); };
@@ -1063,7 +1234,7 @@
     const r = state.ride.route, climbList = state.ride.extras.climbs;
     const bird = state.rideView === "birdseye";
     const target = hillFactor(f.d, climbList);
-    if (state.snap) { state.hillK = target; smoothBearing = f.pos.heading; state.snap = false; }
+    if (state.snap || f.snap) { state.hillK = target; smoothBearing = f.pos.heading; state.snap = false; }
     else { state.hillK += (target - state.hillK) * 0.05; smoothBearing = lerpAngle(smoothBearing, f.pos.heading, 0.12); }
     const k = bird ? state.hillK : 0;
     if (map.terrain) {
@@ -1071,7 +1242,18 @@
       if (Math.abs(map.terrain.exaggeration - ex) > 0.004) map.terrain.exaggeration = ex;
     }
     const cam = bird ? CAM.bird : CAM.top;
-    map.jumpTo({ center: [f.pos.lon, f.pos.lat], bearing: smoothBearing, pitch: cam.pitch + k * CAM.hill.pitch, zoom: cam.zoom + k * CAM.hill.zoom });
+    const view = { center: [f.pos.lon, f.pos.lat], bearing: smoothBearing, pitch: cam.pitch + k * CAM.hill.pitch, zoom: cam.zoom + k * CAM.hill.zoom };
+    if (glide) {   // "Re-center": ease from where you left the map to the rider
+      const u = (performance.now() - glide.t0) / 500;
+      if (u >= 1) glide = null;
+      else {
+        const e = smoothstep(u);
+        view.center = [glide.c.lng + (view.center[0] - glide.c.lng) * e, glide.c.lat + (view.center[1] - glide.c.lat) * e];
+        view.zoom = glide.z + (view.zoom - glide.z) * e; view.pitch = glide.p + (view.pitch - glide.p) * e; view.bearing = lerpAngle(glide.b, view.bearing, e);
+      }
+    }
+    if (state.follow && !state.holding) map.jumpTo(view);   // a GPS ride stops following while you move the map by hand
+    showRider(f.fix !== false);           // a GPS ride shows you once it has a good fix
     riderMarker.setLngLat([f.pos.lon, f.pos.lat]).setRotation(f.pos.heading);
     badgeMarker.setLngLat([f.pos.lon, f.pos.lat]);
     // turn card
@@ -1136,6 +1318,7 @@
       else if (c.start > f.d && !next) next = c;
     }
     const c = cur || topped || (next && next.start - f.d < 600 ? next : null);
+    $("#ride-hud").classList.toggle("hill-on", !!c);   // lifts the "Re-center" button above the card
     if (!c) { card.hidden = true; return; }
     card.hidden = false; card.classList.toggle("on-climb", !!cur);
     let title, sub;
@@ -1181,17 +1364,21 @@
   $("#ride-view").onclick = () => {
     state.rideView = state.rideView === "birdseye" ? "topdown" : "birdseye";
     set3d(state.rideView === "birdseye", false); setRidePadding();
-    if (state.ride && !state.ride.running) { state.snap = true; state.ride.seek(state.ride.d); }
+    if (state.ride && state.ride.gps) state.ride.kick();   // draw the new view even while standing still
+    else if (state.ride && !state.ride.running) { state.snap = true; state.ride.seek(state.ride.d); }
   };
   $("#ride-exit").onclick = endRide;
   function endRide() {
+    const wasGps = !!(state.ride && state.ride.gps), rerouted = state.reroutes > 0;
     if (state.ride) state.ride.pause(); state.ride = null;
+    if (wasGps) keepAwake(false);
     if (map.terrain) map.terrain.exaggeration = CAM.terrain;
-    state.hillK = 0;
+    state.hillK = 0; state.follow = true; glide = null; showRider(true);
     riderMarker.remove(); badgeMarker.remove(); for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
-    $("#ride-hud").hidden = true; $("#hill-card").hidden = true; $("#panel").hidden = false; $("#legend").hidden = false; document.querySelector(".map-controls").hidden = false;
+    $("#ride-hud").hidden = true; $("#hill-card").hidden = true; $("#ride-recenter").hidden = true; $("#panel").hidden = false; $("#legend").hidden = false; document.querySelector(".map-controls").hidden = false;
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapId = null;
+    if (rerouted) drawRoutes();   // the planned routes again, not the reroute
     refreshSections(); wind.show(state.wx); renderWxCard();
     if (state.routes.length) fitRoute(state.routes[state.sel].r);
   }
@@ -1221,7 +1408,9 @@
 
   // ------------------------------------------------------------------ start: deep links for tests, screenshots and sharing
   // ?trip=rachel|montroyal|biodome|davidson · ?from=lon,lat&to=lon,lat · ?suggest=loop|oneway&km=&stop= · ?classic=<id>
-  // ?view=3d · ?winter=1 · ?wx=1 · ?lang=fr · ?ride=bird|top&at=<m>&paused
+  // ?view=3d · ?winter=1 · ?wx=1 · ?lang=fr · ?ride=bird|top&at=<m>&paused (the simulated preview)
+  // ?ride=gps: a GPS ride (with ?gps=replay&gpsx=<speed-up>&gpsat=<m>&detour=<m>: a pretend one, for tests and screenshots;
+  // add &gpsdeny for a pretend "location refused")
   refreshSections(); applyLayers();
   const lonlat = (s) => { const v = (s || "").split(",").map(Number); return v.length === 2 && v.every(Number.isFinite) ? v : null; };
   const pFrom = lonlat(params.get("from")), pTo = lonlat(params.get("to"));
@@ -1248,11 +1437,13 @@
   if (state.tab === "suggest" && state.smode === "classics") requestAnimationFrame(() => { const el = track.children[state.classic]; if (el) track.scrollLeft = el.offsetLeft - (track.clientWidth - el.offsetWidth) / 2; });
   renderClassicCards();
   if (params.get("view") === "3d") set3d(true);
-  if (params.get("ride") && state.routes.length) {
+  if (params.get("ride") === "gps" && state.routes.length) startGpsRide();
+  else if (params.get("ride") && state.routes.length) {
     startRide(params.get("ride") === "top" ? "topdown" : "birdseye");
     if (params.has("at")) { state.snap = true; state.ride.seek(+params.get("at")); }
     if (params.has("paused")) pauseRide(true);
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
-    setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers };
+    setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
+    startGpsRide, endRide, gpsDefault, setFollow, riderMarker };
 })();

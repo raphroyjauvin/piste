@@ -67,6 +67,11 @@
       icy: "Icy patches likely (freeze–thaw)", noClearing: "Live snow-clearing status isn't public yet",
       bixiStation: "BIXI station", bixiBikes: "{n} bikes", bixiEbikes: "{n} electric", bixiDocks: "{n} free docks", bixiUpdated: "updated {n} min ago",
       bixiClosed: "Not renting right now", bixiLive: "live",
+      previewRide: "Preview the ride", gpsWaiting: "Waiting for GPS…", gpsAcc: "±{m} m", kmh: "{v} km/h", gpsStatus: "GPS",
+      offRoute: "Off route", rerouting: "Rerouting", rerouted: "New route from here", recenter: "Re-center", ok: "OK",
+      rerouteFailed: "No new route found from here. Keeping the planned route.", rerouteFailedVoice: "No new route found. Keeping the planned route.",
+      gpsDenied: "Piste can't use your location, so the ride can't follow you. You can allow location for this site in your phone's settings, or preview the ride instead.",
+      gpsUnavailable: "Your location isn't available on this device. You can preview the ride instead.",
     },
     fr: {
       letsRide: "Allons-y!", cancel: "Annuler",
@@ -130,6 +135,11 @@
       icy: "Plaques de glace probables (gel-dégel)", noClearing: "L'état du déneigement en temps réel n'est pas encore public",
       bixiStation: "Station BIXI", bixiBikes: "{n} vélos", bixiEbikes: "{n} électriques", bixiDocks: "{n} points d'ancrage libres", bixiUpdated: "mis à jour il y a {n} min",
       bixiClosed: "Location suspendue pour l'instant", bixiLive: "en direct",
+      previewRide: "Aperçu du trajet", gpsWaiting: "En attente du GPS…", gpsAcc: "±{m} m", kmh: "{v} km/h", gpsStatus: "GPS",
+      offRoute: "Hors itinéraire", rerouting: "Nouvel itinéraire", rerouted: "Nouvel itinéraire à partir d'ici", recenter: "Recentrer", ok: "OK",
+      rerouteFailed: "Aucun nouvel itinéraire trouvé d'ici. On garde l'itinéraire prévu.", rerouteFailedVoice: "Aucun nouvel itinéraire trouvé. On garde l'itinéraire prévu.",
+      gpsDenied: "Piste n'a pas accès à votre position, alors le trajet ne peut pas vous suivre. Vous pouvez autoriser la localisation pour ce site dans les réglages du téléphone, ou voir un aperçu du trajet.",
+      gpsUnavailable: "Votre position n'est pas disponible sur cet appareil. Vous pouvez voir un aperçu du trajet.",
     },
   };
   const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];

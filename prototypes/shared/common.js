@@ -370,14 +370,39 @@
     return { search };
   }
 
-  // ---------------------------------------------------------------- ride simulator
-  class RideSim {
+  // ---------------------------------------------------------------- ride: one emitter, two sources of progress
+  // RideCore turns "how far along the route" into frames ({ d, total, pos, look }) and one-off events
+  // (gap alert 200 m before, turn prompt 80 m before, climb notice 250 m before, arrived).
+  // RideSim moves along at a set speed (the preview); RideGPS follows the phone's location. The app draws both the same way.
+  class RideCore {
     constructor(route, opts = {}) {
-      this.route = route; this.cursor = buildCursor(route);
-      this.d = 0; this.speed = (opts.kmh || SPEED_KMH) / 3.6; this.mult = opts.mult || 4;
       this.onFrame = opts.onFrame || (() => {}); this.onEvent = opts.onEvent || (() => {});
-      this.running = false; this._last = null; this._fired = new Set();
-      this.extras = { climbs: climbs(route), pois: opts.pois || [], gaps: mainGaps(route) };
+      this.d = 0; this.running = false;
+      this.setRoute(route, opts.pois);
+    }
+    // a new route to follow (a reroute): its own cursor, climbs, gaps and roadside places, and fresh events
+    setRoute(route, pois = []) {
+      this.route = route; this.cursor = buildCursor(route); this._fired = new Set();
+      this.extras = { climbs: climbs(route), pois, gaps: mainGaps(route) };
+    }
+    _emit(extra) {
+      const pos = (extra && extra.pos) || this.cursor.at(this.d);
+      const look = lookahead(this.route, this.d, this.extras);
+      // events: gap alert 200 m before; turn prompt 80 m before; climb notice 250 m before
+      const g = look.nextGap;
+      if (g && look.nextGapDist <= 200) this._once("gap" + g.start, { type: "gap", gap: g, dist: look.nextGapDist });
+      if (look.next && look.nextDist <= 80) this._once("turn" + look.next.at, { type: "turn", m: look.next, dist: look.nextDist });
+      if (look.hill && look.hill.start - this.d <= 250 && look.hill.start > this.d) this._once("hill" + look.hill.start, { type: "hill", hill: look.hill, dist: look.hill.start - this.d });
+      this.onFrame(Object.assign({ d: this.d, total: this.cursor.total, pos, look }, extra));
+    }
+    _once(key, ev) { if (this._fired.has(key)) return; this._fired.add(key); this.onEvent(ev); }
+  }
+
+  // ---------------------------------------------------------------- ride simulator (the preview)
+  class RideSim extends RideCore {
+    constructor(route, opts = {}) {
+      super(route, opts);
+      this.speed = (opts.kmh || SPEED_KMH) / 3.6; this.mult = opts.mult || 4; this._last = null;
     }
     start() { if (this.running) return; this.running = true; this._last = performance.now(); cancelAnimationFrame(this._raf); this._raf = requestAnimationFrame((t) => this._tick(t)); }
     pause() { this.running = false; cancelAnimationFrame(this._raf); }
@@ -392,17 +417,352 @@
       if (this.d >= this.cursor.total) { this.d = this.cursor.total; this.running = false; cancelAnimationFrame(this._raf); this._emit(); this.onEvent({ type: "arrived" }); return; }
       this._emit();
     }
-    _emit() {
-      const pos = this.cursor.at(this.d);
-      const look = lookahead(this.route, this.d, this.extras);
-      // events: gap alert 200 m before; turn prompt 80 m before; climb notice 250 m before
-      const g = look.nextGap;
-      if (g && look.nextGapDist <= 200) this._once("gap" + g.start, { type: "gap", gap: g, dist: look.nextGapDist });
-      if (look.next && look.nextDist <= 80) this._once("turn" + look.next.at, { type: "turn", m: look.next, dist: look.nextDist });
-      if (look.hill && look.hill.start - this.d <= 250 && look.hill.start > this.d) this._once("hill" + look.hill.start, { type: "hill", hill: look.hill, dist: look.hill.start - this.d });
-      this.onFrame({ d: this.d, total: this.cursor.total, pos, look });
+  }
+
+  // ---------------------------------------------------------------- the route in metres, for matching GPS fixes to it
+  const D2R = Math.PI / 180, R_EARTH = 6371008.8;
+  function makeTrack(route) {
+    const c = route.coords, n = c.length, cum = new Float64Array(n);
+    for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + distM(c[i - 1][0], c[i - 1][1], c[i][0], c[i][1]);
+    const scale = cum[n - 1] ? route.length / cum[n - 1] : 1;   // same distances as buildCursor (route metres)
+    return {
+      // The nearest point on the route between d0 and d1 (metres along it): { off: metres from the route, along }.
+      // With `near`, the earliest stretch that comes within `near` metres wins, so a loop or an out-and-back
+      // matches the part you reach first, not the one that happens to be a metre closer.
+      locate(lon, lat, d0 = -Infinity, d1 = Infinity, near = 0) {
+        const kx = Math.cos(lat * D2R) * R_EARTH * D2R, ky = R_EARTH * D2R, px = lon * kx, py = lat * ky;
+        let best = null, run = false;
+        for (let i = 1; i < n; i++) {
+          if (cum[i] * scale < d0 || cum[i - 1] * scale > d1) continue;
+          const ax = c[i - 1][0] * kx, ay = c[i - 1][1] * ky, vx = c[i][0] * kx - ax, vy = c[i][1] * ky - ay, L2 = vx * vx + vy * vy;
+          let u = L2 ? ((px - ax) * vx + (py - ay) * vy) / L2 : 0; u = Math.max(0, Math.min(1, u));
+          const off = Math.hypot(px - ax - vx * u, py - ay - vy * u);
+          if (near > 0) {
+            if (off <= near) { run = true; if (!best || off < best.off) best = { off, along: (cum[i - 1] + (cum[i] - cum[i - 1]) * u) * scale }; }
+            else if (run) break;   // the first close stretch is over
+          } else if (!best || off < best.off) best = { off, along: (cum[i - 1] + (cum[i] - cum[i - 1]) * u) * scale };
+        }
+        if (!best && near > 0) return this.locate(lon, lat, d0, d1, 0);
+        return best || { off: Infinity, along: 0 };
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------- rejoining a ride after a detour: route pieces end to end
+  // The part of a route from distance D on, as a route of its own (distances start at 0).
+  function tailRoute(r, D) {
+    D = Math.max(0, Math.min(r.length, D));
+    const L = r.length - D;
+    const pieces = r.pieces.filter((p) => p.start + p.length > D + 0.01).map((p) => {
+      const s = Math.max(p.start, D);
+      return Object.assign({}, p, { start: s - D, length: p.start + p.length - s, names: p.names.slice(),
+        coords: s > p.start ? sliceCoords(r, s, p.start + p.length) : p.coords.slice() });
+    });
+    const gaps = r.gaps.filter((g) => g.start + g.length > D + 0.01).map((g) => {
+      const s = Math.max(g.start, D);
+      return Object.assign({}, g, { start: s - D, length: g.start + g.length - s, names: g.names.slice() });
+    });
+    const profile = [[0, elevAt(r, D)]].concat((r.profile || []).filter((p) => p[0] > D).map(([d, z]) => [d - D, z]));
+    let climb = 0, descent = 0;
+    for (let i = 1; i < profile.length; i++) { const dz = profile[i][1] - profile[i - 1][1]; if (dz > 0) climb += dz; else descent -= dz; }
+    const byTier = [0, 0, 0, 0, 0, 0]; pieces.forEach((p) => (byTier[p.tier] += p.length));
+    return {
+      legs: r.legs.filter((l) => (l.dist0 || 0) + (l.len || 0) > D).map((l) => Object.assign({}, l, { dist0: (l.dist0 || 0) - D })),
+      coords: sliceCoords(r, D, r.length), pieces, gaps, profile, byTier, length: L,
+      infraShare: L ? (byTier[0] + byTier[1] + byTier[2]) / L : 0, climb, descent,
+      maneuvers: r.maneuvers.filter((m) => m.at >= D).map((m) => Object.assign({}, m, { at: m.at - D })),
+      stops: (r.stops || []).filter((s) => s.at >= D).map((s) => Object.assign({}, s, { at: s.at - D })),
+      from: null, to: r.to,
+    };
+  }
+  function turnKind(bIn, bOut) {   // same thresholds as the router's turn instructions
+    const d = ((bOut - bIn + 540) % 360) - 180;
+    return Math.abs(d) < 25 ? "continue" : d > 0 ? (d > 120 ? "sharpR" : d > 50 ? "right" : "slightR") : (d < -120 ? "sharpL" : d < -50 ? "left" : "slightL");
+  }
+  // Route b ridden after route a, as one route, with a turn instruction where they meet.
+  function joinRoutes(a, b) {
+    const off = a.length, shift = (o) => Object.assign({}, o, { start: o.start + off });
+    const coords = a.coords.slice();
+    for (const c of b.coords) { const l = coords[coords.length - 1]; if (!l || distM(l[0], l[1], c[0], c[1]) > 0.05) coords.push(c); }
+    const pieces = a.pieces.map((p) => Object.assign({}, p, { coords: p.coords.slice(), names: p.names.slice() }));
+    for (const p of b.pieces) {
+      const prev = pieces[pieces.length - 1];
+      if (prev && prev.tier === p.tier && Math.abs(prev.start + prev.length - (p.start + off)) < 1) {
+        prev.length += p.length; prev.coords = prev.coords.concat(p.coords.slice(1)); p.names.forEach((nm) => prev.names.includes(nm) || prev.names.push(nm));
+      } else pieces.push(Object.assign(shift(p), { coords: p.coords.slice(), names: p.names.slice() }));
     }
-    _once(key, ev) { if (this._fired.has(key)) return; this._fired.add(key); this.onEvent(ev); }
+    const gaps = a.gaps.map((g) => Object.assign({}, g, { names: g.names.slice() }));
+    for (const g of b.gaps) {
+      const prev = gaps[gaps.length - 1];
+      if (prev && Math.abs(prev.start + prev.length - (g.start + off)) < 1) { prev.length += g.length; prev.busy = prev.busy || g.busy; g.names.forEach((nm) => prev.names.includes(nm) || prev.names.push(nm)); }
+      else gaps.push(Object.assign(shift(g), { names: g.names.slice() }));
+    }
+    // the turn from the detour back onto the ride (unless it simply carries on along the same street)
+    const ca = buildCursor(a), cb = buildCursor(b);
+    const nameB = (b.legs[0] && b.legs[0].name) || (b.pieces[0] && b.pieces[0].names[0]) || "path";
+    const lastA = a.legs.length ? a.legs[a.legs.length - 1].name || "path" : null;
+    const pIn = ca.at(Math.max(0, a.length - 15)), pEnd = ca.at(a.length), pOut = cb.at(Math.min(b.length, 15));
+    const kind = b.length > 1 && a.length > 1 ? turnKind(window.BikeRouter.bearing(pIn.lon, pIn.lat, pEnd.lon, pEnd.lat), window.BikeRouter.bearing(pEnd.lon, pEnd.lat, pOut.lon, pOut.lat)) : "continue";
+    const joint = nameB !== lastA || kind !== "continue"
+      ? [{ at: off, kind, name: nameB, text: nameB, tier: (b.pieces[0] || {}).tier || 0, lon: pEnd.lon, lat: pEnd.lat }] : [];
+    const later = b.maneuvers.filter((m) => m.stop || m.at > (joint.length ? 15 : 1)).map((m) => Object.assign({}, m, { at: m.at + off }));
+    const byTier = a.byTier.map((m, k) => m + b.byTier[k]), length = a.length + b.length;
+    return {
+      legs: a.legs.concat(b.legs.map((l) => Object.assign({}, l, { dist0: (l.dist0 || 0) + off }))),
+      coords, pieces, gaps, byTier, length, infraShare: length ? (byTier[0] + byTier[1] + byTier[2]) / length : 0,
+      profile: (a.profile || []).concat((b.profile || []).map(([d, z]) => [d + off, z])),
+      climb: a.climb + b.climb, descent: a.descent + b.descent,
+      maneuvers: a.maneuvers.concat(joint, later),
+      stops: (b.stops || []).map((s) => Object.assign({}, s, { at: s.at + off })),
+      from: a.from, to: b.to,
+    };
+  }
+
+  // ---------------------------------------------------------------- ride with the phone's GPS
+  // Tuning (2026-10-30): first guesses, to check on real rides.
+  const GPS = {
+    ACC_MAX: 50,        // m: fixes less accurate than this are ignored
+    OFF_M: 30,          // m: farther than this from the route (and clearly beyond the fix's accuracy) is off route…
+    START_M: 60,        // …(or this far, until you first reach the route: a start pin is often 30-50 m from the street the route starts on)
+    OFF_MS: 5000,       // …for this long before rerouting
+    REROUTE_MS: 10000,  // at most one reroute this often
+    ARRIVE_M: 25,       // m from the end: arrived
+    LEAD_S: 1.2,        // s: carry on at the current speed at most this long after a fix (never far ahead of the next one)
+    TAU_S: 0.25,        // s: the rider glides toward where you are with this time constant
+    BACK_M: 30,         // m: this far behind, three fixes in a row, is a real U-turn (less is jitter and is ignored)
+    STALE_MS: 8000,     // ms with no good fix: "Waiting for GPS…" again
+  };
+  const fin = (v) => (v != null && Number.isFinite(v) && v >= 0 ? v : null);
+  // opts: route, pois, geo (navigator.geolocation or a ReplayGeo), onFrame, onEvent, onStatus({state: wait|ok|off, acc, kmh}),
+  //       onOffRoute({lon, lat, acc}) -> true when the app rerouted (it calls setRoute), onError({code})
+  class RideGPS extends RideCore {
+    constructor(route, opts = {}) {
+      super(route, opts);
+      this.gps = true; this.mult = 1;
+      this.geo = opts.geo !== undefined ? opts.geo : (navigator.geolocation || null);
+      this.onStatus = opts.onStatus || (() => {}); this.onOffRoute = opts.onOffRoute || (() => false); this.onError = opts.onError || (() => {});
+      this.fix = null; this.est = null; this.v = 0; this.back = 0;
+      this.offSince = null; this.offCount = 0; this.blend = 0; this.raw = null; this.rawHeading = 0;
+      this.lastReroute = -Infinity; this.jump = false; this.resync = false; this.busyUntil = 0; this.arrived = false;
+      this.status = null; this.stats = { fixes: 0, ignored: 0, reroutes: 0 };
+      this._watch = null; this._raf = 0; this._last = 0;
+    }
+    setRoute(route, pois = []) {
+      super.setRoute(route, pois);
+      this.track = makeTrack(route);
+      this.d = 0; this.est = null; this.v = this.v || 0; this.back = 0; this.offSince = null; this.offCount = 0;
+      this.joined = false;   // not on the route itself yet (the looser START_M applies)
+      if (this.fix) {   // a reroute: we are where the new route starts
+        const s = this.track.locate(this.fix.lon, this.fix.lat, -Infinity, 400, Math.max(25, this.fix.acc));
+        this.d = this.est = this.fix.along = s.along;
+      }
+      this.jump = true; this.kick();
+    }
+    start() {
+      if (this.running) return;
+      this.running = true;
+      this._emit({ fix: false, snap: true, gps: true });   // the route's start, until the first good fix
+      this._status("wait");
+      this._listen();
+      this._last = performance.now(); cancelAnimationFrame(this._raf); this._raf = requestAnimationFrame((t) => this._tick(t));
+    }
+    pause() { this.running = false; cancelAnimationFrame(this._raf); clearTimeout(this._wakeT); this._unlisten(); }   // = stop
+    seek(d) { this.d = Math.max(0, Math.min(this.cursor.total, d)); this.kick(); }
+    kick(ms = 1500) { this.busyUntil = performance.now() + ms; }   // keep drawing for a moment even if nothing moves
+    // the page is back after being hidden (iPhone screen lock pauses web pages): take the next fix as it comes,
+    // and start the watch again if no fix arrives within 4 s
+    wake() {
+      if (!this.running) return;
+      this.resync = true; this.kick();
+      const t0 = performance.now(); clearTimeout(this._wakeT);
+      this._wakeT = setTimeout(() => { if (this.running && (!this.fix || this.fix.wall < t0)) { this._unlisten(); this._listen(); } }, 4000);
+    }
+    _listen() {
+      if (!this.geo || !this.geo.watchPosition) { this.pause(); this.onError({ code: 2, unsupported: true }); return; }
+      try {
+        this._watch = this.geo.watchPosition((p) => this._onPos(p), (e) => this._onErr(e), { enableHighAccuracy: true, maximumAge: 0 });
+      } catch (e) { this.pause(); this.onError({ code: 2 }); }
+    }
+    _unlisten() { if (this._watch != null && this.geo) { try { this.geo.clearWatch(this._watch); } catch (e) { /* gone */ } } this._watch = null; }
+    _onErr(e) {
+      if (e && e.code === 1) { this.pause(); this.onError(e); return; }   // permission refused
+      if (!this.fix) this._status("wait");                                // unavailable or slow: keep waiting
+    }
+    _status(state, info = {}) { this.status = state; this.onStatus(Object.assign({ state }, info)); }
+    _onPos(p) {
+      if (!this.running || this.arrived) return;
+      const c = p.coords || {}, wall = performance.now(), t = p.timestamp || Date.now();
+      this.stats.fixes++;
+      if (!(c.accuracy <= GPS.ACC_MAX)) {   // too vague to place you on a street
+        this.stats.ignored++;
+        if (!this.fix || wall - this.fix.wall > GPS.STALE_MS) this._status("wait");
+        return;
+      }
+      const lon = c.longitude, lat = c.latitude, acc = c.accuracy, L = this.cursor.total;
+      const gap = this.fix ? Math.max(0.05, (t - this.fix.t) / 1000) : Infinity;
+      const fresh = this.est == null || this.resync || gap > 6;   // first fix, or back after a pause
+      this.resync = false;
+      // where on the route: near where we were first (so a loop or an out-and-back doesn't jump across),
+      // then further ahead (a skipped stretch, or starting part-way), then anywhere (you went back)
+      const near = Math.max(25, acc), ref = this.est == null ? 0 : this.est;
+      let s = this.track.locate(lon, lat, ref - 60, ref + Math.max(250, this.v * 10), near), offAll = s.off;
+      if (s.off > near) {
+        const fwd = this.track.locate(lon, lat, ref - 60, Infinity, near);
+        const any = fwd.off <= near ? fwd : this.track.locate(lon, lat, -Infinity, Infinity, near);
+        offAll = Math.min(s.off, any.off);
+        if (any.off <= near && any.off + 10 < s.off) s = any;
+      }
+      // speed: the phone's own (Doppler) speed when it gives one, else from the fixes along the route
+      const gpsV = fin(c.speed);
+      const prev = this.raw ? this.raw.cur : null;
+      this.raw = { prev: prev || [lon, lat], cur: [lon, lat] };
+      if (prev && distM(prev[0], prev[1], lon, lat) >= 3) this.rawHeading = window.BikeRouter.bearing(prev[0], prev[1], lon, lat);
+      this.fix = { lon, lat, acc, t, wall, along: s.along, off: offAll, kmh: (gpsV ?? this.v) * 3.6 };
+      const strictM = Math.max(GPS.OFF_M, acc + 10);
+      const onRoute = offAll <= (this.joined ? strictM : Math.max(GPS.START_M, acc + 25));
+      if (offAll <= strictM) this.joined = true;
+      if (onRoute) {
+        this.offSince = null; this.offCount = 0;
+        const pred = this.est == null ? s.along : this.est + this.v * Math.min(3, gap);
+        if (fresh || Math.abs(s.along - pred) > 60) {   // start over from this fix
+          if (this.est == null || Math.abs(s.along - this.d) > 3) this.jump = true;
+          this.est = s.along; this.v = gpsV ?? 0; this.back = 0;
+        } else {   // alpha-beta filter: smooth out a few metres of noise, keep the speed
+          const r = s.along - pred, dt = Math.min(3, gap);
+          this.est = pred + 0.5 * r;
+          const vf = this.v + (0.2 * r) / dt;
+          this.v = Math.max(0, Math.min(16, gpsV != null ? 0.7 * gpsV + 0.3 * vf : vf));
+          // never backwards because of jitter; a real U-turn shows as fixes well behind, several in a row
+          if (this.est < this.d - GPS.BACK_M) { if (++this.back >= 3) { this.d = this.est; this.jump = true; this.back = 0; } }
+          else this.back = 0;
+        }
+        this.fix.along = this.est;
+        this.fix.kmh = (gpsV ?? this.v) * 3.6;
+      } else {
+        this.offCount++;
+        if (this.offSince == null) this.offSince = t;
+        if (t - this.offSince >= GPS.OFF_MS && wall - this.lastReroute >= GPS.REROUTE_MS) {
+          this.lastReroute = wall; this.stats.reroutes++;
+          if (this.onOffRoute({ lon, lat, acc })) {   // the app found a new route and called setRoute(): carry on along it
+            this.raw = { prev: [lon, lat], cur: [lon, lat] }; this.blend = 0;
+            this._status("ok", { acc, kmh: this.fix.kmh }); this.kick();
+            return;
+          }
+        }
+      }
+      // arrived: within 25 m of the end
+      const end = this.route.coords[this.route.coords.length - 1], here = Math.max(this.est ?? 0, this.d);
+      if ((onRoute && L - here <= GPS.ARRIVE_M) || (distM(lon, lat, end[0], end[1]) <= GPS.ARRIVE_M && here >= L - 150)) {
+        this.arrived = true; this.d = this.est = L; this.blend = 0;
+        this._status("ok", { acc, kmh: this.fix.kmh });
+        this._emit({ fix: true, gps: true });
+        this.pause(); this.onEvent({ type: "arrived" });
+        return;
+      }
+      this._status(this.offCount >= 2 ? "off" : "ok", { acc, kmh: this.fix.kmh });
+      this.kick();
+    }
+    _tick(now) {
+      if (!this.running) return;
+      this._raf = requestAnimationFrame((tt) => this._tick(tt));   // first, as in RideSim: camera, icons and map in the same frame
+      const dt = Math.max(0, Math.min(0.1, (now - this._last) / 1000)); this._last = now;
+      const f = this.fix; if (!f) return;
+      if (performance.now() - f.wall > GPS.STALE_MS && this.status !== "wait") this._status("wait");
+      // where you are: the filtered fix, carried on at your speed for a moment (dead reckoning between fixes)
+      const lead = Math.min(GPS.LEAD_S, Math.max(0, (performance.now() - f.wall) / 1000));
+      const target = Math.min(this.cursor.total, (this.est ?? 0) + (this.offCount ? 0 : this.v * lead));
+      const d0 = this.d; let snap = false;
+      if (this.jump) { this.d = target; this.jump = false; snap = true; }
+      else if (target > this.d) this.d += (target - this.d) * (1 - Math.exp(-dt / GPS.TAU_S));   // glide, never backwards
+      // off route (two fixes in a row): draw the rider where the phone is, eased in and out
+      const b0 = this.blend, bt = this.offCount >= 2 ? 1 : 0;
+      this.blend = Math.abs(bt - b0) < 0.002 ? bt : b0 + (bt - b0) * (1 - Math.exp(-dt / 0.35));
+      if (!snap && Math.abs(this.d - d0) < 1e-3 && this.blend === b0 && !(this.blend > 0) && now > this.busyUntil) return;   // standing still: nothing to draw
+      let pos = this.cursor.at(this.d);
+      if (this.blend > 0 && this.raw) {
+        const u = Math.max(0, Math.min(1, (performance.now() - f.wall) / 1000)), [p0, p1] = [this.raw.prev, this.raw.cur];
+        const rl = p0[0] + (p1[0] - p0[0]) * u, ra = p0[1] + (p1[1] - p0[1]) * u, k = this.blend;
+        pos = { lon: pos.lon + (rl - pos.lon) * k, lat: pos.lat + (ra - pos.lat) * k, heading: k > 0.5 ? this.rawHeading : pos.heading };
+      }
+      this._emit({ pos, fix: true, snap, gps: true, off: this.blend > 0.5 });
+    }
+  }
+
+  // ---------------------------------------------------------------- a pretend GPS for tests and screenshots (?gps=replay)
+  // Works like navigator.geolocation (watchPosition / clearWatch), so the ride runs through exactly the same code as real GPS.
+  // A synthetic ride along the ride's current route: one fix a second (faster with `speedup`), a few metres of noise,
+  // a poor fix now and then (to be ignored), and optionally a detour: 60 m off to one side, 150 m alongside the route, then back.
+  // After the app reroutes, it carries on along the new route.
+  class ReplayGeo {
+    constructor(opts = {}) {
+      this.getRoute = opts.getRoute || (() => null);
+      this.v = (opts.kmh || 18) / 3.6; this.k = Math.max(0.25, opts.speedup || 1);
+      this.noise = opts.noise ?? 2.5; this.startAt = opts.startAt || 0;
+      this.detourAt = opts.detourAt ?? null; this.detour = { out: 60, along: 150 };
+      this.deny = !!opts.deny; this.warmup = opts.warmup ?? 2;
+      let seed = opts.seed || 7;   // repeatable noise
+      this.rand = () => { seed = (seed + 0x6D2B79F5) | 0; let x = Math.imul(seed ^ (seed >>> 15), 1 | seed); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+      this.timers = new Map(); this.seq = 0; this.n = 0; this.route = null; this.phase = "route"; this.log = [];
+    }
+    watchPosition(ok, err) {
+      const id = ++this.seq;
+      if (this.deny) { setTimeout(() => err && err({ code: 1, message: "User denied Geolocation" }), 200); return id; }
+      this.timers.set(id, setInterval(() => this._step(ok), 1000 / this.k));
+      setTimeout(() => this._step(ok), 120);
+      return id;
+    }
+    clearWatch(id) { clearInterval(this.timers.get(id)); this.timers.delete(id); }
+    getCurrentPosition(ok, err) { const id = this.watchPosition((p) => { this.clearWatch(id); ok(p); }, err); }
+    _gauss() { return Math.sqrt(-2 * Math.log(1 - this.rand())) * Math.cos(2 * Math.PI * this.rand()); }
+    // s metres into the detour: out at a right angle (side 1 = right, -1 = left), alongside the route, then back
+    _detourAt(s, side) {
+      const { out, along } = this.detour, D = this.det;
+      const x = (s < out ? s : s < out + along ? out : 2 * out + along - s) * side, y = s < out ? 0 : s < out + along ? s - out : along;
+      const h = D.h * D2R, east = x * Math.cos(h) + y * Math.sin(h), north = -x * Math.sin(h) + y * Math.cos(h);
+      return [D.lon + east / (111320 * Math.cos(D.lat * D2R)), D.lat + north / 110540];
+    }
+    _step(ok) {
+      const r = this.getRoute(); if (!r) return;
+      const now = performance.now(), dt = this._t ? Math.min(3, (now - this._t) / 1000) : 0; this._t = now;
+      const ds = this.v * this.k * dt;
+      if (r !== this.route) {
+        if (this.route && this.pos) { this.d = makeTrack(r).locate(this.pos[0], this.pos[1]).along; this.phase = "route"; this.detourAt = null; }   // rerouted
+        else this.d = this.startAt;
+        this.route = r; this.cur = buildCursor(r);
+      } else if (this.phase === "detour") this.s += ds;
+      else this.d = Math.min(this.cur.total, this.d + ds);
+      if (this.phase === "route" && this.detourAt != null && this.d >= this.detourAt) {
+        const p = this.cur.at(this.detourAt), tr = makeTrack(r);
+        this.det = { lon: p.lon, lat: p.lat, h: p.heading, d: this.detourAt, side: 1 };
+        // go off on the side where the detour stays clear of the route (it may turn that way just after)
+        const clear = (side) => { let m = Infinity; for (let s = this.detour.out; s <= this.detour.out + this.detour.along; s += 10) { const q = this._detourAt(s, side); m = Math.min(m, tr.locate(q[0], q[1]).off); } return m; };
+        this.det.side = clear(1) >= clear(-1) ? 1 : -1;
+        this.phase = "detour"; this.s = this.d - this.detourAt; this.detourAt = null;
+      }
+      let lon, lat, heading, speed = this.v * this.k;
+      if (this.phase === "detour") {
+        const { out, along } = this.detour, s = this.s, D = this.det;
+        if (s >= 2 * out + along) { this.phase = "route"; this.d = D.d + along + (s - 2 * out - along); }
+        else {
+          [lon, lat] = this._detourAt(s, D.side);
+          heading = (D.h + (s < out ? 90 * D.side : s < out + along ? 0 : -90 * D.side) + 360) % 360;
+        }
+      }
+      if (this.phase === "route") {
+        const p = this.cur.at(this.d); lon = p.lon; lat = p.lat; heading = p.heading;
+        if (this.d >= this.cur.total) speed = 0;
+      }
+      this.pos = [lon, lat]; this.n++;
+      // noise; the first fixes and every 13th are poor (the ride should ignore them)
+      const bad = this.n <= this.warmup || this.n % 13 === 7;
+      const e = bad ? 30 : this.noise, gx = this._gauss() * e, gy = this._gauss() * e;
+      const fix = { latitude: lat + gy / 110540, longitude: lon + gx / (111320 * Math.cos(lat * D2R)),
+        accuracy: bad ? 60 + this.rand() * 40 : 5 + this.rand() * 6, speed: Math.max(0, speed + this._gauss() * 0.3),
+        heading: speed > 0.5 ? (heading + this._gauss() * 8 + 360) % 360 : NaN, altitude: null, altitudeAccuracy: null };
+      this.log.push({ t: now, lon, lat, d: this.d, phase: this.phase, bad, fix: [fix.longitude, fix.latitude] });
+      if (this.log.length > 2000) this.log.shift();
+      ok({ coords: fix, timestamp: Date.now() });
+    }
   }
 
   // ---------------------------------------------------------------- voice (prompts via speaker; commands where supported)
@@ -416,6 +776,11 @@
       u.lang = L === "fr" ? "fr-CA" : "en-CA";
       if (v) u.voice = v;
       u.rate = 1.02; speechSynthesis.cancel(); speechSynthesis.speak(u);
+    },
+    // iPhone Safari only speaks once speech has started from a tap: a silent line, said inside the tap, unlocks it
+    prime() {
+      if (!window.speechSynthesis) return;
+      try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; u.lang = lang() === "fr" ? "fr-CA" : "en-CA"; speechSynthesis.speak(u); } catch (e) { /* no speech */ }
     },
     commandsSupported: !!(window.SpeechRecognition || window.webkitSpeechRecognition),
     listen(handlers) {
@@ -441,5 +806,5 @@
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
-    profileSVG, makeGeocoder, RideSim, voice, gapSentence, buildCursor, distM };
+    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, makeTrack, tailRoute, joinRoutes, voice, gapSentence, buildCursor, distM };
 })();

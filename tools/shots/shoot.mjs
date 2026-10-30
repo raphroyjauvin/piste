@@ -36,6 +36,8 @@ const SHOTS = [
   { name: "P5-phone-winter-fr", url: `${APP}?trip=montroyal&winter=1&lang=fr&safe=62,34`, ...phone, steps: [["wait", 3500]] },
   { name: "P6-phone-search", url: `${APP}?trip=rachel&safe=62,34`, ...phone, steps: [["eval", "document.querySelector('#to').focus()"], ["wait", 600],
     ["eval", "(() => { const i = document.querySelector('#to'); i.value = 'marché jean'; i.dispatchEvent(new Event('input', { bubbles: true })); })()"], ["wait", 1500]] },
+  // a GPS ride on a pretend track (?gps=replay: 18 km/h, a few metres of noise), coming up to the Rachel climb
+  { name: "P7-phone-gps-ride", url: `${APP}?trip=rachel&gps=replay&gpsat=520&ride=gps&safe=62,34`, ...phone, steps: [["wait", 3000]] },
 ];
 
 const filter = process.argv[2];

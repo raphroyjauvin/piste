@@ -257,6 +257,32 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .ride-bar .ctl-btn { box-shadow: none; background: var(--paper-2); }
 .icon-btn { width: 44px; height: 44px; padding: 0; display: grid; place-items: center; }
 .icon-btn svg { width: 24px; height: 24px; fill: none; stroke: var(--ink); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+/* GPS ride: your speed and the GPS accuracy, in place of the preview's speed and pause buttons */
+.ride-gps { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px 0 11px; border-radius: 12px; background: var(--paper-2); font-variant-numeric: tabular-nums; }
+.ride-gps > span { display: flex; flex-direction: column; line-height: 1.1; }
+.ride-gps b { font: 800 16px/1.1 var(--font-display); white-space: nowrap; }
+.ride-gps small { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.ride-gps small:empty { display: none; }
+.gps-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); flex: none; }
+.ride-gps.waiting b { font: 700 14px/1.2 var(--font-ui); color: var(--ink-2); }
+.ride-gps.waiting .gps-dot { background: #9aa5ae; box-shadow: 0 0 0 3px #e8ecef; animation: gps-pulse 1.4s ease-in-out infinite; }
+.ride-gps.off small { color: var(--gap-ink); font-weight: 700; }
+.ride-gps.off .gps-dot { background: var(--gap); box-shadow: 0 0 0 3px var(--gap-soft); }
+@keyframes gps-pulse { 50% { opacity: .35; } }
+/* "Re-center": shows once you move the map by hand during a GPS ride */
+.recenter { position: absolute; left: 50%; bottom: calc(96px + var(--safe-bottom)); transform: translateX(-50%); border: 0; background: var(--paper); color: var(--blue-deep);
+  border-radius: 999px; box-shadow: var(--shadow); padding: 10px 17px 10px 13px; display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
+.recenter svg { width: 18px; height: 18px; fill: var(--blue); }
+.ride-hud.hill-on .recenter { bottom: calc(172px + var(--safe-bottom)); }
+/* a calm message with a choice (location refused or unavailable) */
+.notice { position: absolute; top: 16px; left: 404px; z-index: 25; width: min(420px, calc(100% - 420px)); background: var(--paper); border-radius: 16px; box-shadow: var(--shadow);
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.notice p { margin: 0; font-size: 15px; color: var(--ink-2); }
+.notice-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.notice .ctl-btn { box-shadow: none; background: var(--paper-2); }
+/* under "Let's ride!" on phones: the simulated ride, small and quiet */
+.ride-preview { border: 0; background: none; color: var(--blue-deep); font-weight: 700; font-size: 14px; padding: 2px 6px 4px; margin-top: -4px; align-self: center;
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 
 .rider-cone { width: 120px; height: 120px; pointer-events: none; }
 .rider-cone svg, .rider-badge svg { width: 100%; height: 100%; display: block; }
@@ -308,5 +334,8 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .ride-progress { flex-basis: 100%; }
   .ride-buttons { width: 100%; justify-content: space-between; }
   .hill-card { bottom: calc(132px + var(--safe-bottom)); }
+  .recenter { bottom: calc(132px + var(--safe-bottom)); }
+  .ride-hud.hill-on .recenter { bottom: calc(206px + var(--safe-bottom)); }
+  .notice { top: calc(12px + var(--safe-top)); left: 12px; right: 12px; width: auto; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

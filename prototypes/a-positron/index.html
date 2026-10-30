@@ -155,9 +155,16 @@
       <button type="button" id="ride-view" class="view-btn small" aria-label="Switch view"><svg viewBox="0 0 32 32" aria-hidden="true"><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g></svg></button>
       <button type="button" id="ride-speed" class="ctl-btn" title="Simulation speed">4×</button>
       <button type="button" id="ride-pause" class="ctl-btn" data-i18n="pause"></button>
+      <div id="ride-gps" class="ride-gps waiting" role="status" aria-live="polite" hidden><i class="gps-dot" aria-hidden="true"></i><span><b id="gps-main"></b><small id="gps-sub"></small></span></div>
       <button type="button" id="ride-exit" class="ctl-btn" data-i18n="end"></button>
     </div>
   </div>
+  <button type="button" id="ride-recenter" class="recenter" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 20l-7-3.6L5 20z"/></svg><span data-i18n="recenter"></span></button>
+</div>
+
+<div id="notice" class="notice" role="alertdialog" aria-labelledby="notice-text" hidden>
+  <p id="notice-text"></p>
+  <div class="notice-buttons"><button type="button" id="notice-preview" class="primary" data-i18n="previewRide"></button><button type="button" id="notice-ok" class="ctl-btn" data-i18n="ok"></button></div>
 </div>
 
 <div id="toast" class="toast" role="status" hidden></div>
