@@ -69,14 +69,16 @@
     <div class="ends"><span>1 km</span><span>100 km</span></div>
     <div class="stop-pick"><span id="stop-label"><span data-i18n="stopOnWay"></span> <em data-i18n="optional"></em></span>
       <div id="stop-chips" class="stop-chips" role="radiogroup" aria-labelledby="stop-label"></div></div>
-    <label class="check"><input id="avoid-wind" type="checkbox"> <span data-i18n="avoidWind"></span></label>
   </section>
 
   <section class="prefs go-or-custom">
     <div class="pref-row"><label for="strict" data-i18n="routeStyle"></label><output id="strict-out"></output></div>
     <input id="strict" type="range" min="0" max="100" value="85" step="1">
     <div class="ends"><span data-i18n="mostDirect"></span><span data-i18n="mostLanes"></span></div>
-    <label class="check"><input id="hills" type="checkbox"> <span data-i18n="avoidHills"></span></label>
+    <div class="pref-checks">
+      <label class="check"><input id="hills" type="checkbox"> <span data-i18n="avoidHills"></span></label>
+      <label class="check"><input id="avoid-wind" type="checkbox"> <span data-i18n="avoidWind"></span></label>
+    </div>
   </section>
 
   <section id="routes" class="routes" aria-live="polite"></section>
@@ -117,6 +119,22 @@
 </div>
 
 <div id="wx-card" class="wx-card" hidden aria-live="polite"></div>
+
+<button type="button" id="ride-fab" class="ride-fab" data-i18n="letsRide" hidden></button>
+
+<!-- phones: the search bar being edited moves to the bottom, with the map above it -->
+<div id="focus-bar" class="focus-bar" hidden>
+  <ul id="focus-suggest" class="focus-suggest" hidden></ul>
+  <div class="focus-head">
+    <span id="focus-label" class="focus-label"></span>
+    <span class="focus-actions">
+      <button type="button" id="focus-cancel" class="focus-btn" data-i18n-title="cancel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
+      <button type="button" id="focus-ok" class="focus-btn ok" data-i18n-title="accept"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4 4 9-9"/></svg></button>
+    </span>
+  </div>
+  <div class="field focus-field"><span id="focus-pin" class="pin" aria-hidden="true"></span><input id="focus-input" autocomplete="off" spellcheck="false" enterkeyhint="done"></div>
+  <div class="focus-hint" data-i18n="focusHint"></div>
+</div>
 
 <div id="legend" class="legend">
   <details>
@@ -159,6 +177,7 @@
 <div id="toast" class="toast" role="status" hidden></div>
 
 <script src="../vendor/maplibre/maplibre-gl.js"></script>
+<script src="../vendor/pmtiles/pmtiles.js"></script>
 <script src="../shared/router.js"></script>
 <script src="../shared/i18n.js"></script>
 <script src="../shared/data/graph_island.js"></script>

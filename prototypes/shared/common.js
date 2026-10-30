@@ -6,7 +6,7 @@
   // ---------------------------------------------------------------- palette
   // Official STM metro colours (from STM GTFS routes.txt).
   const STM = { green: "#00B300", orange: "#D95700", yellow: "#FFD900", blue: "#0095E6" };
-  const TIER_LABEL = ["Protected", "Painted lane", "Shared lane", "No bike lane", "No bike lane (busy)", "Closed to bikes"];
+  const TIER_LABEL = ["Protected bike path", "Painted bike path", "Shared bike path", "No bike path", "No bike path (busy)", "Closed to bikes"];
   const TIER_SHORT = ["Protected", "Painted", "Shared", "Quiet street", "Busy street", "Closed"];
 
   // ---------------------------------------------------------------- POI catalogue
@@ -48,7 +48,7 @@
     park: { label: "Park", fr: "Parc", color: "#3E8E57", glyph: "tree", minzoom: 14.6, group: "outdoors" },
     viewpoint: { label: "Viewpoint", fr: "Belvédère", color: "#3E8E57", glyph: "peak", minzoom: 14.6, group: "outdoors" },
     culture: { label: "Museum / culture", fr: "Musée / culture", color: "#6E5AA0", glyph: "columns", minzoom: 15.8, group: "outdoors" },
-    works: { label: "Works blocking a bike lane", fr: "Travaux sur une voie cyclable", color: STM.yellow, glyph: "works", minzoom: 13, group: "alerts", dark: true },
+    works: { label: "Works blocking a bike path", fr: "Travaux sur une piste cyclable", color: STM.yellow, glyph: "works", minzoom: 13, group: "alerts", dark: true },
   };
 
   const lang = () => (window.BikeI18n || {}).lang || "en";
@@ -171,7 +171,7 @@
   };
   const fmtMin = (min) => (window.BikeI18n ? window.BikeI18n.duration(min) : min < 1 ? "<1 min" : Math.round(min) + " min");
   const fmtPct = (x) => (window.BikeI18n ? window.BikeI18n.pct(x) : Math.round(x * 100) + "%");
-  // stretches without a bike lane worth telling the rider about (shorter ones are street crossings and joins)
+  // stretches without a bike path worth telling the rider about (shorter ones are street crossings and joins)
   const GAP_MIN = 50;
   const mainGaps = (route, min = GAP_MIN) => route.gaps.filter((g) => g.length >= min);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -379,16 +379,18 @@
       this.running = false; this._last = null; this._fired = new Set();
       this.extras = { climbs: climbs(route), pois: opts.pois || [], gaps: mainGaps(route) };
     }
-    start() { if (this.running) return; this.running = true; this._last = performance.now(); requestAnimationFrame((t) => this._tick(t)); }
-    pause() { this.running = false; }
+    start() { if (this.running) return; this.running = true; this._last = performance.now(); cancelAnimationFrame(this._raf); this._raf = requestAnimationFrame((t) => this._tick(t)); }
+    pause() { this.running = false; cancelAnimationFrame(this._raf); }
     seek(d) { this.d = Math.max(0, Math.min(this.cursor.total, d)); this._emit(); }
     _tick(t) {
       if (!this.running) return;
-      const dt = Math.min(0.1, (t - this._last) / 1000); this._last = t;
+      // Ask for the next frame first: then each frame moves the camera before the map redraws,
+      // and the map and its icons are drawn in step (asking last made the icons run a frame ahead and shake).
+      this._raf = requestAnimationFrame((tt) => this._tick(tt));
+      const dt = Math.max(0, Math.min(0.1, (t - this._last) / 1000)); this._last = t;
       this.d += this.speed * this.mult * dt;
-      if (this.d >= this.cursor.total) { this.d = this.cursor.total; this.running = false; this._emit(); this.onEvent({ type: "arrived" }); return; }
+      if (this.d >= this.cursor.total) { this.d = this.cursor.total; this.running = false; cancelAnimationFrame(this._raf); this._emit(); this.onEvent({ type: "arrived" }); return; }
       this._emit();
-      requestAnimationFrame((tt) => this._tick(tt));
     }
     _emit() {
       const pos = this.cursor.at(this.d);
@@ -431,7 +433,7 @@
   function gapSentence(g, dist) {
     const I = window.BikeI18n;
     const d = Math.round(dist / 10) * 10, m = Math.round(g.length / 10) * 10;
-    if (!I) return `In ${d} metres, ${m} metres without a bike lane${g.names[0] ? ` on ${g.names[0]}` : ""}${g.busy ? ", with traffic" : ""}.`;
+    if (!I) return `In ${d} metres, ${m} metres without a bike path${g.names[0] ? ` on ${g.names[0]}` : ""}${g.busy ? ", with traffic" : ""}.`;
     const on = g.names[0] ? (I.lang === "fr" ? ` sur ${I.place(g.names[0])}` : ` on ${I.place(g.names[0])}`) : "";
     return I.t("gapVoice", { d, m, on, busy: g.busy ? I.t("gapVoiceBusy") : "" });
   }

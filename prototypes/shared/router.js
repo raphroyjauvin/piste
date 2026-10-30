@@ -140,6 +140,20 @@
       this.etier = this.winter ? this.etierWinter : this.etierBase;
     }
 
+    // ---------- "avoid headwinds": how much slower each direction of each edge is today ----------
+    // toDeg: where the wind blows to; W: wind at rider height (m/s); speedFn(head m/s) -> riding speed (m/s).
+    // Only headwinds cost extra (>= 1), so the A* estimate stays a lower bound.
+    windCost(toDeg, W, speedFn) {
+      const fwd = new Float32Array(this.m), back = new Float32Array(this.m), V0 = 16 / 3.6;
+      for (let e = 0; e < this.m; e++) {
+        const b = bearing(this.lon[this.ea[e]], this.lat[this.ea[e]], this.lon[this.eb[e]], this.lat[this.eb[e]]);
+        const along = W * Math.cos((b - toDeg) * D2R);   // + tailwind riding a->b
+        fwd[e] = Math.max(1, V0 / speedFn(-along));
+        back[e] = Math.max(1, V0 / speedFn(along));
+      }
+      return { windFwd: fwd, windBack: back };
+    }
+
     // ---------- spatial index on edge vertices (for snapping) ----------
     _buildGrid() {
       this.cell = 0.0015; // degrees, ~120 m x 170 m
@@ -247,10 +261,12 @@
       const h = (i) => Math.max(0, distM(this.lon[i], this.lat[i], tl, tla) - 45) * wmin;
       // opts.penalty: optional per-edge cost multipliers (>= 1), e.g. so a loop's way back avoids the way out
       const pen = opts.penalty || null, wpen = this.winter ? this.winterPen : null;
+      // opts.windFwd / windBack: per-edge slow-down riding a->b / b->a into the wind (>= 1), from windCost()
+      const wf = opts.windFwd || null, wb = opts.windBack || null;
       const cost = (e, fwd, part) => {
         const L = this.elen[e] * part;
         const climb = (fwd ? this.ecf[e] : this.ecb[e]) * part;
-        return L * w[this.etier[e]] * (pen ? pen[e] : 1) * (wpen ? wpen[e] : 1) + climb * hill;
+        return L * w[this.etier[e]] * (pen ? pen[e] : 1) * (wpen ? wpen[e] : 1) * (wf ? (fwd ? wf[e] : wb[e]) : 1) + climb * hill;
       };
       const usable = (c) => this.edir[c.e] !== 3 && this.etier[c.e] !== 5;
       // virtual arcs from the start point to both ends of every candidate edge (respecting one-ways)

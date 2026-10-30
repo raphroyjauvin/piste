@@ -115,6 +115,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .prefs input[type=range] { width: 100%; accent-color: var(--blue); }
 .ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
 .check { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink-2); }
+.pref-checks { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 2px; }
 
 .routes { display: flex; flex-direction: column; gap: 8px; }
 .routes:empty { display: none; }
@@ -253,9 +254,35 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .rider-cone { width: 120px; height: 120px; pointer-events: none; }
 .rider-cone svg, .rider-badge svg { width: 100%; height: 100%; display: block; }
 .rider-badge { width: 46px; height: 56px; pointer-events: none; filter: drop-shadow(0 4px 6px rgba(0, 40, 70, .35)); margin-bottom: 4px; }
-.poi-pop { display: flex; align-items: center; gap: 6px; transform-origin: center; transition: transform .25s, opacity .25s; }
+.poi-pop { display: flex; align-items: center; gap: 6px; }   /* no transition here: MapLibre moves this element every frame */
 .poi-pop img { width: 30px; height: 30px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
-.poi-pop span { background: #fff; border-radius: 8px; padding: 3px 7px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,.15); white-space: nowrap; }
+.poi-pop span { transition: opacity .25s; background: #fff; border-radius: 8px; padding: 3px 7px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,.15); white-space: nowrap; }
+
+/* "Let's ride!" floating copy (placed by app.js above the phone panel, or at the foot of the desktop panel) */
+.ride-fab { position: absolute; z-index: 7; left: 50%; transform: translateX(-50%); width: min(380px, calc(100% - 32px)); border: 0;
+  background: var(--blue); color: #fff; font: 800 17px/1 var(--font-display); letter-spacing: .02em; padding: 15px; border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0, 80, 140, .35); }
+.ride-fab:hover { background: var(--blue-deep); }
+@media (min-width: 761px) { .ride-fab { transform: none; } }
+
+/* phones: search bar being edited, at the bottom of the screen with the map above */
+.focus-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 9; background: var(--paper); border-radius: 18px 18px 0 0;
+  box-shadow: 0 -6px 24px rgba(25, 30, 36, .16); padding: 10px 14px calc(12px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 8px; }
+.focus-head { display: flex; align-items: center; justify-content: space-between; }
+.focus-label { font-weight: 700; font-size: 14px; color: var(--ink-2); }
+.focus-actions { display: flex; gap: 6px; }
+.focus-btn { width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--paper-2); display: grid; place-items: center; padding: 0; }
+.focus-btn svg { width: 18px; height: 18px; fill: none; stroke: var(--ink-3); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.focus-btn.ok { background: var(--blue-soft); }
+.focus-btn.ok svg { stroke: var(--blue-deep); }
+.focus-field input { font-size: 16px; }   /* 16 px stops iPhone Safari from zooming in on focus */
+.focus-hint { font-size: 12px; color: var(--ink-3); }
+.focus-suggest { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 8px); margin: 0; padding: 6px; list-style: none; background: var(--paper);
+  border-radius: 12px; box-shadow: var(--shadow); max-height: 40vh; overflow: auto; }
+.focus-suggest li { padding: 9px 10px; border-radius: 8px; display: flex; flex-direction: column; }
+.focus-suggest li:active { background: var(--blue-soft); }
+.focus-suggest li small { color: var(--ink-3); }
+body.focusing .panel, body.focusing .map-controls, body.focusing .wx-card, body.focusing .legend, body.focusing .ride-fab { display: none !important; }
 
 .primary { border: 0; background: var(--blue); color: #fff; border-radius: 12px; padding: 11px 16px; font-weight: 700; }
 .toast { position: absolute; bottom: calc(24px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: #10324a; color: #fff; padding: 10px 16px; border-radius: 12px; z-index: 30; font-size: 14px; max-width: calc(100% - 32px); }
@@ -269,8 +296,13 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: none; height: 50%; border-radius: 20px 20px 0 0;
     padding: 0 16px calc(12px + var(--safe-bottom)); transition: height .28s cubic-bezier(.2, .8, .2, 1); gap: 12px; }
   .panel.dragging { transition: none; }
-  .grabber { display: flex; justify-content: center; padding: 9px 0 3px; margin: 0 -16px -6px; cursor: grab; touch-action: none; position: sticky; top: 0; background: var(--paper); z-index: 2; }
-  .grabber i { width: 40px; height: 5px; border-radius: 3px; background: #cfd4d9; }
+  .grabber { display: flex; flex: none; justify-content: center; align-items: center; height: 34px; margin: 0 -16px -8px; cursor: grab; touch-action: none; position: sticky; top: 0; background: var(--paper); z-index: 2; }
+  .grabber i { width: 44px; height: 5px; border-radius: 3px; background: #c4cad0; }
+  /* the bottom sheet covers the bottom-right corner: no zoom buttons or scale bar (pinch instead),
+     and the map credits (ⓘ) move to the top left, where they stay visible */
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group, .maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale { display: none; }
+  .maplibregl-ctrl-bottom-right { top: var(--safe-top); bottom: auto; right: auto; left: 0; }
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 8px 0 0 10px; }
   .brand { touch-action: none; }
   .brand .mark { width: 28px; height: 28px; }
   .brand h1 { font-size: 19px; }

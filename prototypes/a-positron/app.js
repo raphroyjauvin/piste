@@ -68,8 +68,10 @@
   const store = { get(k, d) { try { return localStorage.getItem("piste-" + k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem("piste-" + k, v); } catch (e) { /* private */ } } };
   const state = { from: null, to: null, fromLabel: "", toLabel: "", routes: [], sel: 0, mode: "explore", is3d: false,
     pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
-    tab: "go", smode: "classics", classic: 0, sugg: { loop: true, km: 10, stop: "", avoidWind: false },
+    tab: "go", smode: "classics", classic: 0, sugg: { loop: true, km: 10, stop: "" }, avoidWind: false,
     winter: false, wx: false, wxData: null, bixi: null, sound: store.get("sound", "chime"), rideEnd: "" };
+  const focus = { which: null, prev: null };   // phones: which search bar is open at the bottom of the screen
+  let goVisible = false;                        // is the panel's own "Let's ride!" button on screen?
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
   let style;
@@ -97,7 +99,8 @@
   const firstSymbol = (styleLayers.find((l) => l.type === "symbol") || {}).id;
   const firstRoad = (styleLayers.find((l) => /^(tunnel|highway|road)/.test(l.id)) || {}).id || firstSymbol;
   const add = (layer, before = firstSymbol) => map.addLayer(layer, before && map.getLayer(before) ? before : undefined);
-  const MARKER_SHOW = { opacity: "1", opacityWhenCovered: "1" };   // never fade our markers as "behind the terrain"
+  // never fade our markers as "behind the terrain"; sub-pixel positions so they glide instead of snapping pixel to pixel
+  const MARKER_SHOW = { opacity: "1", opacityWhenCovered: "1", subpixelPositioning: true };
   const attrib = document.querySelector(".maplibregl-ctrl-attrib");
   if (attrib) { attrib.classList.remove("maplibregl-compact-show"); attrib.removeAttribute("open"); }
 
@@ -197,7 +200,7 @@
     paint: { "line-color": COL.gapQuiet, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 9], "line-dasharray": [1, 0.6] } });
   // a ring under the stop's or sight's POI icon
   add({ id: "stops", type: "circle", source: "stops",
-    paint: { "circle-radius": 15, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 3, "circle-pitch-alignment": "map" } });
+    paint: { "circle-radius": 7.5, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 2.5, "circle-pitch-alignment": "map" } });
   add({ id: "contour-labels", type: "symbol", source: "contours", minzoom: 13.5, filter: ["==", ["get", "i"], 1],
     layout: { "symbol-placement": "line", "text-field": ["concat", ["to-string", ["get", "e"]], " m"], "text-font": ["Noto Sans Regular"],
       "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, 10, 17, 12], "symbol-spacing": 360, "text-max-angle": 30, "text-padding": 2 },
@@ -230,18 +233,13 @@
     layout: { "icon-image": "poi-works", "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.6, 17, 0.95], "icon-allow-overlap": true } });
   map.addLayer({ id: "works-near", type: "symbol", source: "works-near",
     layout: { "icon-image": "poi-works", "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 17, 1], "icon-allow-overlap": true } });
-  map.addLayer({ id: "gap-labels", type: "symbol", source: "gaps",
-    layout: { "icon-image": "pill", "icon-text-fit": "both", "icon-text-fit-padding": [3, 7, 3, 7], "text-field": "",
-      "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "bottom", "text-offset": [0, -1.2], "icon-allow-overlap": true, "text-allow-overlap": true },
-    paint: { "text-color": "#8a3f0a" } });
   map.addLayer({ id: "stop-labels", type: "symbol", source: "stops",
-    layout: { "text-field": "", "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 1.6], "text-allow-overlap": true, "text-max-width": 14 },
+    layout: { "text-field": "", "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 0.9], "text-allow-overlap": true, "text-max-width": 14 },
     paint: { "text-color": "#0072B2", "text-halo-color": "#ffffff", "text-halo-width": 1.8 } });
   map.addLayer({ id: "ends", type: "circle", source: "ends",
     paint: { "circle-radius": 8, "circle-color": ["match", ["get", "k"], "from", "#0095E6", "#ffffff"],
       "circle-stroke-color": ["match", ["get", "k"], "from", "#ffffff", "#0095E6"], "circle-stroke-width": 3.5 } });
   function setMapTexts() {   // map labels that carry words: redone when the language or winter mode changes
-    map.setLayoutProperty("gap-labels", "text-field", ["concat", ["to-string", ["get", "len"]], t(state.winter ? "gapPillWinter" : "gapPill")]);
     map.setLayoutProperty("stop-labels", "text-field", ["case", ["==", ["get", "sight"], 1], ["get", "label"], ["concat", t("stopPrefix"), ["get", "label"]]]);
   }
   setMapTexts();
@@ -307,6 +305,14 @@
     if (w.minutes > 0.5 && w.headShare >= 0.3) return t("windHead", { p: I.pct(w.headShare), min: Math.max(1, Math.round(w.minutes)) });
     if (w.minutes < -0.5 && w.tailShare >= 0.3) return t("windTail", { p: I.pct(w.tailShare), min: Math.max(1, Math.round(-w.minutes)) });
     return t("windCross");
+  }
+  // "avoid headwinds": per-edge slow-down riding into today's wind, cached until the wind changes
+  let windArr = {}, windKey = "";
+  function windWeights() {
+    const wx = state.wxData; if (!state.avoidWind || !wx || wx.now.wind < 6) return {};
+    const key = `${wx.now.dir}|${wx.now.wind}`;
+    if (key !== windKey) { windArr = router.windCost((wx.now.dir + 180) % 360, (wx.now.wind / 3.6) * 0.6, WX.speedWith); windKey = key; }
+    return windArr;
   }
   function renderWxCard() {
     const card = $("#wx-card");
@@ -405,9 +411,10 @@
   kmNum.addEventListener("change", () => setKm(kmNum.value, true));
   kmNum.addEventListener("keydown", (e) => { if (e.key === "Enter") { setKm(kmNum.value, true); kmNum.blur(); } });
   kmLabel();
+  // avoid hills and avoid headwinds sit together under the route style and apply to every kind of route
   $("#avoid-wind").addEventListener("change", async (e) => {
-    state.sugg.avoidWind = e.target.checked;
-    if (state.sugg.avoidWind && !state.wxData) await loadWeather();
+    state.avoidWind = e.target.checked;
+    if (state.avoidWind && !state.wxData) await loadWeather();
     recompute(true);
   });
 
@@ -471,11 +478,83 @@
     refreshSections();
   }
 
+  // ------------------------------------------------------------------ phones: editing a place moves its search bar to the bottom
+  // of the screen, with the map above (type an address or tap the map). Small ✓ / ✕ buttons accept or leave;
+  // ✓ on the start goes straight on to the destination.
+  const fbar = $("#focus-bar"), finput = $("#focus-input"), fsug = $("#focus-suggest");
+  let fItems = [], fTimer = null;
+  function clearPoint(which) {
+    state[which] = null; state[which + "Label"] = ""; (which === "from" ? fromEl : toEl).value = "";
+    if (markers[which]) { markers[which].remove(); delete markers[which]; }
+  }
+  function positionFocusBar() {   // sit on top of the on-screen keyboard
+    const vv = window.visualViewport;
+    const kb = vv ? Math.max(0, innerHeight - (vv.height + vv.offsetTop)) : 0;
+    fbar.style.bottom = kb > 40 ? kb + "px" : "";
+  }
+  if (window.visualViewport) { visualViewport.addEventListener("resize", positionFocusBar); visualViewport.addEventListener("scroll", positionFocusBar); }
+  function openFocus(which) {
+    if (!focus.which) focus.prev = { from: state.from && { lonlat: state.from, label: state.fromLabel }, to: state.to && { lonlat: state.to, label: state.toLabel } };
+    focus.which = which;
+    document.body.classList.add("focusing"); fbar.hidden = false;
+    $("#focus-label").textContent = t(which === "from" ? "focusFrom" : "focusTo");
+    $("#focus-pin").innerHTML = PIN[which];
+    finput.value = state[which + "Label"] || ""; finput.placeholder = t(which === "from" ? "fromPh" : "toPh");
+    fsug.hidden = true; fItems = [];
+    finput.focus(); finput.select();
+    map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+    if (state[which]) map.easeTo({ center: state[which], zoom: Math.max(map.getZoom(), 14.5), duration: 500 });
+    positionFocusBar(); placeFab();
+  }
+  function leaveFocus() {
+    focus.which = null; focus.prev = null;
+    document.body.classList.remove("focusing"); fbar.hidden = true; fsug.hidden = true; fbar.style.bottom = ""; finput.blur();
+  }
+  function pickFocusItem(it) {
+    setPoint(focus.which, [it.lon, it.lat], it.label);
+    finput.value = it.label; fsug.hidden = true;
+    map.easeTo({ center: [it.lon, it.lat], zoom: Math.max(map.getZoom(), 15), duration: 500 });
+  }
+  function acceptFocus() {
+    const which = focus.which; if (!which) return;
+    if (fItems.length && !fsug.hidden) pickFocusItem(fItems[0]);   // typed but didn't pick: take the top suggestion
+    if (which === "from" && state.tab === "go") { openFocus("to"); return; }
+    leaveFocus(); setSheet("half"); recompute(true);
+  }
+  function cancelFocus() {
+    const prev = focus.prev || {};
+    for (const k of ["from", "to"]) { if (prev[k]) setPoint(k, prev[k].lonlat, prev[k].label); else if (state[k]) clearPoint(k); }
+    leaveFocus(); recompute(false); placeFab();
+  }
+  $("#focus-ok").onclick = acceptFocus;
+  $("#focus-cancel").onclick = cancelFocus;
+  finput.addEventListener("input", () => {
+    clearTimeout(fTimer);
+    fTimer = setTimeout(async () => {
+      fItems = await geocoder.search(finput.value);
+      fsug.innerHTML = fItems.map((it, i) => `<li data-i="${i}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("");
+      fsug.hidden = !fItems.length;
+      fsug.querySelectorAll("li").forEach((li) => li.addEventListener("pointerdown", (e) => { e.preventDefault(); pickFocusItem(fItems[+li.dataset.i]); }));
+    }, 160);
+  });
+  finput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); acceptFocus(); } if (e.key === "Escape") cancelFocus(); });
+  for (const el of [fromEl, toEl]) {
+    el.addEventListener("pointerdown", (e) => { if (!isPhone() || state.mode === "ride") return; e.preventDefault(); openFocus(el.id); });
+    el.addEventListener("focus", () => { if (isPhone() && !focus.which) { el.blur(); openFocus(el.id); } });
+  }
+
   // ------------------------------------------------------------------ map clicks
   let layersJustClosed = false;
   map.on("click", (e) => {
     if (layersJustClosed) { layersJustClosed = false; return; }   // a tap that only closed the layers panel
     if (state.mode === "ride") return;
+    if (focus.which) {   // phones, search bar open: the tapped spot (or place icon) becomes that point
+      const poi = map.queryRenderedFeatures(e.point, { layers: POI_LAYERS.map((p) => p.id).filter((id) => map.getLayer(id)) })[0];
+      const ll = poi ? poi.geometry.coordinates : [e.lngLat.lng, e.lngLat.lat];
+      setPoint(focus.which, ll, poi ? poi.properties.name || C.poiLabel(poi.properties.k) : placeLabel(ll[0], ll[1]));
+      $("#focus-input").value = state[focus.which + "Label"]; $("#focus-suggest").hidden = true;
+      return;
+    }
     const live = map.getLayer("bixi-live") && map.getLayoutProperty("bixi-live", "visibility") !== "none" ? ["bixi-live", "bixi-count"] : [];
     const hit = map.queryRenderedFeatures(e.point, { layers: [...live, ...POI_LAYERS.map((p) => p.id)].filter((id) => map.getLayer(id)) });
     if (hit.length && !state.pick) { poiPopup(hit[0]); return; }
@@ -523,10 +602,11 @@
   function computeRoutes(fit) {
     if (!state.from || !state.to) { state.routes = []; renderRoutes(); drawRoutes(); return; }
     const t1 = performance.now();
-    const w = weightsFor(+strict.value / 100, hills.checked);
+    const wind = windWeights();
+    const w = Object.assign({}, weightsFor(+strict.value / 100, hills.checked), wind);
     const cands = [
       { key: "yourRoute", r: router.route(state.from, state.to, w) },
-      { key: "mostLanes", r: router.route(state.from, state.to, { w: PROFILES.bikemax.w, hill: hills.checked ? 12 : 4 }) },
+      { key: "mostLanes", r: router.route(state.from, state.to, Object.assign({ w: PROFILES.bikemax.w, hill: hills.checked ? 12 : 4 }, wind)) },
       { key: "mostDirect", r: router.route(state.from, state.to, { w: PROFILES.direct.w, hill: hills.checked ? 12 : 0 }) },
     ].filter((c) => c.r);
     state.lastMs = performance.now() - t1;
@@ -546,9 +626,9 @@
     $("#routes").innerHTML = `<div class="finding">${t("finding")}</div>`; $("#detail").innerHTML = "";
     await tick();
     const t1 = performance.now();
-    const wx = state.sugg.avoidWind ? state.wxData || (await loadWeather()) : null;
+    const wx = state.avoidWind ? state.wxData || (await loadWeather()) : null;
     const picks = await suggester.suggest({ start: state.from, km: state.sugg.km, loop: state.sugg.loop, stop: state.sugg.stop,
-      weights: weightsFor(+strict.value / 100, hills.checked), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
+      weights: Object.assign({}, weightsFor(+strict.value / 100, hills.checked), windWeights()), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
     if (token !== suggToken) return;   // a newer request started meanwhile
     state.lastMs = performance.now() - t1;
     state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), end: c.end, loop: c.loop }));
@@ -571,7 +651,6 @@
   function drawRoutes() {
     const sel = state.routes[state.sel];
     map.getSource("route").setData(sel ? C.routePiecesGeoJSON(sel.r) : empty);
-    map.getSource("gaps").setData(sel ? C.gapStartsGeoJSON(sel.r) : empty);
     map.getSource("route-alts").setData({ type: "FeatureCollection", features: state.routes.map((c, i) => i === state.sel ? null : C.routeLineGeoJSON(c.r, { i })).filter(Boolean) });
     const stops = (sel && sel.r.stops) || [];
     map.getSource("stops").setData({ type: "FeatureCollection", features: stops.map((s, i) => ({ type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { label: s.label, sight: s.sight ? 1 : 0 } })) });
@@ -699,13 +778,43 @@
       <p class="climb-note">${climbSummary(r, sel.climbs)}</p>${wl}
       <h2>${t(state.winter ? "withoutLaneWinter" : "withoutLane")}</h2>${gapHtml}
       <details class="turns"><summary>${t("turnByTurn", { n: r.maneuvers.length })}</summary><ol>${turns}</ol></details>
-      <button type="button" id="ride-go" class="ride-go">${t("rideThis")}</button>`;
+      <button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>`;
     det.querySelectorAll(".gap-item").forEach((b) => b.addEventListener("click", () => {
       const g = gaps[+b.dataset.g]; const cur = C.buildCursor(r); const p = cur.at(g.start + g.length / 2);
       map.easeTo({ center: [p.lon, p.lat], zoom: 17, duration: 600 });
     }));
     $("#ride-go").onclick = () => startRide();
+    watchRideButton();
   }
+
+  // "Let's ride!": while a route is shown, a copy floats just above the panel (phones) or at its foot (desktop)
+  // until the panel's own button scrolls into view, so it's always one tap away
+  const fab = $("#ride-fab");
+  let goObserver = null;
+  function watchRideButton() {
+    if (goObserver) goObserver.disconnect();
+    const btn = $("#ride-go");
+    goVisible = false;
+    if (btn && "IntersectionObserver" in window) {
+      goObserver = new IntersectionObserver((es) => { goVisible = es[es.length - 1].isIntersecting; placeFab(); }, { root: $("#panel"), threshold: 0.6 });
+      goObserver.observe(btn);
+    }
+    placeFab();
+  }
+  function placeFab() {
+    const show = state.routes.length > 0 && state.mode === "route" && !focus.which && !goVisible && !$("#panel").hidden;
+    fab.hidden = !show; if (!show) return;
+    const r = $("#panel").getBoundingClientRect();
+    if (isPhone()) {
+      fab.style.left = ""; fab.style.width = "";
+      fab.style.bottom = sheet.state === "full" ? "calc(14px + var(--safe-bottom))" : `${Math.round(innerHeight - r.top + 10)}px`;
+    } else {
+      fab.style.left = `${Math.round(r.left + 18)}px`; fab.style.width = `${Math.round(r.width - 36)}px`;
+      fab.style.bottom = `${Math.round(innerHeight - r.bottom + 14)}px`;
+    }
+  }
+  fab.onclick = () => startRide();
+  addEventListener("resize", () => placeFab());
 
   // ------------------------------------------------------------------ layers panel & modes
   const layerBtn = $("#layers-btn"), layersBox = $("#layers");
@@ -774,7 +883,7 @@
       map.setFilter("bixi-live", f); map.setFilter("bixi-count", f);
     }
   }
-  function setMode(m) { state.mode = m; applyLayers(); }
+  function setMode(m) { state.mode = m; applyLayers(); placeFab(); }
 
   // 2D / 3D: the button shows the view you switch to (cube + "3D" while flat, square + "2D" while in 3D)
   const viewBtn = $("#view-btn");
@@ -817,7 +926,9 @@
     if (!isPhone()) { panel.style.height = ""; return; }
     panel.classList.toggle("dragging", !animate);
     panel.style.height = sheetHeight(s) + "px";
+    placeFab();
   }
+  panel.addEventListener("transitionend", () => placeFab());
   (function dragSheet() {
     let y0 = 0, h0 = 0, lastY = 0, lastT = 0, vy = 0, moved = false, active = false;
     const zone = [$("#grabber"), $("#brand")];
@@ -831,6 +942,7 @@
       const now = performance.now(); vy = (e.clientY - lastY) / Math.max(1, now - lastT); lastY = e.clientY; lastT = now;
       if (Math.abs(e.clientY - y0) > 4) moved = true;
       panel.style.height = Math.max(sheetHeight("peek") - 40, Math.min(sheetHeight("full"), h0 + (y0 - e.clientY))) + "px";
+      placeFab();
     };
     const up = () => {
       if (!active) return; active = false; panel.classList.remove("dragging");
@@ -906,7 +1018,7 @@
     state.rideEnd = placeText(sel.end) || state.toLabel || t("destination");
     state.rideView = view;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
-    $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false);
+    $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false); fab.hidden = true;
     set3d(state.rideView === "birdseye", false);
     setRidePadding();
     riderMarker.setLngLat(r.coords[0]).addTo(map); badgeMarker.setLngLat(r.coords[0]).addTo(map);
@@ -993,6 +1105,10 @@
       el.style.zIndex = String(1000 - Math.round(ahead));
     }
     for (const [i, mk] of poiMarkers) if (!live.has(i)) { mk.remove(); poiMarkers.delete(i); }
+    // Draw the map now, in the same step as the icons moved above. Left to itself, MapLibre would draw
+    // on its own frame, sometimes one frame later, and the icons would shake against the map.
+    // This replaces that scheduled draw, so it still costs one draw per frame.
+    map.redraw();
   }
 
   // hill card: the next ~800 m of elevation, with the climb shaded and you as the blue dot
@@ -1064,6 +1180,7 @@
     setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapId = null;
     refreshSections(); wind.show(state.wx); renderWxCard();
     if (state.routes.length) fitRoute(state.routes[state.sel].r);
+    placeFab();
   }
 
   // ------------------------------------------------------------------ helpers
@@ -1124,5 +1241,5 @@
     if (params.has("paused")) pauseRide(true);
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
-    setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute };
+    setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, openFocus, acceptFocus, cancelFocus, poiMarkers };
 })();
