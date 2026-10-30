@@ -21,7 +21,7 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
 - **Classic rides:** after rebuilding the island graph or editing `prototypes/shared/data/classics.js`, run `node tools/check_classics.js`. It routes every classic ride and prints its length and bike-path share, summer and winter.
 - **Serve:** `tools/serve.py` on port 8765. The preview config is `.claude/launch.json` ("bikeapp-prototypes").
 - **Test:**
-  - `node tools/shots/test.mjs [name filter]` runs the functional tests: 11 groups, all passing on 2026-10-29 (exit code 1 if any fail).
+  - `node tools/shots/test.mjs [name filter]` runs the functional tests: 11 groups, all passing on 2026-10-30 (exit code 1 if any fail). The phone group has no real keyboard, so it only checks the guessed search position: check search changes on a real iPhone.
   - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/` (A = desktop, P = phone).
   - `node tools/shots/smoke.mjs "?winter=1"` is a quick load check: it opens one app URL and prints console errors and a few state values (the dev server must be running).
   - These all use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden.
@@ -54,6 +54,8 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   - Warnings are calm (soft orange). Red is only for closed to cyclists.
   - Planned and under-construction routes appear only while browsing, never when routing or riding.
   - English and French (2026-10-29); every new string goes in `prototypes/shared/i18n.js` in both languages.
+  - "Let's ride!" sits only in its place in the route card: no floating copy (Raph, 2026-10-30: it looked bad on his iPhone).
+  - Phone search (2026-10-30): tapping a search bar slides the card up so the bars sit just above the keyboard; suggestions float over the map above the card. Do not move the bar to the very bottom of the screen: on a real iPhone it sat with a gap above the keyboard. Details in `06_prototypes.md`.
   - Wording (2026-10-29): say "bike path(s)" in English and "piste(s) cyclable(s)" in French in everything the user sees. Never "bike lane(s)", "cycle track", "voie cyclable" or "bande cyclable". Code names such as `mostLanes` stay as they are.
 - When Raph decides something or a fact gets verified, add a dated line to the README decisions log or the matching doc, and tell him.
 

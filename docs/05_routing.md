@@ -122,4 +122,4 @@ GraphHopper needs an API key, so it wasn't tested.
 - **Island-wide graph:** done 2026-10-29 (37,770 nodes, 56,315 edges; 1–8 ms per route). See the update at the top.
 - **Path names:** name off-street paths after the park they cross ("Parc La Fontaine path").
 - **Live roadworks:** route around bike paths blocked by works (`bikepath_blockedtype`).
-- **Winter mode:** done 2026-10-29 (4-season network only; see the update at the top). Still open: real-time clearing status, which isn't public (the City's Planif-Neige API needs an access token, requested by email on 2026-10-29 with no answer yet, and covers streets, not bike paths).
+- **Winter mode:** done 2026-10-29 (4-season network only; see the update at the top). Still open: real-time clearing status, which isn't public. The City's Planif-Neige API needs an access token and covers streets, not bike paths or sidewalks. The City will send a token when the 2026-2027 version restarts, so it is shelved until winter (2026-10-30). It may help later for streets without a bike path.
