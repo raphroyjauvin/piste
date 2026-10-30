@@ -6,7 +6,7 @@
 - **three.js** works well here. Prototype C builds 71k buildings, terrain and route ribbons in about 3–5 s. It uses an orthographic camera, and its shaders bend the world and exaggerate hills ahead live, so the sliders respond instantly. On phones it will need tiling or a smaller radius around the route.
 - **Basemap for the prototypes:** OpenFreeMap (free, no key). For a public app: host our own Protomaps PMTiles file for Montreal on a CDN, so nothing depends on someone else's free service. (2026-10-29: our own layers already work this way. Hill shading, tint, contours and buildings are four PMTiles files on GitHub Pages, read with HTTP range requests. Only the basemap itself, with streets, water, parks and labels, is still OpenFreeMap.)
 - **Database or TablePlus question:** a local PostgreSQL/PostGIS server is free; the data lives on your own disk. But the app doesn't need a database at runtime. It runs on static files (graph, layers, tiles) served from a free host or CDN. Use PostGIS or DuckDB only as an analysis workbench when that helps, and keep it separate from any work server.
-- **Phone testing:** browser GPS on iPhone needs HTTPS, so the next step is a free static host: GitHub Pages, or Cloudflare Pages if the repo stays private. Native iPhone permissions (background GPS, watch taps) come later, with Capacitor.
+- **Phone testing:** browser GPS on iPhone needs HTTPS, so the next step is a free static host: GitHub Pages, or Cloudflare Pages if the repo stays private. Native iPhone permissions (background GPS, watch taps) come later, with Capacitor. (2026-10-28: the site went up on GitHub Pages. 2026-10-30: the browser GPS ride is built and works there over HTTPS, but it is not yet checked on a real iPhone; see `06_prototypes.md`.)
 - **GitHub:** the GitHub connector is installed but not authorised in this session (authorise it with `/mcp` or in the app's connector settings), and Git isn't installed on this PC. Once both are done: create a repo (`raphroyjauvin/piste`?), commit, and optionally turn on Pages.
 
 ## 1. Why not Google's bike routes
@@ -62,7 +62,7 @@ Options, from least to most effort:
 1. **Desktop web prototype** (Phase 2): the fastest to iterate and the easiest to show.
 2. **Phone web app, or PWA** (Phase 3):
    - It installs from the browser and uses GPS while the screen is on.
-   - Screen Wake Lock keeps the screen on, and speech handles audio cues.
+   - Screen Wake Lock keeps the screen on, and speech handles audio cues. (Both are in the GPS ride since 2026-10-30.)
    - Limits: iPhone web apps can't vibrate, and there's no GPS with the screen off.
    - It needs HTTPS, from a free static host (Cloudflare Pages, Netlify or GitHub Pages).
 3. **Native app** (Phase 4): wrap the web app with Capacitor to reuse the code, or rebuild in React Native with MapLibre Native. That unlocks background GPS, lock-screen updates, watch taps and the app stores (Apple $99 a year, Google Play $25 once).

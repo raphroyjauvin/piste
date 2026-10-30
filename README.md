@@ -4,7 +4,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 
 ## The idea
 - You enter a destination. The app routes you along bike infrastructure as much as possible, even when that is not the shortest path.
-- While riding, it warns you calmly before any stretch with no bike infrastructure.
+- While riding, it warns you calmly before any stretch with no bike infrastructure. On a phone, "Let's ride!" follows your real position (GPS) and plans a new route if you leave the route; a "Preview the ride" link simulates the ride, and on a desktop "Let's ride!" is that preview.
 - It shows the hills: clearly on the 2D map, and in 3D you feel a climb coming before you reach it.
 - Montreal first, built on the City's open data. Routing and the map layers (relief, contours, buildings) cover the whole island.
 - Soft cartography with a 2D view and a 3D bird's-eye view (LiDAR building heights and terrain).
@@ -13,7 +13,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 - It has "Avoid hills" and "Avoid headwinds" options, a winter mode (only the 4-season network counts), a wind and rain layer, and an English / Québec French switch.
 
 ## Try it
-- **On your phone:** https://www.raphroyjauvin.ca/piste/ (in Safari, Share → Add to Home Screen opens it full screen). GitHub Pages serves it on Raph's own domain; raphroyjauvin.github.io/piste forwards there.
+- **On your phone:** https://www.raphroyjauvin.ca/piste/ (in Safari, Share → Add to Home Screen opens it full screen). Allow location when asked, so "Let's ride!" can follow you (GPS needs https: it works on the address above, but not on the PC's `http://…:8765` address opened from the phone). GitHub Pages serves it on Raph's own domain; raphroyjauvin.github.io/piste forwards there.
 - **On this PC:** double-click `prototypes\start-prototypes.bat`, then open http://localhost:8765/.
 - **Phone screens on the monitor:** http://localhost:8765/phone.html shows the app inside iPhone-sized screens, side by side.
 - **Links that open a given view:** add options to the app's address, for example https://www.raphroyjauvin.ca/piste/a-positron/?winter=1 (the short address forwards without them). Newer options:
@@ -21,6 +21,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
   - `?winter=1`: winter mode on
   - `?wx=1`: wind and rain layer on
   - `?lang=fr`: French (`?lang=en` for English)
+  - `?gps=1` / `?gps=0`: make "Let's ride!" a GPS ride / the preview, whatever the device (a phone or tablet gets GPS and a desktop the preview without it)
   - `?suggest=loop|oneway&km=&stop=`: open "Suggest a ride", with a distance in km and a stop: `cafe`, `food`, `bakery`, `icecream`, `bar`, `toilets`, `park`, `culture` or `bikeshop`
 - `docs/06_prototypes.md` lists what's in the app and all its URL options.
 
@@ -111,13 +112,26 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
   - Technical: the card moves before the bar takes focus (so iPhone Safari doesn't scroll the page), using a guess of the keyboard height (47% of the screen), then slides to the exact spot once the keyboard is up (`visualViewport`). On phones the search bars use 16 px text so Safari doesn't zoom.
   - Tests and screenshots: see `docs/06_prototypes.md`.
 - 2026-10-30 (Raph): **Planif-Neige shelved until winter.** The City's open-data team answered: no access tokens before the winter season, and they will send one when the 2026-2027 version restarts. The API tracks streets only, not bike paths or sidewalks. Decision: shelved until winter. It may still help later for streets without a bike path (the 4-season network is cleared as a priority anyway). Until then, winter mode uses the 4-season network and the forecast.
+- 2026-10-30 (Raph): **GPS ride mode**, replacing "Ride is simulated (no GPS yet)". Built: on a phone or tablet (location available and a touch screen), "Let's ride!" starts a ride that follows your real position. A small underlined "Preview the ride" link under it starts the simulation; on a desktop "Let's ride!" is the preview, with no extra link.
+  - Each fix is matched to the route near the last known position first (then further ahead, then anywhere), so loops and out-and-backs don't jump across. Fixes worse than 50 m accuracy are ignored ("Waiting for GPS…", and again after 8 s with no good fix). The rider glides between fixes, never goes backwards on jitter (only a real U-turn does), takes its heading from the route, and the ride ends within 25 m of the end.
+  - Off route: more than 30 m away (or the fix's accuracy + 10 m, whichever is larger) for 5 s means a new route from where you are, with the same settings as the planned route (route style, hills, headwinds, winter), at most once every 10 s, with "Rerouting" / "New route from here". Before you first reach the route the limit is 60 m, because a trip start is often 36–49 m from the route (a metro entrance, for example). "Go somewhere" reroutes to the destination. Classic and suggested rides rejoin the ride 250 m ahead, keeping the sights still to come, so a loop doesn't send you straight home.
+  - The ride bar shows sound, 2D/3D, the GPS status (speed in km/h and ± accuracy, "Waiting for GPS…" or "Off route") and End. There is no 4× or pause. Panning or zooming by hand stops following and shows a "Re-center" pill. The screen stays on (Screen Wake Lock). If location is refused or missing, a calm card offers [Preview the ride] and [OK]. The tap on "Let's ride!" unlocks sound and speech on iPhone.
+  - A pretend GPS (`?gps=replay`) feeds a test track through the same code as real GPS, so the tests and screenshot P7 run without a phone. Other options: `?ride=gps`, `?gps=1`, `?gps=0`. Details, numbers and tests in `docs/06_prototypes.md`; rerouting in `docs/05_routing.md`.
+  - Not checked yet on a real iPhone (see Open questions).
+  - Small change: the preview's "4×" label resets when a new preview starts.
 
 ## Open questions for Raph
-1. Phone layout polish: the panel is a swipeable sheet, and while you type the card slides up above the keyboard; more design work is possible.
-2. AI agent: which approach (see the discussion notes when we get there).
-3. 3D storefront graphics: which style.
-4. Planif-Neige (live snow clearing): shelved until winter (2026-10-30). The City will send a token when the 2026-2027 version restarts. It covers streets only, not bike paths or sidewalks, and a token can't ship in the page, so it would need a small server. When it arrives, decide whether it's worth it for streets without a bike path. Until then, winter mode uses the 4-season network and the forecast.
-5. Working name: keep "Piste"?
+1. GPS ride, to check on a real iPhone ride (it only works over https, so on the live site):
+   - The tuning numbers (50 m accuracy, 30 m / 5 s off route, 10 s between reroutes; table in `docs/06_prototypes.md`). Real GPS noise downtown between towers may reroute too eagerly.
+   - Reroute target for classic and suggested rides: rejoin the ride 250 m ahead. Is that right?
+   - GPS rides start in bird's-eye 3D, like the preview. 2D might be calmer and lighter on the battery.
+   - The remaining time still assumes 16 km/h, not your real speed.
+   - Other things only a real ride can show: whether Safari reports speed, the Wake Lock in a home-screen app (about iOS 18.4 and later), the voice and chime unlock, resuming after the screen locks, pinch and pan with "Re-center", and battery and heat from redrawing every frame.
+2. Phone layout polish: the panel is a swipeable sheet, and while you type the card slides up above the keyboard; more design work is possible.
+3. AI agent: which approach (see the discussion notes when we get there).
+4. 3D storefront graphics: which style.
+5. Planif-Neige (live snow clearing): shelved until winter (2026-10-30). The City will send a token when the 2026-2027 version restarts. It covers streets only, not bike paths or sidewalks, and a token can't ship in the page, so it would need a small server. When it arrives, decide whether it's worth it for streets without a bike path. Until then, winter mode uses the 4-season network and the forecast.
+6. Working name: keep "Piste"?
 
 ## Folder map
 - `CLAUDE.md`: working rules for Claude sessions.
@@ -144,7 +158,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
   - `phone.html`: the app on iPhone-sized screens
   - `about.html`: overview with screenshots
   - `shared/`:
-    - `router.js`, `common.js`: the router, common UI code and the ride simulator
+    - `router.js`, `common.js`: the router, common UI code and the ride code (the preview simulator, the GPS ride and a pretend GPS for tests)
     - `i18n.js`: English and Québec French strings
     - `weather.js`: Open-Meteo forecast, Environment Canada radar, wind streaks, wind effect on a route
     - `bixi.js`: live BIXI station status

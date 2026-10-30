@@ -1,5 +1,20 @@
 # Routing: how it works and how it compares (2026-10-25)
 
+## Update 2026-10-30: rerouting during a GPS ride
+The router itself didn't change. A GPS ride (see `06_prototypes.md`, Ride) calls it again from where you are when you leave the route. Routes take 1–8 ms island-wide, so a reroute doesn't stall the ride.
+- **When:** more than 30 m from the route (or the fix's accuracy + 10 m, whichever is larger; 60 m before you first reach it) for 5 s, at most once every 10 s. The numbers are in the tuning table in `06_prototypes.md`.
+- **Same settings as the route you started** (`routeWeights()` and `selWeights()` in `a-positron/app.js`):
+  - "Your route" and suggested rides: the Route style slider, "Avoid hills" and "Avoid headwinds" as they are now
+  - "Most bike paths": the bike-path weights, hill weight 12 with "Avoid hills" ticked, else 4, plus the wind
+  - "Most direct": the direct weights, hill weight 12 with "Avoid hills", else 0, no wind
+  - a classic ride: the "Most bike paths" weights with hill weight 4, as when it was first routed
+  - winter mode carries over, because the router keeps its winter tiers on
+- **Where to:**
+  - "Go somewhere": the destination.
+  - Classic and suggested rides (they may loop or have a stop): the planned ride 250 m ahead of where you left it, so a loop doesn't send you straight home. Two helpers in `shared/common.js` do the joining: `tailRoute(route, D)` is the rest of a route from distance D on, as a route of its own (distances start at 0), and `joinRoutes(a, b)` rides route `b` after route `a` as one route, with a turn instruction where they meet. In GIS terms, it is a clip and a merge of lines. The sights and the stop still ahead are kept. If fewer than about 350 m of the ride are left, the new route goes straight to the end.
+- **If the router finds no route** (for example you are far from any street it can snap to), the planned route stays, and a calm message says so once a minute at most.
+- **Check:** the replay tests in `tools/shots/test.mjs` (a detour on a planned route, and on the Old Port classic ride).
+
 ## Update 2026-10-29: island-wide graph, winter tiers, multi-stop rides, avoiding headwinds
 
 ### Island-wide graph

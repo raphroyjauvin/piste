@@ -3,7 +3,7 @@
 Started as three prototypes on 2026-10-25. On 2026-10-28 Raph chose **A (Positron, MapLibre)** and dropped B (Métro Noir) and C (Here & There). The only idea kept from C is the feeling of a hill coming up while riding in 3D. B and C stay in the git history (first commit).
 
 The app lives in `prototypes/a-positron/`. It uses the shared code and data in `prototypes/shared/`:
-- `router.js`, `common.js`: the router, common UI code and the ride simulator
+- `router.js`, `common.js`: the router, common UI code and the ride code (the preview simulator, the GPS ride and a pretend GPS for tests)
 - `i18n.js`: English and Québec French strings
 - `weather.js`: forecast, radar, wind streaks and the wind's effect on a route
 - `bixi.js`: live BIXI station status
@@ -13,14 +13,17 @@ The app lives in `prototypes/a-positron/`. It uses the shared code and data in `
 
 Updated 2026-10-29: winter mode, wind and rain, live BIXI, classic rides, island-wide routing and island-wide map layers (PMTiles), French, a swipeable phone panel, calmer elevation, "bike path" wording, a "Let's ride!" button, headwind avoidance on planned routes, and steady ride icons.
 
-Updated 2026-10-30: simpler phone search (the card slides up above the keyboard) and the floating "Let's ride!" copy removed; both after Raph tried them on his iPhone.
+Updated 2026-10-30: simpler phone search (the card slides up above the keyboard) and the floating "Let's ride!" copy removed, both after Raph tried them on his iPhone; and **GPS ride mode**: on a phone, "Let's ride!" follows your real position (the simulation is now the "Preview the ride" link).
 
 ## URL options
 The app is at https://www.raphroyjauvin.ca/piste/a-positron/ (on this PC, http://localhost:8765/a-positron/). Add options after it, for example `…/a-positron/?winter=1&lang=fr`. The short address `…/piste/` forwards to the app without them.
 - `?trip=rachel|montroyal|biodome|davidson|none`: open on a test trip. The test-trip buttons are gone from the screen, but these links still work. With no `trip` (or `none`) the app opens with no start or destination.
 - `?from=lon,lat&to=lon,lat`: open on any trip.
 - `?view=3d`: start in bird's-eye 3D.
-- `?ride=bird|top`: start the simulated ride; add `&at=<metres>` to jump along it and `&paused` to hold still (used for screenshots and tests).
+- `?ride=bird|top`: start the simulated preview ride; add `&at=<metres>` to jump along it and `&paused` to hold still (used for screenshots and tests).
+- `?ride=gps`: start a GPS ride (it needs a trip or classic ride in the link, and location allowed, or `?gps=replay`).
+- `?gps=1` makes "Let's ride!" a GPS ride, even on a desktop; `?gps=0` makes it the preview, even on a phone. Without it, a phone or tablet gets GPS and a desktop gets the preview.
+- `?gps=replay&gpsx=<speed-up>&gpsat=<metres>&detour=<metres>`: a pretend GPS for tests and screenshots (see Ride below). `gpsx` speeds it up (default 1), `gpsat` starts that far along the route, `detour` makes it leave the route at that distance. Add `&gpsdeny` for a pretend "location refused".
 - `?classic=<id>`: open "Suggest a ride" → "Classic rides" on one ride: `oldport`, `plateau`, `montroyal`, `jeantalon`, `olympic`, `jeandrapeau`, `visitation`, `verdun`, `lachine` or `pointeclaire`.
 - `?suggest=loop|oneway&km=10&stop=cafe`: open "Suggest a ride" → "Make your own". `km` is 1–100. Stops: `cafe`, `food`, `bakery`, `icecream`, `bar`, `toilets`, `park`, `culture`, `bikeshop`.
 - `?winter=1`: start in winter mode.
@@ -54,7 +57,7 @@ The app is at https://www.raphroyjauvin.ca/piste/a-positron/ (on this PC, http:/
   - Stretches without a bike path shorter than 50 m are not listed or announced. They are still coloured on the line.
 - **Climbs:** stretches rising ≥ 2.5 % for ≥ 80 m and ≥ 3 m; runs split by a short flat breather count as one hill. Shaded on the profile with "+N m", and summarised under it ("Steepest: 5% on Rue Rachel Est"). The profile and hill-card graphs use a larger minimum height range, so a small climb doesn't look like a cliff. The Michelin-style uphill chevrons of 2026-10-28 were removed on 2026-10-29; the extra contours show climbs instead.
 - **Planning:** three options ("Your route", "Most bike paths", "Most direct") with time, distance, climb and a composition bar. The "Route style" slider (direct ↔ bike paths) re-routes live, and so does dragging the pins. Under it, "Avoid hills" and "Avoid headwinds" are two checkboxes side by side (2026-10-29: the headwinds box moved here from the Suggest form). Avoid headwinds applies to "Your route", "Most bike paths" and suggested rides; see Wind & rain. Gap list (click to zoom) and turn-by-turn. The search fields show location pins: the start mostly blue, the destination mostly white with blue. The map pins match.
-- **"Let's ride!" (2026-10-29):** the button that starts the ride (it was "Ride this route") now says "Let's ride!" ("Allons-y!" in French). It sits only in its place at the end of the route card, on phones and desktop. A floating copy (above the phone card, at the foot of the desktop panel) was tried on 2026-10-29 and removed on 2026-10-30: Raph found it looked bad on his iPhone.
+- **"Let's ride!" (2026-10-29):** the button that starts the ride (it was "Ride this route") now says "Let's ride!" ("Allons-y!" in French). It sits only in its place at the end of the route card, on phones and desktop. A floating copy (above the phone card, at the foot of the desktop panel) was tried on 2026-10-29 and removed on 2026-10-30: Raph found it looked bad on his iPhone. Since 2026-10-30, on a phone or tablet the button starts a GPS ride, and a small underlined "Preview the ride" ("Aperçu du trajet") link under it starts the simulation; on a desktop the button is the preview and there is no link (see Ride below).
 - **Winter mode (2026-10-29):** the snowflake button. It replaces "summer-only".
   - The map turns icy light blue. The legend swaps its network entries for "Bike paths cleared in winter (4-season)" and "Bike paths not cleared in winter".
   - Routing counts only the City's 4-season network (`SAISONS4`) as bike infrastructure. Bike paths that aren't cleared show grey and dotted, and the warnings say "without a winter-cleared bike path" (the stretch list in the panel, the gap card while riding).
@@ -114,13 +117,44 @@ The app is at https://www.raphroyjauvin.ca/piste/a-positron/ (on this PC, http:/
   - Parks and viewpoints are always on. Tapping outside the panel closes it.
   - Every layer covers the whole island since 2026-10-29, except bike racks (part of "BIXI/water/repair/parking"), which are still study area only.
 - **3D:** one-button toggle that shows the view you switch to: a cube and "3D" while the map is flat, a flat square and "2D" while in 3D. Bird's-eye uses a narrow 22° lens, which looks almost axonometric.
-- **Ride (simulated):**
-  - It starts at once in bird's-eye 3D. The old "Before you ride" sheet (alert options, voice commands, a watch-tap note and a reminder of the Québec rules) is gone. A sound button in the ride bar cycles chime → voice → off, and the app remembers the choice.
+- **Ride (GPS or preview; GPS added 2026-10-30):** "Let's ride!" has two modes, and both show the same map, cards and voice.
+  - **GPS ride:** follows your real position. It is the default on a phone or tablet, meaning the browser has geolocation and a touch screen (`pointer: coarse`; `gpsDefault()` in `a-positron/app.js`). Details just below.
+  - **Preview:** the simulated ride at 4× speed (all there was before 2026-10-30). On a desktop "Let's ride!" is the preview and there is no extra link. On a phone or tablet it starts from a small underlined "Preview the ride" link under the button. The "4×" label resets to 4× whenever a new preview starts.
+  - Both start at once in bird's-eye 3D (2D, top-down, is one button away). The old "Before you ride" sheet (alert options, voice commands, a watch-tap note and a reminder of the Québec rules) is gone. A sound button in the ride bar cycles chime → voice → off, and the app remembers the choice.
   - Camera low and behind the rider (pitch 70°, rider at 70% of the screen height), heading-up.
   - **Hill ahead:** from about 520 m before a climb, the terrain exaggeration rises from ×1.6 to up to about ×2.5 (steeper climbs get more; it was ×3.4 before 2026-10-29), the camera tilts up 2° (was 3°) and pulls back a little; it eases back after the top.
   - Hill card above the ride bar: "Climb in 260 m · +30 m over 860 m · 4% avg, 5% max", then "Climbing · 5% · 270 m to the top", then "Top of the climb", with a sparkline of the next 800 m.
   - Turn card, calm gap card ("In 180 m: 146 m without a bike path…" → "Back on a bike path"; in winter mode, "without a winter-cleared bike path").
   - Places pop up on their real side of the street (at most 8, names on the 3 nearest). The map's own POI icons hide while riding, except metro.
+  - **GPS ride (2026-10-30; `RideGPS` in `shared/common.js`, started by `startGpsRide()` in `a-positron/app.js`):**
+    - **Matching a fix to the route:** each fix is matched to the route near the last known position first, then further ahead, then anywhere, so a loop or an out-and-back doesn't jump across to the wrong part (`makeTrack(route).locate`). Fixes worse than 50 m accuracy are ignored: the ride bar says "Waiting for GPS…" until a good one arrives, and again after 8 s with no good fix.
+    - **Smooth movement:** the rider glides between fixes. It keeps moving at your speed for at most 1.2 s after a fix, smoothed over 0.25 s. It never goes backwards on jitter; only a real U-turn does (30 m behind, three fixes in a row). The heading comes from the route. The ride ends when you are within 25 m of the end ("Arrived"). Speed is the phone's own when it reports one, else worked out from the fixes. While you are off the route, the rider is drawn eased toward your real position.
+    - **Off route, then reroute:** more than 30 m from the route (or the fix's accuracy + 10 m, whichever is larger) for 5 s means a new route from where you are, with the same settings as the planned one (route style, hills, headwinds, winter), at most once every 10 s. The voice and a toast say "Rerouting" and "New route from here". Before you first reach the route, the limit is looser (60 m, or accuracy + 25 m), because a trip start is often 36–49 m from the route (a metro entrance, for example).
+      - "Go somewhere" reroutes to the destination. Classic and suggested rides rejoin the planned ride 250 m ahead of you and keep the sights and stop that are left, so a loop doesn't send you straight home (`rerouteFrom()` and `newRouteFrom()` in `app.js`, built with `tailRoute` and `joinRoutes` in `common.js`). If fewer than about 350 m of the ride are left, the new route goes straight to the end.
+      - If no new route is found, the planned route stays and a calm message says so (at most once a minute). When the ride ends, the planned routes are drawn again.
+    - **Ride bar:** sound, 2D/3D, the GPS status and End. There is no 4× button and no pause. The status shows your speed in km/h and "± accuracy" in metres, a pulsing "Waiting for GPS…", or "Off route".
+    - **Moving the map by hand:** panning or zooming stops the camera following you and shows a "Re-center" ("Recentrer") pill; a tap glides back in 0.5 s. A plain tap on the map doesn't stop following.
+    - **Screen on:** the Screen Wake Lock API keeps the screen on during a GPS ride (`keepAwake()`), and asks again when the page comes back. It works in Safari from iOS 16.4 and in home-screen web apps from about iOS 18.4. If the screen locks anyway, the ride picks up from the next fix, and starts the location watch again after 4 s with no fix.
+    - **Location refused or not available:** the ride doesn't start. A calm card says so, with [Preview the ride] and [OK] (`gpsError()` and `showNotice()`).
+    - **Sound on iPhone:** the tap on "Let's ride!" (or on "Preview the ride") unlocks the chime and the voice, with a silent sound and a silent spoken line (`rideTap()`, `unlockAudio()`, `voice.prime()`). iPhone Safari stays silent otherwise.
+    - **Code:** `RideCore` (shared) turns "distance along the route" into frames and the gap, turn, hill and arrived events, and takes a new route with `setRoute()` after a reroute. `RideSim` (the preview, behaviour unchanged) and `RideGPS` both extend it, and the app draws them the same way. The reroute settings come from `routeWeights()` and `selWeights()` in `app.js`.
+    - **`ReplayGeo`** is a pretend GPS for tests and screenshots (`?gps=replay`). It looks like `navigator.geolocation`, so the ride runs the same code as with a real phone. It gives one fix a second (sped up by `gpsx`), about 2.5 m of noise, a poor fix at the start and every 13th, and optionally a detour (60 m out, 150 m alongside the route, then back). After a reroute it carries on along the new route.
+    - **Tuning (`GPS` in `common.js`):** first guesses, to check on real rides.
+
+      | Setting | Value | Meaning |
+      |---|---|---|
+      | `ACC_MAX` | 50 m | fixes less accurate than this are ignored |
+      | `OFF_M` | 30 m | farther than this from the route (and beyond accuracy + 10 m) is off route |
+      | `START_M` | 60 m | the same, until you first reach the route (or accuracy + 25 m) |
+      | `OFF_MS` | 5 s | off route this long before rerouting |
+      | `REROUTE_MS` | 10 s | at most one reroute this often |
+      | `ARRIVE_M` | 25 m | from the end: arrived |
+      | `LEAD_S` | 1.2 s | carry on at the current speed at most this long after a fix |
+      | `TAU_S` | 0.25 s | the rider glides toward where you are with this time constant |
+      | `BACK_M` | 30 m | this far behind, three fixes in a row, counts as a U-turn |
+      | `STALE_MS` | 8 s | with no good fix: "Waiting for GPS…" again |
+
+    - **Not checked without a real iPhone:** see Known limits.
   - **No shaking icons (2026-10-29):** the roadside place icons (`.poi-pop` markers) used to shake against the map, worst in the 2D (top-down) ride: up to 27 px off the map, 1.1 px on average. Now 0 px. Three causes, all fixed:
     1. The icons had a CSS `transition: transform .25s`, so every per-frame move by MapLibre was animated and lagged. It's gone; the labels keep an opacity fade only.
     2. MapLibre rounds marker positions to whole pixels on every `jumpTo` (it fires `moveend` each frame). The markers now use `subpixelPositioning: true`.
@@ -143,18 +177,33 @@ The app is at https://www.raphroyjauvin.ca/piste/a-positron/ (on this PC, http:/
 `prototypes/phone.html` shows the app inside 1–3 iPhone-sized screens side by side (SE, 13/14, 15/16, 17/16 Pro/17 Pro, Pro Max), as a home-screen app or a Safari tab. Each phone has its own screen picker: routes (Rachel with a climb, Mont-Royal → Papineau), the 3D ride with a hill, the top-down ride, classic rides (Old Port, Lachine Canal), Suggest a ride (a 10 km loop, a loop with a coffee stop), winter mode in French, wind & rain, the 3D view and the plain map. It's for layout and flow; the real check is the iPhone itself.
 
 ## Tests and screenshots
-- `node tools/shots/test.mjs [name filter]`: 11 groups, all passing on 2026-10-30 (headless Edge; the dev server must be running, or set `PISTE_BASE` to test the live site). New or widened on 2026-10-29:
+- `node tools/shots/test.mjs [name filter]`: 17 groups, all passing on 2026-10-30 (headless Edge; the dev server must be running, or set `PISTE_BASE` to test the live site). The six new GPS groups of 2026-10-30 come first, then the groups new or widened on 2026-10-29 (the phone group again on 2026-10-30):
+  - **GPS ride (replayed track): follows the route, ignores poor fixes, re-center, arrives** (new): runs `?gps=replay` and checks that the ride bar shows "Waiting for GPS…" then km/h, that the rider never goes backwards, stays exactly on the route line (0 m off) and follows the true position (1.6 m on average), that poor fixes are ignored, that dragging the map shows "Re-center" and a tap on it follows again, and that the ride arrives and ends.
+  - **GPS ride (replayed track): a detour triggers exactly one reroute** (new): the replay leaves the route; the test checks one reroute (the voice says "Rerouting", the toast "New route from here"), a new route that starts near the fix, the rider drawn off the route meanwhile, and the planned route drawn again when the ride ends.
+  - **GPS ride (replayed track): on a classic ride, a reroute rejoins the ride ahead** (new): after a detour on the Old Port ride, the new route is about as long as what was left, keeps the remaining sights and has no pieces missing.
+  - **GPS: location refused shows a calm message, and the preview still works** (new): the card says so in English and French, the ride bar and HUD are closed, and its [Preview the ride] button starts the simulation.
+  - **GPS: the browser's own location moves the ride** (new): feeds positions through the browser's real geolocation (not the replay) and checks that the ride moves and shows "±8 m".
+  - **Phone: GPS ride bar, preview link** (new): on a touch phone screen, the "Preview the ride" link sits under the button, the ride bar shows sound, 2D/3D, GPS and End and fits, and the link starts the preview.
   - **2D ride: place icons stay pinned to the map (no shaking)** (new): starts the top-down ride and, at every map draw, compares where each place icon is with where it belongs. It passes under 0.5 px (before the fix the icons were up to 27 px off the map, 1.1 px on average; now 0 px) and fails if the icons have a `transform` transition.
   - **UI clean-up:** now also checks that there are no gap label boxes on the map, the sight circles have radius 7.5, the ride icons have no transform transition, the button says "Let's ride!", "Avoid hills" and "Avoid headwinds" sit side by side, and there is no floating copy of the button (it was removed on 2026-10-30).
   - **Elevation:** now also reads one tile from each PMTiles file (relief z14, tint z12, contours z14, buildings z14) in the West Island, downtown and the east end, and checks that every one exists. It also checks that the detail contour lines come out of the tiles and that the 3D terrain tiles load from the site.
   - **Phone: swipeable panel, safe areas:** on 2026-10-30 the search checks replaced the old bottom-bar ones. It now checks that tapping the destination bar docks the bars just above the (guessed) keyboard with the brand header hidden and the ✕ showing, that the suggestions sit above the card, that the ✕ leaves the destination unchanged, that the return key on a typed start moves on to the destination bar, and that picking a destination ends the search and shows the route with the card back at half height.
-- `node tools/shots/shoot.mjs [prefix]`: screenshots into `prototypes/screens/` (A = desktop, P = phone). `P6-phone-search` (typing a destination: the search bars above the keyboard, suggestions over the map and the grey ✕) replaced `P6-phone-search-bottom` on 2026-10-30, and `P7-phone-lets-ride` (the floating button) was removed.
+- `node tools/shots/shoot.mjs [prefix]`: screenshots into `prototypes/screens/` (A = desktop, P = phone). `P6-phone-search` (typing a destination: the search bars above the keyboard, suggestions over the map and the grey ✕) replaced `P6-phone-search-bottom` on 2026-10-30, and `P7-phone-lets-ride` (the floating button) was removed. `P7-phone-gps-ride` (2026-10-30; a GPS ride on a phone screen, from a replayed track: the ride bar with speed and accuracy) took the free name P7; it replaces nothing.
 - `node tools/shots/smoke.mjs "?winter=1"`: a quick load check of one app URL (console errors and a few state values).
 
 ## Known limits (prototype stage)
 - **Routing and the map layers are island-wide** (since 2026-10-29). Still study area only: bike racks. The 1 m LiDAR is only used for building heights in the old study area (Plateau, Rosemont, Hochelaga, Centre-Sud, Olympic Park); everywhere else the LiDAR models are 5 m, from two flights (CMM 2023 and 2024) that cover the island box between them.
 - **Island graph gaps:** speed limits and the arterial network only exist for the City of Montréal, not the other island municipalities. About 26% of the graph's nodes fell in disconnected pieces and were dropped (mostly Laval and Île-Bizard fragments, and unconnected paths). See `05_routing.md`.
-- **Ride is simulated** (no GPS yet).
+- **GPS ride is untested on a real iPhone.** It was built and tested with a pretend GPS (`?gps=replay`) and the browser's test location (2026-10-30), so these still need a real ride:
+  - real GPS noise downtown between towers (the 30 m / 5 s off-route rule may reroute too eagerly)
+  - whether Safari reports speed (if not, the speed comes from the fixes)
+  - the Wake Lock in a home-screen web app (about iOS 18.4 and later)
+  - the voice and chime unlock on iPhone
+  - resuming after the screen locks (the fallback restarts the location watch after 4 s with no fix)
+  - pinch and pan plus "Re-center" on a real touch screen
+  - battery and heat from redrawing the map every frame
+  - geolocation needs HTTPS: it works on the live site, not on `http://<this PC>:8765` opened from the phone
+  - Remaining time on the ride bar still assumes 16 km/h, not your real speed.
 - **Snow-clearing status isn't public.** Winter mode uses the City's 4-season network and the weather forecast, not real clearing. The City's Planif-Neige API needs an access token and covers streets only, not bike paths or sidewalks; it would also need a small server. The City won't give out tokens before the winter season and will send one when the 2026-2027 version restarts (answer of 2026-10-30), so it is shelved until winter.
 - **Online sources:** basemap tiles (OpenFreeMap), terrain tiles beyond our own (AWS, a fallback), address search (Ville de Montréal API), the forecast (Open-Meteo), radar (Environment Canada) and live BIXI. The PMTiles layers, the terrain tiles, the classic-ride photos and all other data ship with the site.
 - **Voice:** voice prompts use the browser's speech synthesis. Voice commands (speech recognition) were on the old "Before you ride" sheet and aren't offered now; the code is still in `shared/common.js`.

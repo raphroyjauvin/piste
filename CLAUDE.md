@@ -21,7 +21,8 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
 - **Classic rides:** after rebuilding the island graph or editing `prototypes/shared/data/classics.js`, run `node tools/check_classics.js`. It routes every classic ride and prints its length and bike-path share, summer and winter.
 - **Serve:** `tools/serve.py` on port 8765. The preview config is `.claude/launch.json` ("bikeapp-prototypes").
 - **Test:**
-  - `node tools/shots/test.mjs [name filter]` runs the functional tests: 11 groups, all passing on 2026-10-30 (exit code 1 if any fail). The phone group has no real keyboard, so it only checks the guessed search position: check search changes on a real iPhone.
+  - `node tools/shots/test.mjs [name filter]` runs the functional tests: 17 groups, all passing on 2026-10-30 (exit code 1 if any fail). The phone group has no real keyboard, so it only checks the guessed search position: check search changes on a real iPhone.
+  - The GPS ride tests (6 groups) use a pretend GPS: `?gps=replay&gpsx=<speed-up>&gpsat=<metres>&detour=<metres>` (`ReplayGeo` in `shared/common.js`; add `&gpsdeny` for "location refused"). Real GPS can only be checked on the iPhone, on the live site: geolocation needs HTTPS, so it doesn't work from `http://<this PC>:8765` on the phone.
   - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/` (A = desktop, P = phone).
   - `node tools/shots/smoke.mjs "?winter=1"` is a quick load check: it opens one app URL and prints console errors and a few state values (the dev server must be running).
   - These all use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden.
@@ -55,6 +56,7 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   - Planned and under-construction routes appear only while browsing, never when routing or riding.
   - English and French (2026-10-29); every new string goes in `prototypes/shared/i18n.js` in both languages.
   - "Let's ride!" sits only in its place in the route card: no floating copy (Raph, 2026-10-30: it looked bad on his iPhone).
+  - GPS ride (2026-10-30): on a phone or tablet "Let's ride!" follows the real position, and a small "Preview the ride" link starts the simulation; on desktop "Let's ride!" is the preview. `?gps=1` / `?gps=0` force either one. Details in `06_prototypes.md`, Ride. The tuning numbers (`GPS` in `shared/common.js`) are first guesses, still to check on real rides.
   - Phone search (2026-10-30): tapping a search bar slides the card up so the bars sit just above the keyboard; suggestions float over the map above the card. Do not move the bar to the very bottom of the screen: on a real iPhone it sat with a gap above the keyboard. Details in `06_prototypes.md`.
   - Wording (2026-10-29): say "bike path(s)" in English and "piste(s) cyclable(s)" in French in everything the user sees. Never "bike lane(s)", "cycle track", "voie cyclable" or "bande cyclable". Code names such as `mostLanes` stay as they are.
 - When Raph decides something or a fact gets verified, add a dated line to the README decisions log or the matching doc, and tell him.
