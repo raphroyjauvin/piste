@@ -1,7 +1,7 @@
 {
-  "name": "Piste: Montréal by bike lane",
+  "name": "Piste: Montréal by bike path",
   "short_name": "Piste",
-  "description": "Bike routes in Montréal that stay on bike lanes, with calm warnings before stretches without one.",
+  "description": "Bike routes in Montréal that stay on bike paths, with calm warnings before stretches without one.",
   "start_url": "./a-positron/",
   "scope": "./",
   "display": "standalone",

@@ -7,7 +7,7 @@
   const S = {
     en: {
       letsRide: "Let's ride!", focusFrom: "Start", focusTo: "Destination", focusHint: "Type an address, or tap the map", accept: "Done", cancel: "Cancel",
-      gapPill: " m no bike path", gapPillWinter: " m not cleared", stopPrefix: "Stop · ", kindOneWay: "One-way",
+      stopPrefix: "Stop · ", kindOneWay: "One-way",
       wxTitle: "Wind & rain", winterTitle: "Winter", classicsLoading: "Routing the classics…",
       tagline: "Montréal by bike path · prototype",
       tabGo: "Go somewhere", tabSuggest: "Suggest a ride",
@@ -36,7 +36,7 @@
       lanesAllWay: "bike paths all the way", onInfra: "on bike paths", on4s: "on 4-season bike paths", routedIn: "Routed on this device in {ms} ms",
       elevation: "Elevation", withoutLane: "Without a bike path", withoutLaneWinter: "Without a winter-cleared bike path",
       gapOn: "{m} m on {name}", aStreet: "a street", busyStreet: "Busy street, ride with traffic", quietStreet: "Quiet street", after: "after {d}",
-      lanesWhole: "Bike paths the whole way.", turnByTurn: "Turn by turn ({n})", rideThis: "Ride this route",
+      lanesWhole: "Bike paths the whole way.", turnByTurn: "Turn by turn ({n})",
       flat: "Mostly flat · {m} m of climbing in all",
       climbs1: "1 climb, {m} m up in all. Steepest: {g} {on} (+{rise} m over {d})",
       climbsN: "{n} climbs, {m} m up in all. Steepest: {g} {on} (+{rise} m over {d})", onStreet: "on {name}",
@@ -70,7 +70,7 @@
     },
     fr: {
       letsRide: "Allons-y!", focusFrom: "Départ", focusTo: "Destination", focusHint: "Tapez une adresse ou touchez la carte", accept: "OK", cancel: "Annuler",
-      gapPill: " m sans piste cyclable", gapPillWinter: " m non déneigé", stopPrefix: "Arrêt · ", kindOneWay: "Aller simple",
+      stopPrefix: "Arrêt · ", kindOneWay: "Aller simple",
       wxTitle: "Vent et pluie", winterTitle: "Hiver", classicsLoading: "Calcul des balades classiques…",
       tagline: "Montréal en piste cyclable · prototype",
       tabGo: "Itinéraire", tabSuggest: "Suggérer une balade",
@@ -99,7 +99,7 @@
       lanesAllWay: "pistes cyclables tout du long", onInfra: "sur pistes cyclables", on4s: "sur pistes cyclables 4 saisons", routedIn: "Calculé sur l'appareil en {ms} ms",
       elevation: "Dénivelé", withoutLane: "Sans piste cyclable", withoutLaneWinter: "Sans piste cyclable déneigée",
       gapOn: "{m} m sur {name}", aStreet: "une rue", busyStreet: "Rue achalandée, roulez avec la circulation", quietStreet: "Rue tranquille", after: "après {d}",
-      lanesWhole: "Pistes cyclables tout du long.", turnByTurn: "Étape par étape ({n})", rideThis: "Rouler cet itinéraire",
+      lanesWhole: "Pistes cyclables tout du long.", turnByTurn: "Étape par étape ({n})",
       flat: "Plutôt plat · {m} m de montée au total",
       climbs1: "1 côte, {m} m de montée au total. La plus raide{nb}: {g} {on} (+{rise} m sur {d})",
       climbsN: "{n} côtes, {m} m de montée au total. La plus raide{nb}: {g} {on} (+{rise} m sur {d})", onStreet: "sur {name}",

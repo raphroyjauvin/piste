@@ -1,13 +1,26 @@
 # Cartography principles (2026-10-25)
 
+## Update 2026-10-29, island-wide layers
+The look is unchanged; the same layers now cover the whole island (files, sizes and counts in `06_prototypes.md`). Rules that decide what shows at each zoom:
+- **Hill shading:** the same recipe (relief factor ×2.3, 10 m smoothing, opacity about 0.85 → 0.72), computed from the merged 5 m LiDAR terrain model at about 4.8 m per pixel. The tiles stop at z14 and closer zooms stretch z14. That is invisible, because the shading is smoothed over about 50 m.
+- **Elevation tint:** the same sand ramp, computed on a 10 m grid smoothed over 20 m; tiles z9–13.
+- **Contours get lighter as you zoom out**, so the map stays quiet: z11–12 show the bold 25 m lines only, z13 adds the 5 m lines, z14–15 add the 1 m detail lines on moderate slopes (2.5–15%). Lines shorter than 4 px at their zoom are dropped, and 5 m lines under 60 m or detail lines under 120 m long are never drawn. The map shows the 25 m lines from zoom 11.5, the 5 m lines from 13 and the detail lines from 14.
+- **Buildings, big ones first:** z13 keeps footprints of 250 m² and up, z14 40 m² and up, z15 all, so a zoomed-out map doesn't turn to noise. The flat buildings fade in between z13 and z14 (opacity 0 → 0.92). The 3D massing, extruded by LiDAR height, starts at z14.
+
+## Update 2026-10-29, later: no gap boxes, smaller sight circles, phone map controls, wording
+- **No gap boxes on the map.** The orange label boxes on stretches without a bike path ("N m no bike path"; "N m not cleared" in winter mode; layer `gap-labels`) are removed. A stretch still shows as the orange dashed route line, and the panel lists the stretches. The calm gap cards while riding are unchanged.
+- **Sight circles half the size.** The white circles with a blue outline that mark a classic ride's key sights are now radius 7.5 px with a 2.5 px outline. The same layer draws the stop of a suggested ride.
+- **Phone map controls.** The zoom buttons and the scale bar are hidden on phones (the swipeable card covered them; pinch to zoom). The map credits button (ⓘ) moved to the top left, so the OpenStreetMap and data credits stay reachable.
+- **Wording.** "Bike path(s)" in English and "piste(s) cyclable(s)" in French on every label, legend entry and card; the rule is in principle 10 below.
+
 ## Update 2026-10-29: winter, weather, live BIXI, calmer elevation
 - **Winter palette** (the snowflake button): the same soft map, shifted to an icy light blue. "Soft map, loud route" still holds.
   - land `#eef4f8`, parks `#e1ecf1`, water `#b9d2e2`
   - also tinted: residential land `#e6eef4`, woods `#dbe6ed`, rivers `#a9c6d9`, buildings `#e2e9ef` (3D buildings `#f3f6f9` to `#d6e0e8`), major road casings `#c6d6e2`
   - the elevation colours are hue-rotated toward blue (and desaturated), so hills don't look warm on a cold map
   - contours `#7895aa`, their labels `#5c7689`
-  - the 4-season lanes stay green, as in summer, so "green = a lane that is cleared" still holds
-  - lanes that aren't cleared turn grey and dotted (`#aebbc6`). They look faded, not alarming. The warnings say "not cleared" in the same soft orange pill as any other gap.
+  - the 4-season bike paths stay green, as in summer, so "green = a bike path that is cleared" still holds
+  - bike paths that aren't cleared turn grey and dotted (`#aebbc6`). They look faded, not alarming. The warnings ("without a winter-cleared bike path") use the same soft orange as any other gap: the dashed orange line and the panel list.
 - **Weather card and wind streaks:**
   - Wind streaks are thin slate-blue lines (`rgba(52, 92, 124, 0.5)`, 1.6 px). They drift across the map the way the wind blows and turn with the map. They fade slowly, which leaves short trails, and they stay quiet so the route and labels remain readable.
   - The radar is a half-transparent overlay (50%) under the bike network and the route.
@@ -34,9 +47,9 @@
 ## Update 2026-10-25, afternoon: Raph's direction, as built in the prototypes
 - **Theme colours:** the official STM metro colours from GTFS: green `#00B300`, orange `#D95700`, yellow `#FFD900`, blue `#0095E6`.
   - A and C: the route is blue, the bike network green, and gaps a **soft** orange (`#ef8f45`, dashed on quiet streets).
-  - B: the route takes metro colours by tier (green protected, blue painted, yellow shared, orange no lane).
+  - B: the route takes metro colours by tier (green protected, blue painted, yellow shared, orange no bike path).
 - **Red** (`#d7263d`) is used only for something closed to cyclists. It never marks an ordinary gap.
-- **Calm alerts:** soft orange cards with plain words ("In 180 m: 146 m without a bike lane on Rue Rivard · busy street"), then a green "Back on a bike lane".
+- **Calm alerts:** soft orange cards with plain words ("In 180 m: 146 m without a bike path on Rue Rivard · busy street"), then a green "Back on a bike path".
 - **Basemaps:** Positron light (A) and a charcoal dark inspired by Esri Dark Gray (B). Both are minimal, and relief comes from our 2023 LiDAR shading.
 - **3D:** a white architectural massing model, with the "Here & There" bend made subtle (C), and a narrow-lens bird's-eye view in MapLibre (A, B).
 - **Reference maps** are kept in `docs/mapideas/`: the pictorial navy and coral map, "Here & There", the wildfire infographic and the STM black metro map. The pictorial two-tone style is not built yet; it's a candidate for a playful "explore" skin.
@@ -68,12 +81,12 @@ The base map steps back, and the route and its gaps stand out. This is figure-gr
 
    The Mapbox navigation SDK does the same: casing, then route, then traffic.
 9. **3D massing** looks like an architect's white model: light warm-grey volumes with a subtle vertical gradient, lit from the north-west (the usual cartographic convention). Fade or lower buildings near the route so they never hide it.
-10. **Labels:** one open sans-serif family with clear weights (for example Inter, or Atkinson Hyperlegible for legibility) and white halos. Use the official French street names, with a bilingual interface. Show fewer labels while riding.
+10. **Labels:** one open sans-serif family with clear weights (for example Inter, or Atkinson Hyperlegible for legibility) and white halos. Use the official French street names, with a bilingual interface. Show fewer labels while riding. **Wording (2026-10-29):** "bike path(s)" in English and "piste(s) cyclable(s)" in French, never "bike lane(s)", "cycle track", "voie cyclable" or "bande cyclable". The tiers read "Protected bike path", "Painted bike path", "Shared bike path" and "No bike path" ("Piste cyclable protégée", "Piste cyclable peinte", "Piste cyclable partagée" and "Sans piste cyclable" in French).
 11. **POIs, Google-style:** a coloured circle with a white symbol, colour-coded by category. In Ride mode, show only POIs within about 150 m of the route; in Plan mode, show everything at closer zooms.
 12. **Lessons from bike maps:**
     - CyclOSM was criticised because its tier colours were too subtle, so make our tiers clearly distinct.
-    - Transit's neon outline makes protected lanes pop.
-    - BIXI's dashed line for one-way lanes is a useful convention.
+    - Transit's neon outline makes protected bike paths pop.
+    - BIXI's dashed line for one-way bike paths is a useful convention.
 
 ## Starting palette (something to react to, not final)
 | Element | Day | Night |

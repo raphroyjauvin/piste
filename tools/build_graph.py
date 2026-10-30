@@ -126,6 +126,29 @@ class GridIndex:
         return best
 
 
+CLIMB_MIN_STEP = 1.0   # metres: rises and drops smaller than this are terrain-model noise, not climbs (2026-10-29)
+
+
+def climb_and_descent(z, h=CLIMB_MIN_STEP):
+    """Total climb and descent along an elevation profile, ignoring wiggles smaller than h metres.
+    Summing every small rise of the 5 m terrain model counted 6-9 m of climbing on a flat 1.3 km riverside path
+    (LaSalle), enough to send routes onto Boulevard LaSalle. Climb minus descent still equals the net change."""
+    up = down = 0.0
+    anchor = float(z[0])
+    for v in z[1:]:
+        v = float(v)
+        if v - anchor >= h:
+            up += v - anchor; anchor = v
+        elif anchor - v >= h:
+            down += anchor - v; anchor = v
+    last = float(z[-1])
+    if last > anchor:
+        up += last - anchor
+    else:
+        down += anchor - last
+    return up, down
+
+
 class DEM:
     def __init__(self, path):
         self.ds = rasterio.open(path)
@@ -482,7 +505,14 @@ def main(extent):
         e["a"] = remap[e["a"]]; e["b"] = remap[e["b"]]
 
     # ---- elevation (bare-earth DTM; bridges/tunnels interpolated between ends) ----
-    dem_path = RAW / "nrcan_hrdem_cmm2023" / ("dtm_study_area_32188_1m.tif" if extent == "study" else "dtm_island_32188_5m.tif")
+    if extent == "study":
+        dem_path = RAW / "nrcan_hrdem_cmm2023" / "dtm_study_area_32188_1m.tif"
+    else:
+        # The 2023 LiDAR block covers only 61% of the island; `island_tiles.py dem` merges it with the 2024 block.
+        # Without the merged file, 15% of the island's nodes got the median height (flat, with fake steps at the edge).
+        dem_path = BUILD / "dtm_island_5m_merged.tif"
+        if not dem_path.exists():
+            raise SystemExit("Run `python tools/island_tiles.py dem` first: it builds data/build/dtm_island_5m_merged.tif")
     elev = None
     if dem_path.exists():
         dem = DEM(dem_path)
@@ -501,8 +531,7 @@ def main(extent):
             if n >= 5:
                 z = np.convolve(np.pad(z, 2, mode="edge"), np.ones(5) / 5, mode="valid")
             z[0], z[-1] = ea, eb
-            dz = np.diff(z)
-            e["cf"] = float(dz[dz > 0].sum()); e["cb"] = float(-dz[dz < 0].sum())
+            e["cf"], e["cb"] = climb_and_descent(z)
 
     # ---- encode ----
     names, name_idx = [""], {"": 0}
@@ -510,7 +539,7 @@ def main(extent):
                     "bbox": STUDY_BBOX if extent == "study" else None,
                     "sources": ["Ville de Montreal: Geobase, reseau cyclable, live bike tiles, speed limits, arterial network (CC BY 4.0)",
                                 "OpenStreetMap contributors: bike-legal paths not in City data (ODbL)",
-                                "NRCan HRDEM CMM 2023 1 m DTM (OGL-Canada)"],
+                                ("NRCan HRDEM CMM 2023 1 m DTM (OGL-Canada)" if extent == "study" else "NRCan HRDEM CMM 2023 + 2024 LiDAR DTM, 5 m (OGL-Canada)")],
                     "tiers": ["A protected", "B painted/calm", "C shared", "D no bike lane (quiet)", "E no bike lane (busy)", "X closed"],
                     "flags": {"REV": F_REV, "4S": F_4S, "STRUCT": F_STRUCT, "CLOSED_TMP": F_CLOSED_TMP, "ROUTE_VERTE": F_ROUTE_VERTE,
                               "OFFSTREET": F_OFFSTREET, "UNPAVED": F_UNPAVED, "OSM": F_OSM, "CONNECTOR": F_CONNECTOR,

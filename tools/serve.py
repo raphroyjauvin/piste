@@ -56,9 +56,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+class Server(http.server.ThreadingHTTPServer):
+    # The map asks for dozens of PMTiles ranges at once, one connection each (HTTP/1.0). Python's default queue of 5
+    # waiting connections overflowed and the browser got "connection refused".
+    request_queue_size = 128
+
+
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
     root = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prototypes")
-    with http.server.ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, directory=root)) as httpd:
+    with Server(("127.0.0.1", port), partial(Handler, directory=root)) as httpd:
         print(f"Serving {root} at http://localhost:{port}/")
         httpd.serve_forever()

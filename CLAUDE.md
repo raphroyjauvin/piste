@@ -8,18 +8,20 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
 - `03_data_sources.md`: data
 
 ## How to work here
-- **Python:** `C:\bikeapp\.venv\Scripts\python.exe` (numpy, shapely, pyproj, rasterio, Pillow, mapbox-vector-tile). Run scripts with `-I`.
+- **Python:** `C:\bikeapp\.venv\Scripts\python.exe` (numpy, shapely, pyproj, rasterio, Pillow, mapbox-vector-tile, pmtiles). Run scripts with `-I`.
 - **GIS command-line tools:** use QGIS's bundled GDAL in `C:\Program Files\QGIS 4.0.1\bin` with `PROJ_DATA` set; see `tools/build_layers.py`.
 - **Data pipeline**, in order:
-  1. `tools/fetch_data.py all` (raw data; re-runnable; logs to `data/raw/_download_log.csv`). `tools/fetch_data.py island` fetches just the island-only extras (OSM paths, 5 m terrain).
-  2. `tools/build_graph.py --extent study`, and `tools/build_graph.py --extent island` for the island-wide graph. **The app loads `prototypes/shared/data/graph_island.js`.**
-  3. `tools/build_layers.py` (study-area layers only)
-  4. `node tools/bench_routing.js`
-  5. `tools/compare_engines.py`
-- **Classic rides:** after rebuilding the island graph or editing `prototypes/shared/data/classics.js`, run `node tools/check_classics.js`. It routes every classic ride and prints its length and bike-lane share, summer and winter.
+  1. `tools/fetch_data.py all` (raw data; re-runnable; logs to `data/raw/_download_log.csv`). `tools/fetch_data.py island` fetches just the island-only extras (OSM paths, CMM 2023 5 m terrain).
+  2. `tools/island_tiles.py dem`: cuts the CMM 2024 LiDAR terrain (the 2023 block covers only 61% of the island box) and merges both into `data/build/dtm_island_5m_merged.tif`. The island graph needs it.
+  3. `tools/build_graph.py --extent study`, and `tools/build_graph.py --extent island` for the island-wide graph (it stops with a message if the merged terrain model is missing). **The app loads `prototypes/shared/data/graph_island.js`.**
+  4. Island map layers: `C:\bikeapp\.venv\Scripts\python.exe -I C:\bikeapp\tools\island_tiles.py all` (about 9 minutes; tasks `dem`, `pois_fetch`, `planned_fetch`, `relief`, `tint`, `contours`, `terrain`, `pois`, `planned`, `check`) and `... -I C:\bikeapp\tools\island_buildings.py all [--source pbf] [--refresh]` (stages `fetch`, `fetch_pbf`, `dsm`, `heights`, `tiles`, `check`; `all --source pbf` rebuilds from the BBBike extract in about 3 minutes, for when Overpass is overloaded). Each also takes one task or stage name instead of `all`. They write the PMTiles files in `prototypes/shared/tiles/`, the terrain tiles in `prototypes/shared/terrain/`, and `pois.js`, `planned.js` and `terrain_index.js` in `prototypes/shared/data/`. The PMTiles files are committed, so keep each under GitHub's 100 MB limit (the building script warns above 90 MB).
+  5. `tools/build_layers.py`: the older study-area layers. The island scripts import its helpers, and the app no longer loads its `contours.js`, `hillshade.js` or `buildings_packed.js`.
+  6. `node tools/bench_routing.js`
+  7. `tools/compare_engines.py`
+- **Classic rides:** after rebuilding the island graph or editing `prototypes/shared/data/classics.js`, run `node tools/check_classics.js`. It routes every classic ride and prints its length and bike-path share, summer and winter.
 - **Serve:** `tools/serve.py` on port 8765. The preview config is `.claude/launch.json` ("bikeapp-prototypes").
 - **Test:**
-  - `node tools/shots/test.mjs` runs functional smoke tests (exit code 1 if any fail).
+  - `node tools/shots/test.mjs [name filter]` runs the functional tests: 11 groups, all passing on 2026-10-29 (exit code 1 if any fail).
   - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/` (A = desktop, P = phone).
   - `node tools/shots/smoke.mjs "?winter=1"` is a quick load check: it opens one app URL and prints console errors and a few state values (the dev server must be running).
   - These all use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden.
@@ -38,18 +40,21 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
 - Credit sources:
   - Ville de Montréal (CC BY 4.0)
   - © OpenStreetMap contributors (ODbL)
-  - NRCan HRDEM (OGL-Canada)
+  - NRCan HRDEM, CMM 2023 and 2024 LiDAR (OGL-Canada)
+  - AWS Terrain Tiles (public dataset; the fallback beyond our own terrain tiles: check the terms at registry.opendata.aws/terrain-tiles before a public launch)
   - STM GTFS
   - BIXI GBFS (station locations and live status)
   - Open-Meteo forecast (CC BY 4.0; free for non-commercial use: check the terms before a public launch)
   - Environment and Climate Change Canada radar (GeoMet)
   - Wikimedia Commons photo authors (credited on each card; see `prototypes/shared/photos/credits.json`)
+- **Moving the camera every frame** (the ride, any animation): move the markers and call `map.redraw()` in the same step, so the map and its icons are drawn together. Markers use `subpixelPositioning: true`, and nothing may CSS-transition a marker's position. Why: `docs/06_prototypes.md`, Ride, "No shaking icons".
 - **Product rules from Raph:**
   - Summer is the default; winter mode (2026-10-29) routes on the 4-season network.
   - Any bike facility counts as infrastructure; warn only where there is none.
   - Warnings are calm (soft orange). Red is only for closed to cyclists.
   - Planned and under-construction routes appear only while browsing, never when routing or riding.
   - English and French (2026-10-29); every new string goes in `prototypes/shared/i18n.js` in both languages.
+  - Wording (2026-10-29): say "bike path(s)" in English and "piste(s) cyclable(s)" in French in everything the user sees. Never "bike lane(s)", "cycle track", "voie cyclable" or "bande cyclable". Code names such as `mostLanes` stay as they are.
 - When Raph decides something or a fact gets verified, add a dated line to the README decisions log or the matching doc, and tell him.
 
 ## Working with Raph

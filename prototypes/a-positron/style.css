@@ -263,6 +263,8 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
   background: var(--blue); color: #fff; font: 800 17px/1 var(--font-display); letter-spacing: .02em; padding: 15px; border-radius: 14px;
   box-shadow: 0 6px 18px rgba(0, 80, 140, .35); }
 .ride-fab:hover { background: var(--blue-deep); }
+.ride-fab { transition: bottom .28s cubic-bezier(.2, .8, .2, 1); }   /* slides with the phone card (same timing as .panel height) */
+.ride-fab.follow { transition: none; }                             /* ...but follows a dragging finger at once */
 @media (min-width: 761px) { .ride-fab { transform: none; } }
 
 /* phones: search bar being edited, at the bottom of the screen with the map above */
@@ -303,6 +305,7 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group, .maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale { display: none; }
   .maplibregl-ctrl-bottom-right { top: var(--safe-top); bottom: auto; right: auto; left: 0; }
   .maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 8px 0 0 10px; }
+  body.riding .maplibregl-ctrl-bottom-right { display: none; }   /* the turn card covers the top left during a ride */
   .brand { touch-action: none; }
   .brand .mark { width: 28px; height: 28px; }
   .brand h1 { font-size: 19px; }

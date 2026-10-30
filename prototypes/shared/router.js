@@ -19,11 +19,11 @@
   "use strict";
 
   const TIERS = [
-    { key: "A", label: "Protected", infra: true },
-    { key: "B", label: "Painted lane", infra: true },
-    { key: "C", label: "Shared lane", infra: true },
-    { key: "D", label: "No bike lane (quiet street)", infra: false },
-    { key: "E", label: "No bike lane (busy street)", infra: false },
+    { key: "A", label: "Protected bike path", infra: true },
+    { key: "B", label: "Painted bike path", infra: true },
+    { key: "C", label: "Shared bike path", infra: true },
+    { key: "D", label: "No bike path (quiet street)", infra: false },
+    { key: "E", label: "No bike path (busy street)", infra: false },
     { key: "X", label: "Closed to bikes", infra: false },
   ];
 
@@ -32,7 +32,7 @@
   const PROFILES = {
     direct: { label: "Most direct", w: [1.0, 1.0, 1.0, 1.0, 1.15, Infinity], hill: 0 },
     balanced: { label: "Balanced", w: [1.0, 1.03, 1.08, 1.7, 3.0, Infinity], hill: 4 },
-    bikemax: { label: "Most bike lanes", w: [1.0, 1.05, 1.12, 3.2, 7.0, Infinity], hill: 4 },
+    bikemax: { label: "Most bike paths", w: [1.0, 1.05, 1.12, 3.2, 7.0, Infinity], hill: 4 },
   };
 
   function weightsFor(strictness, avoidHills) {

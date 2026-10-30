@@ -48,7 +48,6 @@
   const suggester = new window.BikeSuggest.Suggester(router, window.POIS);
   const SK = window.BikeSuggest.STOP_KINDS;
   const CLASSICS = window.CLASSICS || [];
-  const buildings = C.unpackBuildings(window.BUILDINGS_PACKED);
   console.log(`router ready in ${(performance.now() - t0).toFixed(0)} ms: ${router.n} nodes, ${router.m} edges`);
 
   const nodeNames = new Map();
@@ -89,7 +88,7 @@
   }
   const map = new maplibregl.Map({
     container: "map", style, center: [-73.585, 45.522], zoom: 12.8, maxPitch: 80,
-    attributionControl: { compact: true, customAttribution: "Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 · STM · BIXI · Open-Meteo · ECCC" },
+    attributionControl: { compact: true, customAttribution: "Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC" },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
@@ -104,7 +103,7 @@
   const attrib = document.querySelector(".maplibregl-ctrl-attrib");
   if (attrib) { attrib.classList.remove("maplibregl-compact-show"); attrib.removeAttribute("open"); }
 
-  // ------------------------------------------------------------------ 3D terrain: our LiDAR tiles inside the study area, AWS terrain tiles outside it
+  // ------------------------------------------------------------------ 3D terrain: our LiDAR tiles over the island, AWS terrain tiles beyond it
   const AWS_DEM = (key) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${key}.png`;
   const LOCAL_DEM = new Set((window.TERRAIN_TILES || {}).tiles || []);
   const DEM_BASE = new URL("../shared/terrain/", location.href).href;
@@ -118,6 +117,10 @@
     }
     throw new Error(`Terrain tile ${key} unavailable`);
   });
+  // island-wide relief, tint, contours and buildings: one PMTiles file each, read tile by tile with HTTP range requests
+  const pmt = new pmtiles.Protocol();
+  maplibregl.addProtocol("pmtiles", pmt.tile);
+  const TILES = (name) => "pmtiles://" + new URL(`../shared/tiles/${name}.pmtiles`, location.href).href;
 
   // the bike network straight from the routing graph (no separate download): tiers 0-2, with REV and 4-season flags
   function networkGeoJSON() {
@@ -133,10 +136,10 @@
 
   // ------------------------------------------------------------------ sources
   const empty = { type: "FeatureCollection", features: [] };
-  map.addSource("tint", { type: "image", url: "../shared/data/" + window.ELEVATION_TINT.url, coordinates: window.ELEVATION_TINT.coordinates });
-  map.addSource("relief", { type: "image", url: "../shared/data/" + window.HILLSHADE.url, coordinates: window.HILLSHADE.coordinates });
-  map.addSource("contours", { type: "geojson", data: window.CONTOURS });
-  map.addSource("bld", { type: "geojson", data: buildings });
+  map.addSource("tint", { type: "raster", url: TILES("tint"), tileSize: 256 });
+  map.addSource("relief", { type: "raster", url: TILES("relief"), tileSize: 256 });
+  map.addSource("contours", { type: "vector", url: TILES("contours") });
+  map.addSource("bld", { type: "vector", url: TILES("buildings") });
   map.addSource("network", { type: "geojson", data: networkGeoJSON() });
   map.addSource("planned", { type: "geojson", data: window.PLANNED });
   map.addSource("pois", { type: "geojson", data: C.poisGeoJSON(window.POIS) });
@@ -156,14 +159,15 @@
     paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.85, 15, 0.8, 18, 0.72], "raster-fade-duration": 0 } }, firstRoad);
   const CONTOUR = "#9a7c52";
   // contours: 1 m detail lines only where the ground rises 2.5-15 %, so climbs show as denser lines (replaces the chevrons)
-  add({ id: "contours-detail", type: "line", source: "contours", minzoom: 14, filter: ["==", ["get", "i"], 2],
+  add({ id: "contours-detail", type: "line", source: "contours", "source-layer": "contours", minzoom: 14, filter: ["==", ["get", "i"], 2],
     paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0.16, 16, 0.32], "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.4, 17, 0.7] } }, firstRoad);
-  add({ id: "contours-minor", type: "line", source: "contours", minzoom: 13, filter: ["==", ["get", "i"], 0],
+  add({ id: "contours-minor", type: "line", source: "contours", "source-layer": "contours", minzoom: 13, filter: ["==", ["get", "i"], 0],
     paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.2, 15, 0.42], "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 17, 0.9] } }, firstRoad);
-  add({ id: "contours-index", type: "line", source: "contours", minzoom: 11.5, filter: ["==", ["get", "i"], 1],
+  add({ id: "contours-index", type: "line", source: "contours", "source-layer": "contours", minzoom: 11.5, filter: ["==", ["get", "i"], 1],
     paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 11.5, 0.45, 14, 0.75], "line-width": ["interpolate", ["linear"], ["zoom"], 11.5, 0.6, 16, 1.4] } }, firstRoad);
-  add({ id: "bld-flat", type: "fill", source: "bld", minzoom: 14, paint: { "fill-color": "#e7e4de", "fill-opacity": 0.92, "fill-outline-color": "#d9d5cd" } });
-  add({ id: "bld-3d", type: "fill-extrusion", source: "bld", minzoom: 14, layout: { visibility: "none" },
+  add({ id: "bld-flat", type: "fill", source: "bld", "source-layer": "buildings", minzoom: 13,
+    paint: { "fill-color": "#e7e4de", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0, 14, 0.92], "fill-outline-color": "#d9d5cd" } });
+  add({ id: "bld-3d", type: "fill-extrusion", source: "bld", "source-layer": "buildings", minzoom: 14, layout: { visibility: "none" },
     paint: { "fill-extrusion-color": ["interpolate", ["linear"], ["get", "h"], 0, "#f1eee8", 25, "#e6e2db", 90, "#d9d3ca"],
       "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.82, "fill-extrusion-vertical-gradient": true } });
   add({ id: "radar", type: "raster", source: "radar", layout: { visibility: "none" }, paint: { "raster-opacity": 0.5, "raster-fade-duration": 300 } });
@@ -201,7 +205,7 @@
   // a ring under the stop's or sight's POI icon
   add({ id: "stops", type: "circle", source: "stops",
     paint: { "circle-radius": 7.5, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 2.5, "circle-pitch-alignment": "map" } });
-  add({ id: "contour-labels", type: "symbol", source: "contours", minzoom: 13.5, filter: ["==", ["get", "i"], 1],
+  add({ id: "contour-labels", type: "symbol", source: "contours", "source-layer": "contours", minzoom: 13.5, filter: ["==", ["get", "i"], 1],
     layout: { "symbol-placement": "line", "text-field": ["concat", ["to-string", ["get", "e"]], " m"], "text-font": ["Noto Sans Regular"],
       "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, 10, 17, 12], "symbol-spacing": 360, "text-max-angle": 30, "text-padding": 2 },
     paint: { "text-color": "#7d6542", "text-halo-color": "rgba(251,248,241,0.95)", "text-halo-width": 1.6 } });
@@ -807,7 +811,12 @@
     const r = $("#panel").getBoundingClientRect();
     if (isPhone()) {
       fab.style.left = ""; fab.style.width = "";
-      fab.style.bottom = sheet.state === "full" ? "calc(14px + var(--safe-bottom))" : `${Math.round(innerHeight - r.top + 10)}px`;
+      // While a finger drags the card, follow it. Otherwise go where the card is heading and slide there with it
+      // (same timing as the card), instead of waiting for the card's animation to end and then jumping.
+      const dragging = $("#panel").classList.contains("dragging");
+      fab.classList.toggle("follow", dragging);
+      const cardTop = dragging ? r.top : innerHeight - sheetHeight(sheet.state);
+      fab.style.bottom = sheet.state === "full" ? "calc(14px + var(--safe-bottom))" : `${Math.round(innerHeight - cardTop + 10)}px`;
     } else {
       fab.style.left = `${Math.round(r.left + 18)}px`; fab.style.width = `${Math.round(r.width - 36)}px`;
       fab.style.bottom = `${Math.round(innerHeight - r.bottom + 14)}px`;

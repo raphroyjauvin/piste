@@ -1,10 +1,10 @@
 # Technical options and what's needed (draft 2026-10-25)
 
 ## Update 2026-10-25, afternoon: what we chose and why
-- **Routing:** our own router in the browser. It was tested against OSRM, Valhalla and BRouter, and wins on bike-lane share and speed (see `05_routing.md`). QGIS is no longer the routing tool. It stays useful for checking data.
+- **Routing:** our own router in the browser. It was tested against OSRM, Valhalla and BRouter, and wins on bike-path share and speed (see `05_routing.md`). QGIS is no longer the routing tool. It stays useful for checking data.
 - **Maps:** MapLibre GL JS **5.24** (the last version with a plain-script build; v6 is module-only), plus **three.js r186** for the axonometric model. Both are vendored in `prototypes/vendor/`.
 - **three.js** works well here. Prototype C builds 71k buildings, terrain and route ribbons in about 3–5 s. It uses an orthographic camera, and its shaders bend the world and exaggerate hills ahead live, so the sliders respond instantly. On phones it will need tiling or a smaller radius around the route.
-- **Basemap for the prototypes:** OpenFreeMap (free, no key). For a public app: host our own Protomaps PMTiles file for Montreal on a CDN, so nothing depends on someone else's free service.
+- **Basemap for the prototypes:** OpenFreeMap (free, no key). For a public app: host our own Protomaps PMTiles file for Montreal on a CDN, so nothing depends on someone else's free service. (2026-10-29: our own layers already work this way. Hill shading, tint, contours and buildings are four PMTiles files on GitHub Pages, read with HTTP range requests. Only the basemap itself, with streets, water, parks and labels, is still OpenFreeMap.)
 - **Database or TablePlus question:** a local PostgreSQL/PostGIS server is free; the data lives on your own disk. But the app doesn't need a database at runtime. It runs on static files (graph, layers, tiles) served from a free host or CDN. Use PostGIS or DuckDB only as an analysis workbench when that helps, and keep it separate from any work server.
 - **Phone testing:** browser GPS on iPhone needs HTTPS, so the next step is a free static host: GitHub Pages, or Cloudflare Pages if the repo stays private. Native iPhone permissions (background GPS, watch taps) come later, with Capacitor.
 - **GitHub:** the GitHub connector is installed but not authorised in this session (authorise it with `/mcp` or in the app's connector settings), and Git isn't installed on this PC. Once both are done: create a repo (`raphroyjauvin/piste`?), commit, and optionally turn on Pages.
@@ -47,8 +47,8 @@ Options, from least to most effort:
 | three.js custom view | Full control | True orthographic | Free, but the most work | Stretch goal: a white-model corridor view around the route |
 
 - **Seeing yourself:** a 3D cyclist model through a three.js custom layer in MapLibre (MapLibre has an official example), or a simple heading puck. The camera follows behind and above you, pitched about 55–65°.
-- **Base tiles:** recommended is the Protomaps basemap, one PMTiles file we host ourselves (no key, no meter, OSM credit). OpenFreeMap (free public tiles, no key, but it may change) is fine for quick tests. MapTiler or Stadia (free tiers with a key) are the fallback.
-- **Our Montreal layers:** vector tiles built with GDAL (included with QGIS), tippecanoe or planetiler.
+- **Base tiles:** recommended is the Protomaps basemap, one PMTiles file we host ourselves (no key, no meter, OSM credit). OpenFreeMap (free public tiles, no key, but it may change) is fine for quick tests. MapTiler or Stadia (free tiers with a key) are the fallback. Tested 2026-10-29 on our own layers: a PMTiles file on GitHub Pages works with no tile server. GitHub refuses files over 100 MB (the building script warns above 90 MB), so check a basemap file against that limit before choosing this host.
+- **Our Montreal layers:** built 2026-10-29 as PMTiles with our own Python scripts (`tools/island_tiles.py`, `tools/island_buildings.py`: rasterio, shapely, mapbox-vector-tile and the `pmtiles` writer, with GDAL from QGIS for the contours and the warps). No tippecanoe or planetiler was needed. Details in `06_prototypes.md`.
 
 ## 4. Search and POIs
 - **Address search:** build a small search index from Montreal's official address points. For prototypes, Photon (Komoot's free OSM geocoder, fair use) works. Nominatim's public server forbids search-as-you-type.

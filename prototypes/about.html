@@ -43,7 +43,7 @@
 <main>
   <header>
     <h1>Piste</h1>
-    <p>A Montréal bike-commuter app, in the prototype stage. It routes you along bike lanes as much as it can, warns you calmly before any stretch without one, and shows the hills before you reach them. It covers the whole island, in English and French, with a winter mode, a wind and rain layer and live BIXI bikes. Built on City of Montréal open data (bike network, Géobase, live bike-lane tiles), OpenStreetMap, NRCan 2023 LiDAR (terrain and building heights), STM, BIXI, Open-Meteo and Environment Canada radar.</p>
+    <p>A Montréal bike-commuter app, in the prototype stage. It routes you along bike paths as much as it can, warns you calmly before any stretch without one, and shows the hills before you reach them. It covers the whole island, in English and French, with a winter mode, a wind and rain layer and live BIXI bikes. Built on City of Montréal open data (bike network, Géobase, live bike-path tiles), OpenStreetMap, NRCan 2023 and 2024 LiDAR (terrain and building heights), STM, BIXI, Open-Meteo and Environment Canada radar.</p>
     <div class="metro" aria-hidden="true"><i style="background:var(--green)"></i><i style="background:var(--orange)"></i><i style="background:var(--yellow)"></i><i style="background:var(--blue)"></i></div>
     <div class="actions"><a class="open" href="a-positron/">Open the app</a><a class="open alt" href="phone.html">See it on phone screens</a></div>
   </header>
@@ -52,11 +52,13 @@
     <div>
       <h2>Plan a route</h2>
       <ul>
-        <li>Three options with a <b>direct ↔ bike lanes</b> slider; the route updates live as you drag the pins</li>
-        <li>Calm orange labels where there's no bike lane (stretches of 50 m or more), and a list of those stretches</li>
+        <li>Three options with a <b>direct ↔ bike paths</b> slider; the route updates live as you drag the pins</li>
+        <li><b>Avoid hills</b> and <b>Avoid headwinds</b> sit side by side under the slider; the wind option uses today's forecast to steer routes and suggested rides away from streets where you'd ride into the wind</li>
+        <li>Where there's no bike path, the route line turns a calm orange and dashed, and the panel lists each stretch of 50 m or more</li>
+        <li>A <b>Let's ride!</b> button starts the ride; if it scrolls out of sight, a copy floats on screen (above the sheet on a phone) so it's always one tap away</li>
         <li>Elevation profile with the climbs shaded, and finer contour lines on the map where the ground climbs</li>
         <li>Routes across the whole island, worked out on your device in a few milliseconds</li>
-        <li>Planned and in-construction bike routes (City live data) while browsing only</li>
+        <li>Planned and in-construction bike routes across the island (City live data) while browsing only</li>
       </ul>
     </div>
     <div class="shots">
@@ -71,8 +73,8 @@
       <h2>Suggest a ride</h2>
       <ul>
         <li>Pick a start, a loop or a one-way ride, a distance from 1 to 100 km, and an optional stop: coffee, a restaurant, a bakery, ice cream, a bar, a public restroom, a park or viewpoint, a museum or a bike shop</li>
-        <li>Three rides that stay on bike lanes, come back a different way, and stop where you asked</li>
-        <li>Optional "Avoid headwinds": it counts the time the wind costs you, and loops head into the wind first</li>
+        <li>Three rides that stay on bike paths, come back a different way, and stop where you asked</li>
+        <li>Optional "Avoid headwinds" (next to "Avoid hills"): it counts the time the wind costs you, and loops head into the wind first</li>
       </ul>
     </div>
     <div class="shots">
@@ -86,7 +88,7 @@
       <h2>Classic Montréal rides</h2>
       <ul>
         <li>Ten curated rides from 9 to 57 km: Old Port, Plateau and Mile End, Mont Royal, Little Italy and Jean-Talon Market, Olympic Park, Parc Jean-Drapeau, Rivière-des-Prairies, Verdun, the Lachine Canal, and on to Pointe-Claire</li>
-        <li>Swipe through the photo cards; the chosen ride is drawn on the map with its sights</li>
+        <li>Swipe through the photo cards; the chosen ride is drawn on the map, with its sights marked by small white circles</li>
         <li>Routed live on the bike network, so winter mode re-routes them</li>
         <li>Photos from Wikimedia Commons (free licences), credited on each card</li>
       </ul>
@@ -103,7 +105,8 @@
       <ul>
         <li>Soft elevation colours, LiDAR hill shading and contours every 5 m (bold every 25 m, labelled), with finer 1 m lines where the ground climbs, so a hill shows as denser lines</li>
         <li>One-button 2D ↔ bird's-eye 3D, with LiDAR building heights and LiDAR terrain</li>
-        <li>For now these map layers cover the Plateau, Rosemont, Hochelaga, Centre-Sud and Olympic Park; routing covers the whole island</li>
+        <li>All of it covers the whole island, with about 560,000 buildings; the terrain comes from NRCan's 2023 and 2024 LiDAR, which between them cover the island</li>
+        <li>The map layers are tile files, and the browser loads only the tiles for the part of the island you're looking at</li>
       </ul>
     </div>
     <div class="shots">
@@ -118,12 +121,12 @@
       <h2>Winter mode</h2>
       <ul>
         <li>A snowflake button turns the map icy light blue and routes only on the City's 4-season (winter-cleared) bike network</li>
-        <li>Lanes that aren't cleared show grey and dotted, and warnings say "not cleared"</li>
+        <li>Bike paths that aren't cleared show grey and dotted, and warnings say "without a winter-cleared bike path"</li>
         <li>Snow and ice status comes from the weather forecast: snowfall in the last 24 hours, the temperature, and a freeze–thaw warning. Real-time snow-clearing data isn't public yet</li>
       </ul>
     </div>
     <div class="shots">
-      <a href="screens/A11-winter.png"><img src="screens/A11-winter.png" alt="Winter mode: an icy blue map, a route on the 4-season network and 'not cleared' labels"></a>
+      <a href="screens/A11-winter.png"><img src="screens/A11-winter.png" alt="Winter mode: an icy blue map and a route on the 4-season network, with the stretches that aren't cleared dashed in orange"></a>
       <a href="screens/P5-phone-winter-fr.png"><img src="screens/P5-phone-winter-fr.png" alt="Winter mode on a phone, in French"></a>
     </div>
   </section>
@@ -149,7 +152,7 @@
       <ul>
         <li>The ride starts at once in bird's-eye 3D, with the camera low and behind you; the terrain swells as a climb comes up, so you feel the hill before you reach it</li>
         <li>Hill card: "Climb in 260 m, +30 m over 860 m", with the next 800 m of elevation</li>
-        <li>Calm gap alerts, turn card, and places popping up on their side of the street</li>
+        <li>Calm gap alerts, a turn card, and places popping up on their side of the street, steady on the map even in top-down view</li>
         <li>A sound button cycles chime, voice and off; top-down view on one button</li>
       </ul>
     </div>
@@ -178,6 +181,8 @@
       <h2>On a phone</h2>
       <ul>
         <li>The panel is a swipeable sheet: drag the handle up for full screen, or down to a small strip to focus on the map; a tap steps through the sizes</li>
+        <li>Tap a search field and it moves to the bottom of the screen, with the map above it: type an address or tap the map, then ✓ to accept or ✕ to cancel. ✓ on the start moves straight on to the destination</li>
+        <li>There are no zoom buttons on phones, since the sheet covered them: pinch to zoom. The map credits button (the “i”) sits at the top left</li>
         <li>The phone page shows the app inside iPhone-sized screens (notch, status bar and home bar included), side by side, with a picker for what each one shows</li>
         <li>On a real iPhone, open this site in Safari and use Share → Add to Home Screen</li>
       </ul>
@@ -185,6 +190,8 @@
     <div class="shots">
       <a href="screens/P0-phone-preview.png"><img src="screens/P0-phone-preview.png" alt="The phone preview page"></a>
       <a href="screens/P1-phone-route.png"><img src="screens/P1-phone-route.png" alt="A route on a phone screen, with the swipeable panel at the bottom"></a>
+      <a href="screens/P6-phone-search-bottom.png"><img src="screens/P6-phone-search-bottom.png" alt="On a phone, the destination search sits at the bottom of the screen with address suggestions above it and the map behind"></a>
+      <a href="screens/P7-phone-lets-ride.png"><img src="screens/P7-phone-lets-ride.png" alt="A route on a phone with the Let's ride! button floating just above the small sheet"></a>
     </div>
   </section>
 
@@ -192,7 +199,7 @@
     <h2>How the routing compares</h2>
     <p>Share of each route on City bike infrastructure, same yardstick for every engine. Ours runs on the device in about 0.1 ms on the study area, and in 1–8 ms across the whole island (Atwater Market to Pointe-Claire is 24.5 km, 82% on bike infrastructure, in 8 ms). The public servers take 330–700 ms over the network. The table below is the study area.</p>
     <div class="tw"><table>
-      <thead><tr><th>Trip</th><th>Ours, most bike lanes</th><th>Ours, balanced</th><th>Valhalla (use_roads 0)</th><th>BRouter safety</th><th>OSRM bike</th></tr></thead>
+      <thead><tr><th>Trip</th><th>Ours, most bike paths</th><th>Ours, balanced</th><th>Valhalla (use_roads 0)</th><th>BRouter safety</th><th>OSRM bike</th></tr></thead>
       <tbody>
         <tr><td>Parc La Fontaine → Avenue du Parc (Rachel)</td><td>100% · 1.83 km</td><td>100% · 1.83 km</td><td>100% · 1.83 km</td><td>99% · 1.84 km</td><td>99% · 1.84 km</td></tr>
         <tr><td>Mont-Royal metro → Papineau</td><td>87% · 1.94 km</td><td>87% · 1.94 km</td><td>62% · 1.52 km</td><td>46% · 1.57 km</td><td>3% · 1.21 km</td></tr>
@@ -201,7 +208,7 @@
       </tbody>
     </table></div>
     <h2 style="margin-top:18px">Run it locally</h2>
-    <p>Double-click <code>C:\bikeapp\prototypes\start-prototypes.bat</code>, then open <code>http://localhost:8765/</code>. The basemap tiles (OpenFreeMap), terrain tiles outside the study area (AWS), address search (Ville de Montréal), the weather (Open-Meteo forecast, Environment Canada radar) and live BIXI need an internet connection; everything else, including the ride photos, is local.</p>
+    <p>Double-click <code>C:\bikeapp\prototypes\start-prototypes.bat</code>, then open <code>http://localhost:8765/</code>. The basemap tiles (OpenFreeMap), address search (Ville de Montréal), the weather (Open-Meteo forecast, Environment Canada radar) and live BIXI need an internet connection (so do terrain tiles beyond the island, from AWS, which are only a fallback); everything else, including the relief, contour, building and terrain tiles and the ride photos, is local.</p>
   </section>
 </main>
 </body>

@@ -86,11 +86,23 @@ await run("elevation: tint, shading, detail contours, LiDAR terrain", `${APP}?tr
   return page.evaluate(async (idleSrc) => {
     const app = window.__app, m = app.map;
     const visible = ["tint", "relief", "contours-detail", "contours-index", "contours-minor"].map((id) => [id, m.getLayoutProperty(id, "visibility") || "visible"]);
-    const detailLines = window.CONTOURS.features.filter((f) => f.properties.i === 2).length;
+    const detailLines = m.querySourceFeatures("contours", { sourceLayer: "contours", filter: ["==", ["get", "i"], 2] }).length;
+    // island-wide tiles: the same layers exist in the West Island, downtown and the east end
+    const tileXY = (lon, lat, z) => { const n = 2 ** z, r = (lat * Math.PI) / 180;
+      return [Math.floor(((lon + 180) / 360) * n), Math.floor(((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2) * n)]; };
+    const places = { westIsland: [-73.85, 45.49], downtown: [-73.567, 45.503], eastEnd: [-73.53, 45.63] };
+    const files = { relief: 14, tint: 12, contours: 14, buildings: 14 };
+    const coverage = {};
+    for (const [f, z] of Object.entries(files)) {
+      const pm = new pmtiles.PMTiles(new URL(`../shared/tiles/${f}.pmtiles`, location.href).href);
+      coverage[f] = {};
+      for (const [name, [lon, lat]] of Object.entries(places)) { const [x, y] = tileXY(lon, lat, z); const t = await pm.getZxy(z, x, y); coverage[f][name] = t ? t.data.byteLength : 0; }
+    }
+    const covered = Object.values(coverage).every((c) => Object.values(c).every((b) => b > 0));
     app.set3d(true); await eval(idleSrc);
     const local = performance.getEntriesByType("resource").filter((e) => e.name.includes("/shared/terrain/")).length;
-    return { ok: visible.every((v) => v[1] === "visible") && detailLines > 1000 && local > 0 && m.terrain && m.terrain.exaggeration === 1.6,
-      visible, detailLines, localTerrainTiles: local, exaggeration: m.terrain && m.terrain.exaggeration, hillBoost: app.CAM.hill.boost };
+    return { ok: visible.every((v) => v[1] === "visible") && detailLines > 50 && covered && local > 0 && m.terrain && m.terrain.exaggeration === 1.6,
+      visible, detailLines, coverage, localTerrainTiles: local, exaggeration: m.terrain && m.terrain.exaggeration, hillBoost: app.CAM.hill.boost };
   }, idle);
 });
 
