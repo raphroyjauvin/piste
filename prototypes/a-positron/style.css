@@ -102,6 +102,13 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .pick { border: 0; background: transparent; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--ink-3); }
 .pick:hover, .pick.on { background: var(--blue-soft); color: var(--blue-deep); }
 .pick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+/* small grey ✕ inside the bar you are typing in (phones): leaves without changing the place */
+.clear { display: none; border: 0; background: transparent; width: 32px; height: 32px; border-radius: 50%; place-items: center; color: #9aa3ab; padding: 0; }
+.clear svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+body.searching .field:focus-within .clear { display: grid; }
+body.searching .field:focus-within .pick { display: none; }
+.field { transition: box-shadow .3s, border-color .3s; }
+.field.next { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }   /* "now the destination" */
 .suggest { position: absolute; left: 0; right: 0; top: 100px; margin: 0; padding: 6px; list-style: none; background: var(--paper);
   border-radius: 12px; box-shadow: var(--shadow); z-index: 10; max-height: 320px; overflow: auto; }
 .suggest li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; }
@@ -258,34 +265,6 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .poi-pop img { width: 30px; height: 30px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
 .poi-pop span { transition: opacity .25s; background: #fff; border-radius: 8px; padding: 3px 7px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,.15); white-space: nowrap; }
 
-/* "Let's ride!" floating copy (placed by app.js above the phone panel, or at the foot of the desktop panel) */
-.ride-fab { position: absolute; z-index: 7; left: 50%; transform: translateX(-50%); width: min(380px, calc(100% - 32px)); border: 0;
-  background: var(--blue); color: #fff; font: 800 17px/1 var(--font-display); letter-spacing: .02em; padding: 15px; border-radius: 14px;
-  box-shadow: 0 6px 18px rgba(0, 80, 140, .35); }
-.ride-fab:hover { background: var(--blue-deep); }
-.ride-fab { transition: bottom .28s cubic-bezier(.2, .8, .2, 1); }   /* slides with the phone card (same timing as .panel height) */
-.ride-fab.follow { transition: none; }                             /* ...but follows a dragging finger at once */
-@media (min-width: 761px) { .ride-fab { transform: none; } }
-
-/* phones: search bar being edited, at the bottom of the screen with the map above */
-.focus-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 9; background: var(--paper); border-radius: 18px 18px 0 0;
-  box-shadow: 0 -6px 24px rgba(25, 30, 36, .16); padding: 10px 14px calc(12px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 8px; }
-.focus-head { display: flex; align-items: center; justify-content: space-between; }
-.focus-label { font-weight: 700; font-size: 14px; color: var(--ink-2); }
-.focus-actions { display: flex; gap: 6px; }
-.focus-btn { width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--paper-2); display: grid; place-items: center; padding: 0; }
-.focus-btn svg { width: 18px; height: 18px; fill: none; stroke: var(--ink-3); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.focus-btn.ok { background: var(--blue-soft); }
-.focus-btn.ok svg { stroke: var(--blue-deep); }
-.focus-field input { font-size: 16px; }   /* 16 px stops iPhone Safari from zooming in on focus */
-.focus-hint { font-size: 12px; color: var(--ink-3); }
-.focus-suggest { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 8px); margin: 0; padding: 6px; list-style: none; background: var(--paper);
-  border-radius: 12px; box-shadow: var(--shadow); max-height: 40vh; overflow: auto; }
-.focus-suggest li { padding: 9px 10px; border-radius: 8px; display: flex; flex-direction: column; }
-.focus-suggest li:active { background: var(--blue-soft); }
-.focus-suggest li small { color: var(--ink-3); }
-body.focusing .panel, body.focusing .map-controls, body.focusing .wx-card, body.focusing .legend, body.focusing .ride-fab { display: none !important; }
-
 .primary { border: 0; background: var(--blue); color: #fff; border-radius: 12px; padding: 11px 16px; font-weight: 700; }
 .toast { position: absolute; bottom: calc(24px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: #10324a; color: #fff; padding: 10px 16px; border-radius: 12px; z-index: 30; font-size: 14px; max-width: calc(100% - 32px); }
 
@@ -306,6 +285,11 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .maplibregl-ctrl-bottom-right { top: var(--safe-top); bottom: auto; right: auto; left: 0; }
   .maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 8px 0 0 10px; }
   body.riding .maplibregl-ctrl-bottom-right { display: none; }   /* the turn card covers the top left during a ride */
+  .field input { font-size: 16px; }   /* 16 px stops iPhone Safari from zooming in when you tap a search bar */
+  /* typing a place: only the search bars show, sitting on the keyboard; suggestions float over the map above */
+  body.searching #panel > :not(.grabber):not(.search) { display: none !important; }
+  body.searching .map-controls, body.searching .wx-card, body.searching .legend { display: none !important; }
+  body > .suggest { position: fixed; left: 10px; right: 10px; top: auto; z-index: 20; overflow: auto; box-shadow: var(--shadow); }
   .brand { touch-action: none; }
   .brand .mark { width: 28px; height: 28px; }
   .brand h1 { font-size: 19px; }

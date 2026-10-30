@@ -34,9 +34,8 @@ const SHOTS = [
   { name: "P3-phone-suggest", url: `${APP}?trip=montroyal&suggest=loop&km=10&safe=62,34`, ...phone, steps: [["wait", 2000]] },
   { name: "P4-phone-classics", url: `${APP}?classic=oldport&safe=62,34`, ...phone, steps: [["wait", 2500]] },
   { name: "P5-phone-winter-fr", url: `${APP}?trip=montroyal&winter=1&lang=fr&safe=62,34`, ...phone, steps: [["wait", 3500]] },
-  { name: "P6-phone-search-bottom", url: `${APP}?trip=rachel&safe=62,34`, ...phone, steps: [["eval", "window.__app.openFocus('to')"], ["wait", 600],
-    ["eval", "(() => { const i = document.querySelector('#focus-input'); i.value = 'marché jean'; i.dispatchEvent(new Event('input', { bubbles: true })); })()"], ["wait", 1500]] },
-  { name: "P7-phone-lets-ride", url: `${APP}?trip=rachel&safe=62,34`, ...phone, steps: [["eval", "window.__app.setSheet('peek')"], ["wait", 1200]] },
+  { name: "P6-phone-search", url: `${APP}?trip=rachel&safe=62,34`, ...phone, steps: [["eval", "document.querySelector('#to').focus()"], ["wait", 600],
+    ["eval", "(() => { const i = document.querySelector('#to'); i.value = 'marché jean'; i.dispatchEvent(new Event('input', { bubbles: true })); })()"], ["wait", 1500]] },
 ];
 
 const filter = process.argv[2];

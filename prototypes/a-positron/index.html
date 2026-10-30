@@ -48,11 +48,13 @@
   <section class="search go-or-custom" aria-label="Plan a ride">
     <label for="from" class="field-label custom-only" data-i18n="startLabel" hidden></label>
     <div class="field"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg></span>
-      <input id="from" data-i18n-ph="fromPh" autocomplete="off" spellcheck="false">
+      <input id="from" enterkeyhint="next" data-i18n-ph="fromPh" autocomplete="off" spellcheck="false">
+      <button type="button" class="clear" data-target="from" data-i18n-title="cancel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
       <button type="button" class="pick" data-target="from" data-i18n-title="pickFrom"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
     </div>
     <div class="field go-only"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#0095E6" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#0095E6"/></svg></span>
-      <input id="to" data-i18n-ph="toPh" autocomplete="off" spellcheck="false">
+      <input id="to" enterkeyhint="go" data-i18n-ph="toPh" autocomplete="off" spellcheck="false">
+      <button type="button" class="clear" data-target="to" data-i18n-title="cancel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
       <button type="button" class="pick" data-target="to" data-i18n-title="pickTo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
     </div>
     <ul id="suggest" class="suggest" hidden></ul>
@@ -119,22 +121,6 @@
 </div>
 
 <div id="wx-card" class="wx-card" hidden aria-live="polite"></div>
-
-<button type="button" id="ride-fab" class="ride-fab" data-i18n="letsRide" hidden></button>
-
-<!-- phones: the search bar being edited moves to the bottom, with the map above it -->
-<div id="focus-bar" class="focus-bar" hidden>
-  <ul id="focus-suggest" class="focus-suggest" hidden></ul>
-  <div class="focus-head">
-    <span id="focus-label" class="focus-label"></span>
-    <span class="focus-actions">
-      <button type="button" id="focus-cancel" class="focus-btn" data-i18n-title="cancel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
-      <button type="button" id="focus-ok" class="focus-btn ok" data-i18n-title="accept"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4 4 9-9"/></svg></button>
-    </span>
-  </div>
-  <div class="field focus-field"><span id="focus-pin" class="pin" aria-hidden="true"></span><input id="focus-input" autocomplete="off" spellcheck="false" enterkeyhint="done"></div>
-  <div class="focus-hint" data-i18n="focusHint"></div>
-</div>
 
 <div id="legend" class="legend">
   <details>

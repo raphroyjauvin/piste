@@ -6,7 +6,7 @@
   const NB = " ";   // narrow no-break space before % and : in French
   const S = {
     en: {
-      letsRide: "Let's ride!", focusFrom: "Start", focusTo: "Destination", focusHint: "Type an address, or tap the map", accept: "Done", cancel: "Cancel",
+      letsRide: "Let's ride!", cancel: "Cancel",
       stopPrefix: "Stop · ", kindOneWay: "One-way",
       wxTitle: "Wind & rain", winterTitle: "Winter", classicsLoading: "Routing the classics…",
       tagline: "Montréal by bike path · prototype",
@@ -69,7 +69,7 @@
       bixiClosed: "Not renting right now", bixiLive: "live",
     },
     fr: {
-      letsRide: "Allons-y!", focusFrom: "Départ", focusTo: "Destination", focusHint: "Tapez une adresse ou touchez la carte", accept: "OK", cancel: "Annuler",
+      letsRide: "Allons-y!", cancel: "Annuler",
       stopPrefix: "Arrêt · ", kindOneWay: "Aller simple",
       wxTitle: "Vent et pluie", winterTitle: "Hiver", classicsLoading: "Calcul des balades classiques…",
       tagline: "Montréal en piste cyclable · prototype",

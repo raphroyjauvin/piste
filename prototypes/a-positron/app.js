@@ -69,8 +69,6 @@
     pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
     tab: "go", smode: "classics", classic: 0, sugg: { loop: true, km: 10, stop: "" }, avoidWind: false,
     winter: false, wx: false, wxData: null, bixi: null, sound: store.get("sound", "chime"), rideEnd: "" };
-  const focus = { which: null, prev: null };   // phones: which search bar is open at the bottom of the screen
-  let goVisible = false;                        // is the panel's own "Let's ride!" button on screen?
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
   let style;
@@ -423,7 +421,7 @@
   });
 
   // ------------------------------------------------------------------ UI: search
-  const fromEl = $("#from"), toEl = $("#to"), sug = $("#suggest");
+  const fromEl = $("#from"), toEl = $("#to"), sug = $("#suggest"), sugHome = sug.parentElement;
   let sugItems = [], sugActive = -1, sugTarget = null, sugTimer = null;
   for (const el of [fromEl, toEl]) {
     el.addEventListener("input", () => {
@@ -431,23 +429,50 @@
       sugTimer = setTimeout(async () => { sugItems = await geocoder.search(el.value); sugActive = -1; renderSuggest(); }, 160);
     });
     el.addEventListener("keydown", (e) => {
-      if (sug.hidden) return;
-      if (e.key === "ArrowDown") { sugActive = Math.min(sugItems.length - 1, sugActive + 1); renderSuggest(); e.preventDefault(); }
-      if (e.key === "ArrowUp") { sugActive = Math.max(0, sugActive - 1); renderSuggest(); e.preventDefault(); }
-      if (e.key === "Enter" && sugItems.length) { choose(sugItems[Math.max(0, sugActive)]); e.preventDefault(); }
-      if (e.key === "Escape") sug.hidden = true;
+      if (e.key === "ArrowDown" && !sug.hidden) { sugActive = Math.min(sugItems.length - 1, sugActive + 1); renderSuggest(); e.preventDefault(); }
+      if (e.key === "ArrowUp" && !sug.hidden) { sugActive = Math.max(0, sugActive - 1); renderSuggest(); e.preventDefault(); }
+      if (e.key === "Enter") {   // the keyboard's return key: the highlighted (or top) suggestion, or the place as it is
+        e.preventDefault(); sugTarget = el.id;
+        if (sugItems.length && !sug.hidden) choose(sugItems[Math.max(0, sugActive)]);
+        else if (el.value === (state[el.id + "Label"] || "")) placeDone(el.id);
+      }
+      if (e.key === "Escape") { if (search.which) cancelSearch(); else sug.hidden = true; }
     });
-    el.addEventListener("blur", () => setTimeout(() => (sug.hidden = true), 180));
+    el.addEventListener("blur", () => setTimeout(() => blurred(el), 180));
   }
   function renderSuggest() {
     if (!sugItems.length) { sug.hidden = true; return; }
-    const field = (sugTarget === "from" ? fromEl : toEl).closest(".field");
-    sug.style.top = field.offsetTop + field.offsetHeight + 4 + "px";
+    if (search.which) placeSuggest();
+    else { const field = (sugTarget === "from" ? fromEl : toEl).closest(".field"); sug.style.top = field.offsetTop + field.offsetHeight + 4 + "px"; }
     sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("");
     sug.hidden = false;
-    sug.querySelectorAll("li").forEach((li) => li.addEventListener("mousedown", (e) => { e.preventDefault(); choose(sugItems[+li.dataset.i]); }));
+    sug.querySelectorAll("li").forEach((li) => {
+      const pick = (e) => { e.preventDefault(); choose(sugItems[+li.dataset.i]); };
+      li.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") pick(e); });   // a finger: pick at once, the keyboard stays up
+      li.addEventListener("mousedown", pick);
+    });
   }
-  function choose(it) { sug.hidden = true; setPoint(sugTarget, [it.lon, it.lat], it.label); recompute(true); }
+  function choose(it) {
+    const which = sugTarget;
+    sug.hidden = true; sugItems = [];
+    setPoint(which, [it.lon, it.lat], it.label);
+    placeDone(which);
+  }
+  // a place was chosen (or kept as it was): the start moves straight on to an empty destination; otherwise the search is over
+  function placeDone(which) {
+    if (which === "from" && state.tab === "go" && !state.to) {
+      sugTarget = "to";
+      if (search.which) {
+        activate("to");
+        if (state.from) map.easeTo({ center: state.from, zoom: Math.max(map.getZoom(), 14.5), duration: 500,
+          padding: { top: 40, left: 20, right: 20, bottom: Math.round(panel.getBoundingClientRect().height) + 20 } });
+      }
+      toEl.focus();
+      return;
+    }
+    if (search.which) leaveSearch("half");
+    recompute(true);
+  }
 
   document.querySelectorAll(".pick").forEach((b) => b.addEventListener("click", () => {
     state.pick = state.pick === b.dataset.target ? null : b.dataset.target;
@@ -482,83 +507,101 @@
     refreshSections();
   }
 
-  // ------------------------------------------------------------------ phones: editing a place moves its search bar to the bottom
-  // of the screen, with the map above (type an address or tap the map). Small ✓ / ✕ buttons accept or leave;
-  // ✓ on the start goes straight on to the destination.
-  const fbar = $("#focus-bar"), finput = $("#focus-input"), fsug = $("#focus-suggest");
-  let fItems = [], fTimer = null;
+  // ------------------------------------------------------------------ phones: typing a place. The card slides so its search bars
+  // sit right on top of the keyboard, with the map above and the suggestions over the map. A suggestion (or the keyboard's
+  // return key) on the start moves on to the destination. A small grey ✕ inside the bar leaves without changing anything.
+  const search = { which: null, prev: {}, before: "half" };   // the bar being edited, what each bar held, the card size before
   function clearPoint(which) {
     state[which] = null; state[which + "Label"] = ""; (which === "from" ? fromEl : toEl).value = "";
     if (markers[which]) { markers[which].remove(); delete markers[which]; }
   }
-  function positionFocusBar() {   // sit on top of the on-screen keyboard
-    const vv = window.visualViewport;
-    const kb = vv ? Math.max(0, innerHeight - (vv.height + vv.offsetTop)) : 0;
-    fbar.style.bottom = kb > 40 ? kb + "px" : "";
+  const kbOpen = () => !!window.visualViewport && innerHeight - visualViewport.height > 120;
+  function keyboardTop() {   // page coordinates; until the keyboard is up, a guess (iPhone keyboards take 40-46% of the screen)
+    return kbOpen() ? visualViewport.offsetTop + visualViewport.height : innerHeight - Math.round(Math.max(260, innerHeight * 0.47));
   }
-  if (window.visualViewport) { visualViewport.addEventListener("resize", positionFocusBar); visualViewport.addEventListener("scroll", positionFocusBar); }
-  function openFocus(which) {
-    if (!focus.which) focus.prev = { from: state.from && { lonlat: state.from, label: state.fromLabel }, to: state.to && { lonlat: state.to, label: state.toLabel } };
-    focus.which = which;
-    document.body.classList.add("focusing"); fbar.hidden = false;
-    $("#focus-label").textContent = t(which === "from" ? "focusFrom" : "focusTo");
-    $("#focus-pin").innerHTML = PIN[which];
-    finput.value = state[which + "Label"] || ""; finput.placeholder = t(which === "from" ? "fromPh" : "toPh");
-    fsug.hidden = true; fItems = [];
-    finput.focus(); finput.select();
-    map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
-    if (state[which]) map.easeTo({ center: state[which], zoom: Math.max(map.getZoom(), 14.5), duration: 500 });
-    positionFocusBar(); placeFab();
+  function dock(animate) {   // card height that leaves the search bars just above the keyboard
+    if (!search.which) return;
+    const last = (state.tab === "go" ? toEl : fromEl).closest(".field");
+    const block = last.getBoundingClientRect().bottom - panel.getBoundingClientRect().top + 12;
+    const h = Math.round(innerHeight - keyboardTop() + block);
+    panel.classList.toggle("dragging", !animate);
+    panel.style.height = h + "px";
+    placeSuggest(h);
   }
-  function leaveFocus() {
-    focus.which = null; focus.prev = null;
-    document.body.classList.remove("focusing"); fbar.hidden = true; fsug.hidden = true; fbar.style.bottom = ""; finput.blur();
+  function placeSuggest(h = panel.getBoundingClientRect().height) {   // the list floats over the map, just above the card
+    if (sug.parentElement !== document.body) document.body.appendChild(sug);
+    const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
+    const vvTop = window.visualViewport ? visualViewport.offsetTop : 0;
+    sug.style.top = "auto"; sug.style.bottom = Math.round(h + 8) + "px";
+    sug.style.maxHeight = Math.max(120, Math.round(innerHeight - h - 16 - vvTop - safeTop)) + "px";
   }
-  function pickFocusItem(it) {
-    setPoint(focus.which, [it.lon, it.lat], it.label);
-    finput.value = it.label; fsug.hidden = true;
-    map.easeTo({ center: [it.lon, it.lat], zoom: Math.max(map.getZoom(), 15), duration: 500 });
+  const snapshot = (which) => (state[which] ? { lonlat: state[which], label: state[which + "Label"] } : null);
+  function activate(which) {   // this bar is now the one being edited
+    if (!(which in search.prev)) search.prev[which] = snapshot(which);
+    search.which = which; sugTarget = which;
   }
-  function acceptFocus() {
-    const which = focus.which; if (!which) return;
-    if (fItems.length && !fsug.hidden) pickFocusItem(fItems[0]);   // typed but didn't pick: take the top suggestion
-    if (which === "from" && state.tab === "go") { openFocus("to"); return; }
-    leaveFocus(); setSheet("half"); recompute(true);
+  function enterSearch(which) {
+    if (search.which) { activate(which); return; }
+    search.before = sheet.state; search.prev = {};
+    fromEl.enterKeyHint = state.tab === "go" ? "next" : "done"; toEl.enterKeyHint = "go";
+    document.body.classList.add("searching"); panel.scrollTop = 0;
+    activate(which); dock(false);
   }
-  function cancelFocus() {
-    const prev = focus.prev || {};
-    for (const k of ["from", "to"]) { if (prev[k]) setPoint(k, prev[k].lonlat, prev[k].label); else if (state[k]) clearPoint(k); }
-    leaveFocus(); recompute(false); placeFab();
+  function leaveSearch(sheetAfter) {
+    search.which = null; search.prev = {};
+    document.body.classList.remove("searching");
+    sug.hidden = true; sugItems = [];
+    if (sug.parentElement !== sugHome) { sugHome.appendChild(sug); sug.style.bottom = ""; sug.style.maxHeight = ""; }
+    const a = document.activeElement; if (a === fromEl || a === toEl) a.blur();
+    setSheet(sheetAfter || "half");
   }
-  $("#focus-ok").onclick = acceptFocus;
-  $("#focus-cancel").onclick = cancelFocus;
-  finput.addEventListener("input", () => {
-    clearTimeout(fTimer);
-    fTimer = setTimeout(async () => {
-      fItems = await geocoder.search(finput.value);
-      fsug.innerHTML = fItems.map((it, i) => `<li data-i="${i}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("");
-      fsug.hidden = !fItems.length;
-      fsug.querySelectorAll("li").forEach((li) => li.addEventListener("pointerdown", (e) => { e.preventDefault(); pickFocusItem(fItems[+li.dataset.i]); }));
-    }, 160);
-  });
-  finput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); acceptFocus(); } if (e.key === "Escape") cancelFocus(); });
+  function cancelSearch() {   // the ✕: put this bar's place back as it was and close the keyboard
+    const which = search.which; if (!which) return;
+    const prev = search.prev[which];
+    if (prev) setPoint(which, prev.lonlat, prev.label); else clearPoint(which);
+    leaveSearch(search.before);
+    recompute(true);
+  }
+  function flash(el) { const f = el.closest(".field"); f.classList.add("next"); setTimeout(() => f.classList.remove("next"), 1600); }
+  function blurred(el) {   // the keyboard closed: its ✓ / done key, or a tap on the map
+    const a = document.activeElement;
+    if (!search.which) { if (a !== fromEl && a !== toEl) sug.hidden = true; return; }
+    if (a === fromEl || a === toEl || search.which !== el.id) return;   // moved on to the other bar
+    const which = el.id;
+    if (el.value !== (state[which + "Label"] || "") && sugItems.length) {   // typed a new place: take the top suggestion
+      const it = sugItems[0]; setPoint(which, [it.lon, it.lat], it.label);
+      if (which === "from" && state.tab === "go" && !state.to) {
+        activate("to"); toEl.focus();   // without a tap, iPhone may not reopen the keyboard: then just point at the destination bar
+        setTimeout(() => { if (search.which === "to" && (document.activeElement !== toEl || !kbOpen())) { leaveSearch(search.before); flash(toEl); } }, 450);
+        return;
+      }
+      leaveSearch("half"); recompute(true); return;
+    }
+    el.value = state[which + "Label"] || "";   // nothing new: keep the place as it was
+    leaveSearch(search.before);
+  }
   for (const el of [fromEl, toEl]) {
-    el.addEventListener("pointerdown", (e) => { if (!isPhone() || state.mode === "ride") return; e.preventDefault(); openFocus(el.id); });
-    el.addEventListener("focus", () => { if (isPhone() && !focus.which) { el.blur(); openFocus(el.id); } });
+    el.addEventListener("pointerdown", (e) => {
+      if (!isPhone() || state.mode === "ride" || search.which) return;   // already searching: the bars sit above the keyboard
+      e.preventDefault();                 // move the card first, then focus, so iPhone Safari has no reason to scroll the page
+      enterSearch(el.id);
+      el.focus({ preventScroll: true });
+    });
+    el.addEventListener("focus", () => { if (isPhone() && state.mode !== "ride") enterSearch(el.id); });
   }
+  document.querySelectorAll(".clear").forEach((b) => {
+    const go = (e) => { e.preventDefault(); cancelSearch(); };
+    b.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") go(e); });
+    b.addEventListener("mousedown", go);
+  });
+  if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, () => { if (search.which && kbOpen()) dock(true); });
 
   // ------------------------------------------------------------------ map clicks
   let layersJustClosed = false;
   map.on("click", (e) => {
     if (layersJustClosed) { layersJustClosed = false; return; }   // a tap that only closed the layers panel
     if (state.mode === "ride") return;
-    if (focus.which) {   // phones, search bar open: the tapped spot (or place icon) becomes that point
-      const poi = map.queryRenderedFeatures(e.point, { layers: POI_LAYERS.map((p) => p.id).filter((id) => map.getLayer(id)) })[0];
-      const ll = poi ? poi.geometry.coordinates : [e.lngLat.lng, e.lngLat.lat];
-      setPoint(focus.which, ll, poi ? poi.properties.name || C.poiLabel(poi.properties.k) : placeLabel(ll[0], ll[1]));
-      $("#focus-input").value = state[focus.which + "Label"]; $("#focus-suggest").hidden = true;
-      return;
-    }
+    if (search.which) return;   // typing a place (phones): a tap on the map only closes the keyboard
     const live = map.getLayer("bixi-live") && map.getLayoutProperty("bixi-live", "visibility") !== "none" ? ["bixi-live", "bixi-count"] : [];
     const hit = map.queryRenderedFeatures(e.point, { layers: [...live, ...POI_LAYERS.map((p) => p.id)].filter((id) => map.getLayer(id)) });
     if (hit.length && !state.pick) { poiPopup(hit[0]); return; }
@@ -788,42 +831,7 @@
       map.easeTo({ center: [p.lon, p.lat], zoom: 17, duration: 600 });
     }));
     $("#ride-go").onclick = () => startRide();
-    watchRideButton();
   }
-
-  // "Let's ride!": while a route is shown, a copy floats just above the panel (phones) or at its foot (desktop)
-  // until the panel's own button scrolls into view, so it's always one tap away
-  const fab = $("#ride-fab");
-  let goObserver = null;
-  function watchRideButton() {
-    if (goObserver) goObserver.disconnect();
-    const btn = $("#ride-go");
-    goVisible = false;
-    if (btn && "IntersectionObserver" in window) {
-      goObserver = new IntersectionObserver((es) => { goVisible = es[es.length - 1].isIntersecting; placeFab(); }, { root: $("#panel"), threshold: 0.6 });
-      goObserver.observe(btn);
-    }
-    placeFab();
-  }
-  function placeFab() {
-    const show = state.routes.length > 0 && state.mode === "route" && !focus.which && !goVisible && !$("#panel").hidden;
-    fab.hidden = !show; if (!show) return;
-    const r = $("#panel").getBoundingClientRect();
-    if (isPhone()) {
-      fab.style.left = ""; fab.style.width = "";
-      // While a finger drags the card, follow it. Otherwise go where the card is heading and slide there with it
-      // (same timing as the card), instead of waiting for the card's animation to end and then jumping.
-      const dragging = $("#panel").classList.contains("dragging");
-      fab.classList.toggle("follow", dragging);
-      const cardTop = dragging ? r.top : innerHeight - sheetHeight(sheet.state);
-      fab.style.bottom = sheet.state === "full" ? "calc(14px + var(--safe-bottom))" : `${Math.round(innerHeight - cardTop + 10)}px`;
-    } else {
-      fab.style.left = `${Math.round(r.left + 18)}px`; fab.style.width = `${Math.round(r.width - 36)}px`;
-      fab.style.bottom = `${Math.round(innerHeight - r.bottom + 14)}px`;
-    }
-  }
-  fab.onclick = () => startRide();
-  addEventListener("resize", () => placeFab());
 
   // ------------------------------------------------------------------ layers panel & modes
   const layerBtn = $("#layers-btn"), layersBox = $("#layers");
@@ -892,7 +900,7 @@
       map.setFilter("bixi-live", f); map.setFilter("bixi-count", f);
     }
   }
-  function setMode(m) { state.mode = m; applyLayers(); placeFab(); }
+  function setMode(m) { state.mode = m; applyLayers(); }
 
   // 2D / 3D: the button shows the view you switch to (cube + "3D" while flat, square + "2D" while in 3D)
   const viewBtn = $("#view-btn");
@@ -935,14 +943,12 @@
     if (!isPhone()) { panel.style.height = ""; return; }
     panel.classList.toggle("dragging", !animate);
     panel.style.height = sheetHeight(s) + "px";
-    placeFab();
   }
-  panel.addEventListener("transitionend", () => placeFab());
   (function dragSheet() {
     let y0 = 0, h0 = 0, lastY = 0, lastT = 0, vy = 0, moved = false, active = false;
     const zone = [$("#grabber"), $("#brand")];
     const down = (e) => {
-      if (!isPhone()) return;
+      if (!isPhone() || search.which) return;
       active = true; moved = false; y0 = lastY = e.clientY; lastT = performance.now(); h0 = panel.getBoundingClientRect().height; vy = 0;
       panel.classList.add("dragging"); e.currentTarget.setPointerCapture(e.pointerId);
     };
@@ -951,7 +957,6 @@
       const now = performance.now(); vy = (e.clientY - lastY) / Math.max(1, now - lastT); lastY = e.clientY; lastT = now;
       if (Math.abs(e.clientY - y0) > 4) moved = true;
       panel.style.height = Math.max(sheetHeight("peek") - 40, Math.min(sheetHeight("full"), h0 + (y0 - e.clientY))) + "px";
-      placeFab();
     };
     const up = () => {
       if (!active) return; active = false; panel.classList.remove("dragging");
@@ -965,7 +970,7 @@
     };
     for (const z of zone) { z.addEventListener("pointerdown", down); z.addEventListener("pointermove", move); z.addEventListener("pointerup", up); z.addEventListener("pointercancel", up); }
     $("#grabber").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSheet({ peek: "half", half: "full", full: "peek" }[sheet.state]); } });
-    addEventListener("resize", () => setSheet(sheet.state, false));
+    addEventListener("resize", () => { if (search.which) dock(false); else setSheet(sheet.state, false); });
   })();
   setSheet("half", false);
 
@@ -1027,7 +1032,7 @@
     state.rideEnd = placeText(sel.end) || state.toLabel || t("destination");
     state.rideView = view;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
-    $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false); fab.hidden = true;
+    $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false);
     set3d(state.rideView === "birdseye", false);
     setRidePadding();
     riderMarker.setLngLat(r.coords[0]).addTo(map); badgeMarker.setLngLat(r.coords[0]).addTo(map);
@@ -1189,7 +1194,6 @@
     setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapId = null;
     refreshSections(); wind.show(state.wx); renderWxCard();
     if (state.routes.length) fitRoute(state.routes[state.sel].r);
-    placeFab();
   }
 
   // ------------------------------------------------------------------ helpers
@@ -1250,5 +1254,5 @@
     if (params.has("paused")) pauseRide(true);
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
-    setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, openFocus, acceptFocus, cancelFocus, poiMarkers };
+    setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers };
 })();

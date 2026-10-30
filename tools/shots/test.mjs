@@ -61,13 +61,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     rideText: document.querySelector("#ride-go") && document.querySelector("#ride-go").textContent,
     windNextToHills: document.querySelector("#hills").closest(".pref-checks") === document.querySelector("#avoid-wind").closest(".pref-checks"),
   }));
-  // scroll the panel to the top so its own button is off screen: the floating copy should appear, then hide again at the bottom
-  const fab = await page.evaluate(async () => {
-    const panel = document.querySelector("#panel"); panel.style.maxHeight = "420px"; panel.scrollTop = 0;
-    await new Promise((r) => setTimeout(r, 400)); const shown = !document.querySelector("#ride-fab").hidden;
-    panel.scrollTop = panel.scrollHeight; await new Promise((r) => setTimeout(r, 400)); const hiddenAtEnd = document.querySelector("#ride-fab").hidden;
-    panel.style.maxHeight = ""; return { shown, hiddenAtEnd };
-  });
+  const noFloatingCopy = await page.evaluate(() => !document.querySelector("#ride-fab"));
   await page.click("#layers-btn");
   const opened = await page.evaluate(() => !document.querySelector("#layers").hidden);
   await page.mouse.click(700, 500);
@@ -75,10 +69,10 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
   const fromAfterTap = await page.evaluate(() => window.__app.state.to && window.__app.state.to.join(","));
   await page.click("#view-btn"); await page.waitForTimeout(1200);
   const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
-  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && before.windNextToHills && fab.shown && fab.hiddenAtEnd
+  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && before.windNextToHills && noFloatingCopy
     && !before.tripChips && !before.exploreNote && before.avoidHills === "Avoid hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
     && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
-  return { ok, ...before, fab, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
+  return { ok, ...before, noFloatingCopy, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
 });
 
 await run("elevation: tint, shading, detail contours, LiDAR terrain", `${APP}?trip=montroyal`, async (page) => {
@@ -237,21 +231,35 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   const peek = await page.evaluate(() => Math.round(document.querySelector("#panel").getBoundingClientRect().height));
   const layout = await page.evaluate(() => ({ scrollW: document.documentElement.scrollWidth, innerW: innerWidth }));
   await page.evaluate(() => window.__app.setSheet("half")); await page.waitForTimeout(400);
-  const fabPos = await page.evaluate(() => { const f = document.querySelector("#ride-fab"), p = document.querySelector("#panel");
-    return { shown: !f.hidden, aboveSheet: !f.hidden && f.getBoundingClientRect().bottom <= p.getBoundingClientRect().top + 1 }; });
-  // tap the destination field: it moves to the bottom, map above; tap the map to set the place, then ✓
+  // tap the destination bar: the card slides so the bars sit just above the keyboard (a guess here: no real keyboard), brand and tabs hide
   const to = await page.locator("#to").boundingBox();
   await page.mouse.click(to.x + 20, to.y + to.height / 2); await page.waitForTimeout(400);
-  const focusOpen = await page.evaluate(() => ({ focusing: document.body.classList.contains("focusing"), bar: !document.querySelector("#focus-bar").hidden,
-    label: document.querySelector("#focus-label").textContent, panelHidden: getComputedStyle(document.querySelector("#panel")).display === "none" }));
-  const before = await page.evaluate(() => window.__app.state.to.join(","));
-  await page.mouse.click(200, 300); await page.waitForTimeout(300);
-  const after = await page.evaluate(() => ({ to: window.__app.state.to.join(","), input: document.querySelector("#focus-input").value }));
-  await page.click("#focus-ok"); await page.waitForTimeout(800);
-  const closed = await page.evaluate(() => ({ focusing: document.body.classList.contains("focusing"), routes: window.__app.state.routes.length }));
-  return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW && fabPos.shown && fabPos.aboveSheet
-      && focusOpen.focusing && focusOpen.bar && focusOpen.panelHidden && focusOpen.label === "Destination" && after.to !== before && !!after.input && !closed.focusing && closed.routes > 0,
-    half, full, peek, ...layout, fabPos, focusOpen, movedDestination: after.to !== before, focusInput: after.input, closed };
+  const docked = await page.evaluate(() => { const f = document.querySelector("#to").closest(".field").getBoundingClientRect();
+    return { searching: document.body.classList.contains("searching"), active: document.activeElement.id, brandHidden: getComputedStyle(document.querySelector("#brand")).display === "none",
+      fieldBottom: Math.round(f.bottom), kbTop: Math.round(innerHeight - Math.max(260, innerHeight * 0.47)), clearShown: getComputedStyle(document.querySelector('.clear[data-target="to"]')).display !== "none" }; });
+  // type: suggestions float over the map, above the card
+  await page.keyboard.type("marché jean"); await page.waitForTimeout(800);
+  const list = await page.evaluate(() => { const l = document.querySelector("#suggest"), p = document.querySelector("#panel");
+    return { shown: !l.hidden, aboveCard: l.getBoundingClientRect().bottom <= p.getBoundingClientRect().top + 1, n: l.children.length }; });
+  // the ✕ leaves without changing the destination
+  const before = await page.evaluate(() => window.__app.state.toLabel);
+  await page.click('.clear[data-target="to"]'); await page.waitForTimeout(500);
+  const cancelled = await page.evaluate((b) => ({ searching: document.body.classList.contains("searching"), same: window.__app.state.toLabel === b && document.querySelector("#to").value === b }), before);
+  // with no destination yet, the return key on a typed start moves straight on to the destination bar
+  await page.evaluate(() => { const s = window.__app.state; s.to = null; s.toLabel = ""; document.querySelector("#to").value = ""; });
+  const fr = await page.locator("#from").boundingBox();
+  await page.mouse.click(fr.x + 20, fr.y + fr.height / 2); await page.waitForTimeout(300);
+  await page.keyboard.press("Control+A"); await page.keyboard.type("marché jean"); await page.waitForTimeout(800);
+  await page.keyboard.press("Enter"); await page.waitForTimeout(300);
+  const moved = await page.evaluate(() => ({ active: document.activeElement.id, searching: document.body.classList.contains("searching") }));
+  // pick the destination from the list: the search ends, the card comes back and the route shows
+  await page.keyboard.type("parc la fontaine"); await page.waitForTimeout(800);
+  await page.click("#suggest li"); await page.waitForTimeout(900);
+  const done = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), routes: window.__app.state.routes.length, sheet: document.querySelector("#panel").dataset.sheet }));
+  return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW
+      && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.kbTop && docked.fieldBottom >= docked.kbTop - 30
+      && list.shown && list.aboveCard && !cancelled.searching && cancelled.same && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
+    half, full, peek, ...layout, docked, list, cancelled, moved, done };
 }, { width: 402, height: 874 });
 
 await browser.close();
