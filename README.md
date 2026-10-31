@@ -159,7 +159,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 6. Working name: keep "Piste"?
 7. **Should detours be capped?** The router can take a long way round to stay on bike paths. Example: Côte-des-Neiges → Peel metro comes out at 9.8 km on 99% bike paths, against 4.4 km for the shortest legal route. `node tools/check_routes.js --verbose` lists 41 long detours. A detour is "long" when the route is longer than the limit below times the shortest legal route, and more than 300 m longer: 1.8× for "Your route", 2.0× for "Most bike paths" and "Avoid hills", 1.15× for "Most direct". Today they are only counted against the baseline, so the count can't grow. Decide whether to cap the detour for good (and at what size), or accept it as the price of bike paths.
 8. **Sainte-Anne-de-Bellevue village core:** 35 intersections around -73.9535, 45.4043 can't be ridden into, because their exits are one-way in the City's Géobase data (Rue Saint-Pierre, Rue du Collège, Route Transcanadienne). Not fixed; the route check reports it as a warning. Decide: ask the City, or override the segments in `tools/build_graph.py` (the same choice as for Habitat 67).
-9. **Domain:** set up the DNS and the custom domain in GitHub Pages so www.pistemtl.ca opens the app (pending since 2026-10-30).
+9. **Domain:** done 2026-10-31. www.pistemtl.ca is live over HTTPS; pistemtl.ca and raphroyjauvin.ca/piste/ forward to it. Left: tick "Enforce HTTPS" in Settings > Pages once GitHub enables it.
 
 ## Folder map
 - `CLAUDE.md`: working rules for Claude sessions.
