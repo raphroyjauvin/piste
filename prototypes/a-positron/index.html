@@ -85,7 +85,13 @@
 
   <section id="routes" class="routes" aria-live="polite"></section>
   <section id="detail" class="detail"></section>
-  <footer class="credits">Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC · OpenFreeMap</footer>
+  <footer class="credits">
+    <p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC · OpenFreeMap</p>
+    <div id="foot-links" class="foot-links">
+      <a id="feedback-link" class="feedback-link" data-mailto href="mailto:support@pistemtl.ca?subject=Piste%20feedback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="feedback"></span></a>
+      <button type="button" id="tour-again" class="tour-again" data-i18n="takeTour"></button>
+    </div>
+  </footer>
 </aside>
 
 <div class="map-controls">
@@ -169,6 +175,20 @@
 
 <div id="toast" class="toast" role="status" hidden></div>
 
+<!-- first visit only (tour.js): what Piste is, a beta note, the tour or explore alone -->
+<div id="welcome" class="welcome" hidden>
+  <div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title" aria-describedby="welcome-text" tabindex="-1">
+    <div class="welcome-head"><h2 id="welcome-title" data-i18n="welcomeTitle"></h2></div>
+    <p id="welcome-text" class="welcome-text" data-i18n="welcomeText"></p>
+    <div class="beta-note"><span class="beta-pill" data-i18n="beta"></span><p data-i18n="betaText"></p></div>
+    <div class="welcome-buttons">
+      <button type="button" id="welcome-tour" class="primary welcome-go"><span data-i18n="tourStart"></span><small data-i18n="tourTime"></small></button>
+      <button type="button" id="welcome-skip" class="welcome-alt" data-i18n="exploreAlone"></button>
+    </div>
+    <a id="welcome-feedback" class="feedback-link welcome-feedback" data-mailto href="mailto:support@pistemtl.ca?subject=Piste%20feedback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="sendFeedback"></span></a>
+  </div>
+</div>
+
 <script src="../vendor/maplibre/maplibre-gl.js"></script>
 <script src="../vendor/pmtiles/pmtiles.js"></script>
 <script src="../shared/router.js"></script>
@@ -185,5 +205,6 @@
 <script src="../shared/weather.js"></script>
 <script src="../shared/bixi.js"></script>
 <script src="app.js"></script>
+<script src="tour.js"></script>
 </body>
 </html>

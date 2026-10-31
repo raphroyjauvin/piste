@@ -948,6 +948,7 @@
     setMapTexts(); renderRoutes(); renderWxCard(); renderSound(); buildElevationLegend();
     if (!state.ride) $("#ride-pause").textContent = t("pause");
     if (state.gpsState) gpsStatus(state.gpsState);
+    document.dispatchEvent(new Event("piste:lang"));   // tour.js redraws its text
   }
   $("#lang-btn").onclick = () => setLang(I.lang === "fr" ? "en" : "fr");
   $("#lang-btn").textContent = I.lang === "fr" ? "EN" : "FR";
@@ -1446,4 +1447,8 @@
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
     startGpsRide, endRide, gpsDefault, setFollow, riderMarker };
+  // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
+  window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
+    computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length };
+  document.dispatchEvent(new Event("piste:ready"));
 })();

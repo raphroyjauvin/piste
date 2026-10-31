@@ -1,6 +1,8 @@
 // Functional tests for the app, in a headless Chromium-based browser. Usage: node tools/shots/test.mjs [name filter]
 // Exit code 0 only if every group passed (and at least one ran); 1 otherwise. Environment variables (all optional):
-//   PISTE_BASE=https://www.raphroyjauvin.ca/piste/   test the live site instead of the dev server (http://localhost:8765/)
+//   PISTE_BASE=https://www.pistemtl.ca/              test the live site instead of the dev server (http://localhost:8765/);
+//                                                    with PISTE_APP=index.html, since the published site has the app at its root
+//   PISTE_APP=index.html                             the app's path under PISTE_BASE (default a-positron/index.html, the dev layout)
 //   PISTE_BROWSER=msedge|chrome|chromium             msedge (default): the Edge installed on this PC. chrome: an installed Google Chrome
 //                                                    (preinstalled on GitHub's ubuntu-latest). chromium: Playwright's own build
 //                                                    (npx playwright-core install chromium).
@@ -20,7 +22,7 @@ import { chromium } from "playwright-core";
 import { readFileSync } from "node:fs";
 
 const BASE = process.env.PISTE_BASE || "http://localhost:8765/";
-const APP = "a-positron/index.html";
+const APP = process.env.PISTE_APP || "a-positron/index.html";   // PISTE_APP=index.html: a site built by tools/build_site.py (the app at the root)
 const only = process.argv[2];
 const on = (v) => /^(1|true|yes|on)$/i.test(v || "");
 const BROWSER = (process.env.PISTE_BROWSER || "msedge").toLowerCase();
@@ -81,15 +83,18 @@ function say(r) {
   const why = r.error || (r.errors && r.errors.length ? "console/page error: " + r.errors[0].slice(0, 200) : "a check was false (see the JSON line)");
   console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}  (${r.secs} s)${r.ok ? "" : "  " + why}`);
 }
-// ctxOpts: extra browser-context options (touch, location permission and position for the GPS tests); fn gets (page, ctx)
+// ctxOpts: extra browser-context options (touch, location permission and position for the GPS tests); fn gets (page, ctx).
+// Every group starts with the first-visit welcome card already seen, unless ctxOpts has fresh: true (a first visit).
 async function run(name, url, fn, viewport = { width: 1440, height: 900 }, ctxOpts = {}) {
   if (only && !name.includes(only)) return;
   console.log(`...   ${name}`);
   const t = Date.now(), errors = [], hosts = new Set();
   let ctx, timer;
   const secs = () => ((Date.now() - t) / 1000).toFixed(1);
+  const { fresh, ...opts } = ctxOpts;
   try {
-    ctx = await browser.newContext({ viewport, ...ctxOpts });
+    ctx = await browser.newContext({ viewport, ...opts });
+    if (!fresh) await ctx.addInitScript(() => { try { localStorage.setItem("piste-welcomed", "1"); } catch (e) { /* storage blocked */ } });
     if (FIX) await stubOutsideData(ctx);
     if (OFFLINE) await ctx.route(/^https:\/\/(tiles\.openfreemap\.org|s3\.amazonaws\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)\//, (route) => route.abort());
     // window.__flatRide(): called by the GPS-ride groups right after a ride starts; switches to the flat camera when FLAT_RIDE is on
@@ -552,6 +557,221 @@ await run("phone: GPS ride bar, preview link", `${APP}?trip=rachel&gps=replay&gp
   return { ok: link.coarse && link.preview && link.below && link.text === "Preview the ride" && ui.gps && ui.shown === "ride-sound,ride-view,ride-gps,ride-exit" && /km\/h/.test(ui.status)
       && ui.fits && ui.scrollW <= ui.innerW && preview.sim && preview.speedShown && preview.gpsHidden, link, ui, preview };
 }), { width: 402, height: 874 }, { hasTouch: true, isMobile: true });
+
+// ------------------------------------------------------------------ welcome card, feedback and guided tour (2026-10-30; a-positron/tour.js)
+const MAIL_EN = "mailto:support@pistemtl.ca?subject=Piste%20feedback&body=" + encodeURIComponent("What happened:\n\n\nWhere (street or place):\n\n");
+const welcomeUp = () => !!window.pisteTour && window.pisteTour.welcome === "shown" && !document.querySelector("#welcome").hidden;
+const welcomeGone = () => document.querySelector("#welcome").hidden;
+// In the page: the welcome card is on screen, inside the safe areas, needs no scrolling, and its buttons are 44 px or taller
+const welcomeFits = () => {
+  const card = document.querySelector(".welcome-card"), c = card.getBoundingClientRect();
+  const probe = document.createElement("div"); probe.style.cssText = "position:fixed;visibility:hidden;padding:var(--safe-top) 0 var(--safe-bottom)"; document.body.appendChild(probe);
+  const cs = getComputedStyle(probe), top = parseFloat(cs.paddingTop) || 0, bottom = parseFloat(cs.paddingBottom) || 0; probe.remove();
+  const hits = [...card.querySelectorAll("button, a")].map((b) => Math.round(b.getBoundingClientRect().height));
+  return { ok: c.left >= 0 && c.right <= innerWidth && c.top >= top && c.bottom <= innerHeight - bottom && card.scrollHeight <= card.clientHeight + 1 && hits.every((h) => h >= 44),
+    view: [innerWidth, innerHeight], safe: [top, bottom], card: [c.left, c.top, c.width, c.height].map(Math.round), hits };
+};
+// In the page: what the tour must have put back (compared before and after it)
+const appSnapshot = async () => {
+  const a = window.__app, s = a.state, m = a.map, c = m.getCenter();
+  return { sheet: document.querySelector("#panel").dataset.sheet, tab: s.tab, smode: s.smode, winter: s.winter, from: document.querySelector("#from").value, to: document.querySelector("#to").value,
+    points: [!!s.from, !!s.to], routes: s.routes.length, sel: s.sel, drawn: (await m.getSource("route").getData()).features.length, pins: document.querySelectorAll(".end-pin").length,
+    legend: document.querySelector("#legend details").open, layers: !document.querySelector("#layers").hidden, scroll: Math.round(document.querySelector("#panel").scrollTop),
+    zoom: +m.getZoom().toFixed(2), center: [+c.lng.toFixed(4), +c.lat.toFixed(4)], pitch: Math.round(m.getPitch()) };
+};
+const sameState = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// In the page: is the current step laid out right? Measured here, not taken from the tour's own bookkeeping where possible:
+// every target is on screen (all of it inside the panel's visible part if it is in the panel; the route clear of the panel),
+// a cut-out covers each target, and the callout is on screen, inside the safe areas, off the targets and off the cut-out's centre.
+const tourStepCheck = () => {
+  const x = window.pisteTour.info(), a = window.__app, W = innerWidth, H = innerHeight, problems = [];
+  const panel = document.querySelector("#panel"), P = panel.getBoundingClientRect(), phone = matchMedia("(max-width: 760px)").matches;
+  const probe = document.createElement("div"); probe.style.cssText = "position:fixed;visibility:hidden;padding:var(--safe-top) 0 var(--safe-bottom)"; document.body.appendChild(probe);
+  const cs = getComputedStyle(probe), sTop = parseFloat(cs.paddingTop) || 0, sBottom = parseFloat(cs.paddingBottom) || 0; probe.remove();
+  const R = (r) => ({ x: r.left, y: r.top, w: r.width, h: r.height });
+  const inter = (p, q) => { const x0 = Math.max(p.x, q.x), y0 = Math.max(p.y, q.y), w = Math.min(p.x + p.w, q.x + q.w) - x0, h = Math.min(p.y + p.h, q.y + q.h) - y0; return w > 0 && h > 0 ? { x: x0, y: y0, w, h } : null; };
+  const area = (r) => (r ? r.w * r.h : 0);
+  const panelView = { x: P.left, y: P.top + (phone ? 30 : 0), w: P.width, h: P.height - (phone ? 30 : 0) };   // below the phone card's grab bar
+  const targets = x.targets.map(({ spec }) => {
+    let r, inPanel = false, shown = true;
+    if (spec === "@route") {   // the selected route, projected here
+      const sel = a.state.routes[a.state.sel]; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const c of sel.r.coords) { const p = a.map.project(c); x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+      r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    } else {
+      const els = spec.split(",").map((s) => document.querySelector(s)).filter((e) => e && e.getClientRects().length);
+      if (!els.length) { problems.push(`${spec}: missing`); return { spec, vis: null }; }
+      r = els.map((e) => R(e.getBoundingClientRect())).reduce((u, q) => { const x0 = Math.min(u.x, q.x), y0 = Math.min(u.y, q.y); return { x: x0, y: y0, w: Math.max(u.x + u.w, q.x + q.w) - x0, h: Math.max(u.y + u.h, q.y + q.h) - y0 }; });
+      inPanel = els.some((e) => e.closest("#panel")); shown = els.every((e) => getComputedStyle(e).visibility !== "hidden");
+    }
+    const onScreen = r.w > 0 && r.h > 0 && r.x >= -0.5 && r.y >= -0.5 && r.x + r.w <= W + 0.5 && r.y + r.h <= H + 0.5;
+    const seen = inPanel ? area(inter(r, panelView)) >= area(r) - 1 : spec !== "@route" || !inter(r, R(P));
+    const vis = inter(r, inPanel ? panelView : { x: 0, y: 0, w: W, h: H });
+    const hole = vis ? Math.max(0, ...x.holes.map((h) => area(inter(h, vis)) / area(vis))) : 0;
+    if (!(shown && onScreen && seen && hole >= 0.9)) problems.push(`${spec}:${shown ? "" : " hidden"}${onScreen ? "" : " off screen"}${seen ? "" : " not in view"}${hole >= 0.9 ? "" : ` cut-out covers ${Math.round(hole * 100)}%`}`);
+    return { spec, r: [r.x, r.y, r.w, r.h].map(Math.round), vis, hole: +hole.toFixed(2) };
+  });
+  const c = x.card, h0 = x.holes[0], centre = h0 && { x: h0.x + h0.w / 2, y: h0.y + h0.h / 2 };
+  if (!(c.x >= -0.5 && c.x + c.w <= W + 0.5 && c.y >= sTop - 0.5 && c.y + c.h <= H - sBottom + 0.5)) problems.push("callout off screen");
+  if (centre && centre.x > c.x && centre.x < c.x + c.w && centre.y > c.y && centre.y < c.y + c.h) problems.push("callout covers the cut-out centre");
+  if (targets.some((tg) => tg.vis && area(inter(c, tg.vis)) > 2)) problems.push("callout covers a target");
+  const small = [...document.querySelectorAll(".tour-card button")].filter((b) => b.getClientRects().length && getComputedStyle(b).visibility !== "hidden")
+    .map((b) => { const r = b.getBoundingClientRect(); return { b, w: r.width, h: r.height }; }).filter((s) => s.h < 43.5 || s.w < 43.5);
+  if (small.length) problems.push(`button(s) under 44 px: ${small.map((s) => `${s.b.className} ${s.w.toFixed(1)}x${s.h.toFixed(1)}`).join(", ")}`);
+  if (phone && panel.dataset.sheet !== x.sheet) problems.push(`sheet ${panel.dataset.sheet}, wanted ${x.sheet}`);
+  if (/^(INPUT|TEXTAREA)$/.test((document.activeElement || {}).tagName || "")) problems.push("a text field has focus");
+  const words = (s) => s.trim().split(/\s+/).length;
+  if (words(x.title) > 4 || words(x.text) > 20) problems.push(`too wordy: ${words(x.title)} / ${words(x.text)} words`);
+  return { i: x.i, id: x.id, ok: !problems.length, problems, sheet: phone ? panel.dataset.sheet : undefined, card: [c.x, c.y, c.w, c.h].map(Math.round), targets: targets.map(({ spec, r, hole }) => ({ spec, r, hole })) };
+};
+const tourAt = (page, i) => until(page, (i) => { const x = window.pisteTour.info(); return x.open && x.i === i && x.settled; }, i, 20000);
+const tourClosed = (page) => until(page, () => !window.pisteTour.info().open && document.querySelector(".tour").hidden && !window.__app.map.isMoving());
+// walk the tour from step `from` to step `to`, checking each step (and, with backNext, that Back and Next lead to the step before and back)
+async function tourWalk(page, from, to, backNext) {
+  const steps = [];
+  for (let i = from; i <= to; i++) {
+    await tourAt(page, i);
+    const chk = await page.evaluate(tourStepCheck);
+    if (backNext && i > 0) {
+      await page.click(".tour-back"); await tourAt(page, i - 1); const b = await page.evaluate(() => window.pisteTour.info().i);
+      await page.click(".tour-next"); await tourAt(page, i); const n = await page.evaluate(() => window.pisteTour.info().i);
+      chk.backNext = b === i - 1 && n === i; if (!chk.backNext) chk.ok = false;
+    }
+    steps.push(chk);
+    if (i < to) await page.click(".tour-next");
+  }
+  return steps;
+}
+const brief = (steps) => steps.map((s) => (s.ok ? `${s.i + 1} ${s.id} ok` : `${s.i + 1} ${s.id}: ${s.problems.join("; ")}${s.backNext === false ? " back/next failed" : ""}`));
+
+await run("welcome: first visit", APP, async (page, ctx) => {
+  await until(page, welcomeUp, null, 30000);
+  const en = await page.evaluate(() => {
+    const c = document.querySelector(".welcome-card");
+    return { title: c.querySelector("h2").textContent, mark: !!c.querySelector(".mark"), beta: c.querySelector(".beta-pill").textContent, betaText: c.querySelector(".beta-note p").textContent,
+      tour: document.querySelector("#welcome-tour").textContent, explore: document.querySelector("#welcome-skip").textContent,
+      href: document.querySelector("#welcome-feedback").getAttribute("href"), footHref: document.querySelector("#feedback-link").getAttribute("href"),
+      dialog: c.getAttribute("role") === "dialog" && c.getAttribute("aria-modal") === "true", focusInside: c.contains(document.activeElement), flag: localStorage.getItem("piste-welcomed") };
+  });
+  await page.click("#welcome-skip");   // "Explore on my own"
+  await until(page, welcomeGone);
+  const closed = await page.evaluate(() => ({ hidden: document.querySelector("#welcome").hidden, flag: localStorage.getItem("piste-welcomed") }));
+  await page.reload({ waitUntil: "load" });
+  await until(page, () => !!window.pisteTour && !!window.pisteTour.welcome, null, 90000);
+  const reload = await page.evaluate(() => ({ decided: window.pisteTour.welcome, hidden: document.querySelector("#welcome").hidden }));
+  // French, on a first visit again; Esc means "Explore on my own"
+  await page.evaluate(() => localStorage.removeItem("piste-welcomed"));
+  await page.goto(BASE + APP + "?lang=fr", { waitUntil: "load" });
+  await until(page, welcomeUp, null, 90000);
+  const fr = await page.evaluate(() => ({ title: document.querySelector("#welcome-title").textContent, beta: document.querySelector(".beta-pill").textContent,
+    tour: document.querySelector("#welcome-tour span").textContent, href: document.querySelector("#welcome-feedback").getAttribute("href") }));
+  await page.keyboard.press("Escape");
+  await until(page, welcomeGone);
+  const frClosed = await page.evaluate(() => ({ hidden: document.querySelector("#welcome").hidden, flag: localStorage.getItem("piste-welcomed") }));
+  // phone sizes: the card fits on screen and inside the safe areas (iPhone 13-16 with its notch and home bar, then a small 360 x 640 phone)
+  const phones = [];
+  for (const [w, h, safe] of [[390, 844, "47,34"], [360, 640, "20,0"]]) {
+    await page.evaluate(() => localStorage.removeItem("piste-welcomed"));
+    await page.setViewportSize({ width: w, height: h });
+    await page.goto(BASE + APP + `?safe=${safe}`, { waitUntil: "load" });
+    await until(page, welcomeUp, null, 90000);
+    phones.push(await settled(page, welcomeFits));
+  }
+  // storage blocked (some private modes): the card still shows, once per page load, and closes without errors
+  const p2 = await ctx.newPage(), errs2 = [];
+  p2.on("pageerror", (e) => errs2.push(String(e)));
+  p2.on("console", (m) => { if (m.type() === "error" && !/favicon|404|Failed to load resource/.test(m.text())) errs2.push(m.text()); });
+  await p2.addInitScript(() => { Object.defineProperty(window, "localStorage", { configurable: true, get() { throw new DOMException("The operation is insecure.", "SecurityError"); } }); });
+  await p2.goto(BASE + APP, { waitUntil: "load" });
+  await until(p2, welcomeUp, null, 90000);
+  const blockedShown = await p2.evaluate(() => !document.querySelector("#welcome").hidden);
+  await p2.click("#welcome-skip"); await until(p2, welcomeGone);
+  const blocked = { shown: blockedShown, closed: await p2.evaluate(() => document.querySelector("#welcome").hidden), errors: errs2 };
+  await p2.close();
+  const ok = en.title === "Welcome to Piste" && en.mark && en.beta === "Beta" && /can be wrong/.test(en.betaText) && /follow the road/i.test(en.betaText) && /Take the tour/.test(en.tour) && en.explore === "Explore on my own"
+    && en.href === MAIL_EN && en.footHref === MAIL_EN && en.dialog && en.focusInside && en.flag === null && closed.hidden && closed.flag === "1" && reload.decided === "seen" && reload.hidden
+    && fr.title === "Bienvenue dans Piste" && fr.beta === "Bêta" && fr.tour === "Faire la visite" && fr.href.startsWith("mailto:support@pistemtl.ca?subject=Commentaires%20Piste&body=")
+    && frClosed.hidden && frClosed.flag === "1" && phones.every((p) => p.ok) && blocked.shown && blocked.closed && !blocked.errors.length;
+  return { ok, en, closed, reload, fr, frClosed, phones, blocked };
+}, { width: 1440, height: 900 }, { fresh: true });
+
+await run("tour: every step", APP, async (page) => {
+  await until(page, welcomeUp, null, 30000);
+  const before = await page.evaluate(appSnapshot);
+  await page.click("#welcome-tour");
+  // first pass, by keyboard: → and Enter go on, ← goes back; then Esc halfway, on the route-colours step with the demo route showing
+  const pass1 = [];
+  await tourAt(page, 0); pass1.push(await page.evaluate(tourStepCheck));
+  await page.keyboard.press("ArrowRight"); await tourAt(page, 1); pass1.push(await page.evaluate(tourStepCheck));
+  await page.keyboard.press("Enter"); await tourAt(page, 2); pass1.push(await page.evaluate(tourStepCheck));
+  const demo = await page.evaluate(() => ({ demo: window.pisteTour.info().demo, routes: window.__app.state.routes.length, from: document.querySelector("#from").value }));
+  await page.keyboard.press("ArrowLeft"); await tourAt(page, 1);
+  const leftKey = await page.evaluate(() => window.pisteTour.info().i);
+  await page.keyboard.press("ArrowRight"); await tourAt(page, 2);
+  await page.keyboard.press("Escape");
+  await tourClosed(page);
+  await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before);
+  const afterEsc = await page.evaluate(appSnapshot);
+  // second pass: replay from the panel's footer, every step with Back and Next, and finish with "Let's go"
+  await page.click("#tour-again");
+  const pass2 = await tourWalk(page, 0, 7, true);
+  const lastLabel = await page.evaluate(() => document.querySelector(".tour-next").textContent);
+  await page.click(".tour-next");
+  await tourClosed(page);
+  await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before);
+  const afterDone = await page.evaluate(appSnapshot);
+  const focusBack = await page.evaluate(() => document.activeElement && document.activeElement.id);
+  // with a route already on screen the tour uses it (no demo route); during a ride there is no "Take the tour"
+  await page.goto(BASE + APP + "?trip=montroyal", { waitUntil: "load" });
+  await page.waitForFunction(() => !!window.pisteTour, null, { timeout: 90000 });
+  await page.evaluate(idle);   // the app's own move to the trip has ended
+  const own0 = await page.evaluate(appSnapshot);
+  await page.evaluate(() => window.pisteTour.start(2)); await tourAt(page, 2);
+  const own = await page.evaluate(() => ({ demo: window.pisteTour.info().demo, from: document.querySelector("#from").value }));
+  own.check = await page.evaluate(tourStepCheck);
+  await page.keyboard.press("Escape"); await tourClosed(page);
+  await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, own0);
+  const own1 = await page.evaluate(appSnapshot);
+  const riding = await page.evaluate(() => { const a = window.__app; a.startRide("topdown"); const r = { button: document.querySelector("#tour-again").getClientRects().length > 0, started: window.pisteTour.start(0) }; a.endRide(); return r; });
+  const ok = pass1.every((s) => s.ok) && pass2.length === 8 && pass2.every((s) => s.ok) && demo.demo && demo.routes > 0 && demo.from === "Parc La Fontaine" && leftKey === 1
+    && sameState(before, afterEsc) && sameState(before, afterDone) && afterDone.drawn === 0 && afterDone.pins === 0 && lastLabel === "Let's go" && focusBack === "tour-again"
+    && !own.demo && own.from === "Mont-Royal metro" && own.check.ok && sameState(own0, own1) && !riding.button && riding.started === false;
+  return { ok, pass1: brief(pass1), pass2: brief(pass2), demo, leftKey, before, afterEsc, afterDone, lastLabel, focusBack, own: { demo: own.demo, from: own.from, check: own.check.problems }, ownRestored: sameState(own0, own1) || [own0, own1], riding,
+    detail: pass2.map((s) => ({ id: s.id, card: s.card, targets: s.targets })) };
+}, { width: 1440, height: 900 }, { fresh: true });
+
+await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
+  // iPhone 13-16 size, with its notch and home bar: from the welcome card, every step, Back and Next once, "Let's go"
+  await until(page, welcomeUp, null, 30000);
+  const before = await page.evaluate(appSnapshot);
+  await page.click("#welcome-tour");
+  const big = await tourWalk(page, 0, 7, false);
+  await page.click(".tour-back"); await tourAt(page, 6);
+  const back = await page.evaluate(() => ({ i: window.pisteTour.info().i, sheet: document.querySelector("#panel").dataset.sheet }));
+  await page.click(".tour-next"); await tourAt(page, 7);
+  await page.click(".tour-next");
+  await tourClosed(page);
+  await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before);
+  const after = await page.evaluate(appSnapshot);
+  // a small 360 x 640 phone: open the card fully, scroll to the bottom, replay from the footer, and every step again
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.goto(BASE + APP + "?safe=20,0", { waitUntil: "load" });
+  await page.waitForFunction(() => !!window.pisteTour, null, { timeout: 90000 });
+  await page.evaluate(() => window.__app.setSheet("full"));
+  const foot = await settled(page, () => { const p = document.querySelector("#panel"); p.scrollTop = p.scrollHeight; const r = p.getBoundingClientRect();
+    return ["#feedback-link", "#tour-again"].map((s) => { const b = document.querySelector(s).getBoundingClientRect(); return b.top >= r.top && b.bottom <= r.bottom && b.height >= 44; }); });
+  const before2 = await page.evaluate(appSnapshot);
+  await page.click("#tour-again");
+  const small = await tourWalk(page, 0, 7, false);
+  await page.click(".tour-next");
+  await tourClosed(page);
+  await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before2);
+  const after2 = await page.evaluate(appSnapshot);
+  const ok = big.length === 8 && big.every((s) => s.ok) && back.i === 6 && sameState(before, after) && after.drawn === 0 && foot.every(Boolean)
+    && small.length === 8 && small.every((s) => s.ok) && sameState(before2, after2);
+  return { ok, phone390: brief(big), sheets390: big.map((s) => s.sheet).join(","), back, restored390: sameState(before, after), foot, phone360: brief(small),
+    sheets360: small.map((s) => s.sheet).join(","), restored360: sameState(before2, after2), before2, after2, detail390: big.map((s) => ({ id: s.id, card: s.card, targets: s.targets })) };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, fresh: true });
 
 await browser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----

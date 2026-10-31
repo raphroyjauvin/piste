@@ -11,7 +11,11 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const desktop = { w: 1440, h: 900, scale: 1 };
 const phone = { w: 402, h: 874, scale: 2, mobile: true };   // iPhone 17 / 17 Pro size in CSS pixels
-const APP = "a-positron/index.html";
+const phone390 = { w: 390, h: 844, scale: 2, mobile: true };   // iPhone 13-16 size, for the welcome card and the tour
+const APP = process.env.PISTE_APP || "a-positron/index.html";   // PISTE_APP=index.html: a site built by tools/build_site.py (the app at the root)
+// the guided tour (tour.js), one shot per step: start at that step and wait until the callout has settled
+const TOUR = ["search", "style", "colours", "ride", "suggest", "winter", "tools", "feedback"];
+const tourSteps = (i) => [["eval", `window.pisteTour.start(${i})`], ["until", `(() => { const x = window.pisteTour.info(); return x.i === ${i} && x.settled; })()`], ["wait", 300]];
 const SHOTS = [
   { name: "P0-phone-preview", url: "phone.html", w: 1440, h: 980, scale: 1, page: true, wait: 14000 },
   { name: "A1-route", url: `${APP}?trip=montroyal`, ...desktop },
@@ -38,6 +42,11 @@ const SHOTS = [
     ["eval", "(() => { const i = document.querySelector('#to'); i.value = 'marché jean'; i.dispatchEvent(new Event('input', { bubbles: true })); })()"], ["wait", 1500]] },
   // a GPS ride on a pretend track (?gps=replay: 18 km/h, a few metres of noise), coming up to the Rachel climb
   { name: "P7-phone-gps-ride", url: `${APP}?trip=rachel&gps=replay&gpsat=520&ride=gps&safe=62,34`, ...phone, steps: [["wait", 3000]] },
+  // first visit: the welcome card (fresh: nothing in storage yet), then every step of the tour on desktop (T) and phone (TP)
+  { name: "W1-welcome", url: APP, ...desktop, fresh: true, steps: [["until", "!document.querySelector('#welcome').hidden"], ["wait", 500]] },
+  { name: "W2-phone-welcome", url: `${APP}?safe=47,34`, ...phone390, fresh: true, steps: [["until", "!document.querySelector('#welcome').hidden"], ["wait", 500]] },
+  ...TOUR.map((id, i) => ({ name: `T${i + 1}-tour-${id}`, url: APP, ...desktop, steps: tourSteps(i) })),
+  ...TOUR.map((id, i) => ({ name: `TP${i + 1}-phone-tour-${id}`, url: `${APP}?safe=47,34`, ...phone390, steps: tourSteps(i) })),
 ];
 
 const filter = process.argv[2];
@@ -45,6 +54,8 @@ const browser = await chromium.launch({ channel: "msedge", headless: true, args:
 for (const s of SHOTS) {
   if (filter && !s.name.startsWith(filter)) continue;
   const ctx = await browser.newContext({ viewport: { width: s.w, height: s.h }, deviceScaleFactor: s.scale, isMobile: !!s.mobile, hasTouch: !!s.mobile });
+  // the first-visit welcome card counts as seen, except in the shots of it (fresh: true)
+  if (!s.fresh) await ctx.addInitScript(() => { try { localStorage.setItem("piste-welcomed", "1"); } catch (e) { /* storage blocked */ } });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -58,6 +69,7 @@ for (const s of SHOTS) {
     for (const [kind, arg] of s.steps || []) {
       if (kind === "eval") await page.evaluate(arg);
       if (kind === "wait") await page.waitForTimeout(arg);
+      if (kind === "until") await page.waitForFunction(arg, null, { timeout: 20000 }).catch(() => console.log(`${s.name}: still waiting for ${arg.slice(0, 60)}`));
     }
     // wait for tiles; a running (unpaused) ride never goes idle, so cap the wait
     await page.evaluate(() => new Promise((r) => { const m = window.__app && window.__app.map; if (!m) return setTimeout(r, 300); let done = false; const fin = () => { if (!done) { done = true; r(); } }; m.once("idle", fin); m.triggerRepaint(); setTimeout(fin, 6000); }));

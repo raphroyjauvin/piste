@@ -134,7 +134,7 @@
       frame.style.top = top + "px"; frame.style.height = height + "px";
       const load = () => {
         const s = SCREENS[+sel.value];
-        const url = `a-positron/index.html?${s.q}&safe=0,${mode === "safari" ? 0 : dev.bottom}`;
+        const url = `a-positron/index.html?${s.q}&welcome=0&safe=0,${mode === "safari" ? 0 : dev.bottom}`;
         frame.src = url; open.href = url;
         picks[i] = +sel.value; store.set("screens", JSON.stringify(picks));
       };

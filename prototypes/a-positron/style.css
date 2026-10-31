@@ -156,6 +156,15 @@ details.turns li { margin: 3px 0; }
 .ride-go { border: 0; background: var(--blue); color: #fff; font: 800 16px/1 var(--font-display); letter-spacing: .02em; padding: 14px; border-radius: 12px; }
 .ride-go:hover { background: var(--blue-deep); }
 .credits { font-size: 11px; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 10px; }
+.credits p { margin: 0; }
+/* the panel's last row: feedback (mail) and a faint "Take the tour" */
+.foot-links { display: flex; align-items: center; gap: 4px 16px; flex-wrap: wrap; margin: 4px 0 -6px; }
+.feedback-link { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--ink-2); font-size: 13.5px; font-weight: 700; text-decoration: none; }
+.feedback-link svg { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.feedback-link:hover { color: var(--blue-deep); }
+.tour-again { border: 0; background: none; min-height: 44px; padding: 0 2px; font-size: 11.5px; color: var(--ink-3); opacity: .8; }
+.tour-again:hover { color: var(--blue-deep); opacity: 1; }
+body.riding .tour-again { visibility: hidden; }
 
 /* ---------- map controls ---------- */
 .map-controls { position: absolute; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 5; }
@@ -298,6 +307,60 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 /* while riding: no zoom buttons or scale bar under the ride controls */
 body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display: none; }
 
+/* ---------- welcome card (first visit) and guided tour (tour.js) ---------- */
+.welcome { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(9, 24, 36, .4);
+  padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom)); }
+.welcome-card { width: min(408px, 100%); max-height: 100%; overflow: auto; overscroll-behavior: contain; background: var(--paper); border-radius: 22px;
+  box-shadow: 0 2px 6px rgba(10, 22, 32, .12), 0 22px 56px rgba(10, 22, 32, .3); padding: 22px 22px 8px; display: flex; flex-direction: column; gap: 12px; }
+.welcome-card:focus, .tour-card:focus { outline: none; }
+.welcome-head { display: flex; align-items: center; gap: 12px; }
+.welcome-head .mark { width: 40px; height: 40px; flex: none; }
+.welcome-head h2 { margin: 0; font: 800 23px/1.15 var(--font-display); letter-spacing: .005em; }
+.welcome-text { margin: 0; font-size: 16px; line-height: 1.45; color: var(--ink); }
+.beta-note { display: flex; gap: 10px; align-items: flex-start; background: var(--paper-2); border-radius: 12px; padding: 10px 12px; }
+.beta-note p { margin: 0; font-size: 13.5px; line-height: 1.42; color: var(--ink-2); }
+.beta-pill { flex: none; margin-top: 1px; background: var(--blue-soft); color: var(--blue-deep); border-radius: 999px; padding: 3px 8px 2px;
+  font: 800 11px/1.2 var(--font-display); letter-spacing: .07em; text-transform: uppercase; }
+.welcome-buttons { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.welcome-go, .welcome-alt { min-height: 48px; border-radius: 13px; font-size: 16px; font-weight: 700; }
+.welcome-go { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.welcome-go small { font-size: 13px; font-weight: 400; opacity: .85; }
+.welcome-go small::before { content: "·"; margin-right: 8px; }
+.welcome-go:hover { background: var(--blue-deep); }
+.welcome-alt { border: 0; background: var(--paper-2); color: var(--ink); }
+.welcome-alt:hover { background: #ecebe6; }
+.welcome-feedback { align-self: center; color: var(--blue-deep); font-size: 13.5px; padding: 0 8px; }
+
+.tour { position: fixed; inset: 0; z-index: 50; touch-action: none; -webkit-tap-highlight-color: transparent; }
+.tour-dim { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.tour-shade { fill: rgba(9, 24, 36, .56); }
+.tour-glow { fill: none; stroke: rgba(0, 149, 230, .32); stroke-width: 7; }
+.tour-ring { fill: none; stroke: #fff; stroke-width: 2; }
+.tour-card { position: absolute; left: 0; top: 0; width: min(344px, calc(100vw - 24px)); background: var(--paper); border-radius: 18px;
+  box-shadow: 0 2px 6px rgba(10, 22, 32, .14), 0 18px 46px rgba(10, 22, 32, .3); padding: 15px 16px 10px 18px; will-change: transform, opacity; }
+.tour-card h2 { margin: 0 56px 5px 0; font: 800 19px/1.2 var(--font-display); color: var(--ink); }
+.tour-card p { margin: 0; font-size: 15px; line-height: 1.45; color: var(--ink-2); }
+.tour-card .tour-note { margin-top: 5px; font-size: 13px; color: var(--ink-3); }
+.tour-card .tour-note:empty { display: none; }
+.tour-skip { position: absolute; top: 3px; right: 4px; min-width: 44px; min-height: 44px; padding: 0 12px; border: 0; background: none; border-radius: 12px;
+  color: var(--ink-3); font-size: 13.5px; font-weight: 700; }
+.tour-skip:hover { color: var(--ink); }
+.tour-swatches { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 7px 16px; margin-top: 10px; font-size: 12.5px; line-height: 1.25; color: var(--ink-2); }
+.tour-swatches:empty { display: none; }
+.tour-swatches span { display: flex; align-items: center; gap: 7px; }
+.tour-swatches .sw { flex: none; width: 22px; }
+.tour-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.tour-dots { display: flex; align-items: center; gap: 5px; }
+.tour-dots i { width: 6px; height: 6px; border-radius: 3px; background: #d3d7db; transition: width .25s, background .25s; }
+.tour-dots i.done { background: #a9d8f4; }
+.tour-dots i.on { width: 16px; background: var(--blue); }
+.tour-btns { display: flex; gap: 4px; }
+.tour-back { min-height: 44px; padding: 0 12px; border: 0; background: none; border-radius: 12px; color: var(--ink-2); font-weight: 700; }
+.tour-back:hover { background: var(--paper-2); }
+.tour-next { min-height: 44px; padding: 0 18px; border-radius: 12px; }
+.tour-next:hover { background: var(--blue-deep); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
 /* ---------- phones: the panel is a bottom sheet you drag up (full) or down (map) ---------- */
 @media (max-width: 760px) {
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: none; height: 50%; border-radius: 20px 20px 0 0;
@@ -337,5 +400,10 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .recenter { bottom: calc(132px + var(--safe-bottom)); }
   .ride-hud.hill-on .recenter { bottom: calc(206px + var(--safe-bottom)); }
   .notice { top: calc(12px + var(--safe-top)); left: 12px; right: 12px; width: auto; }
+  /* the welcome card sits low, over the sheet, where the thumb is */
+  .welcome { place-items: end center; padding: calc(12px + var(--safe-top)) 12px calc(12px + var(--safe-bottom)); }
+  .welcome-card { padding: 20px 18px 6px; gap: 11px; }
+  .welcome-head h2 { font-size: 22px; }
+  .tour-card { width: min(440px, calc(100vw - 24px)); }   /* full width: the callout doesn't shift sideways between steps */
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

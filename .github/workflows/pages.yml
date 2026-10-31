@@ -1,5 +1,6 @@
-# Tests every push, and publishes the prototypes/ folder to GitHub Pages only when the tests pass on main:
-# https://www.raphroyjauvin.ca/piste/ (the account's Pages use Raph's own domain; raphroyjauvin.github.io/piste forwards there).
+# Tests every push, and publishes the site to GitHub Pages only when the tests pass on main.
+# The site is built by tools/build_site.py from prototypes/, with the app at the root: https://www.pistemtl.ca/
+# (before the custom domain is set: https://www.raphroyjauvin.ca/piste/). Old /a-positron/ links forward to the root.
 # If a test fails, the site stays on the last good version and GitHub emails the failed run.
 # One-time setup on github.com: Settings > Pages > Build and deployment > Source: "GitHub Actions".
 name: Test and deploy to GitHub Pages
@@ -34,18 +35,26 @@ jobs:
       - name: Install the test tools
         working-directory: tools/shots
         run: npm ci
-      # Browser tests (tools/shots/test.mjs) in the runner's Google Chrome, with software WebGL and saved address,
-      # weather and BIXI data (tools/shots/fixtures) instead of live feeds. The server starts in the same step.
+      - name: Build the site
+        run: python3 tools/build_site.py
+      # Browser tests (tools/shots/test.mjs) on the built site, in the runner's Google Chrome with software WebGL and
+      # saved address, weather and BIXI data (tools/shots/fixtures). Then site_check.mjs loads the site at a domain root
+      # and under a folder, and checks the old links forward. The servers start in the same step.
       - name: Browser tests
         env:
           PISTE_BROWSER: chrome
           PISTE_FIXTURES: "1"
           PISTE_BROWSER_ARGS: "--use-angle=swiftshader --use-gl=angle"
+          PISTE_APP: index.html
         run: |
-          python3 tools/serve.py 8765 prototypes > /tmp/serve.log 2>&1 &
-          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8765/a-positron/index.html && break; sleep 1; done
-          curl -sf -o /dev/null http://127.0.0.1:8765/a-positron/index.html || { echo "server did not start"; cat /tmp/serve.log; exit 1; }
-          cd tools/shots && npm test
+          mkdir -p /tmp/sub && ln -s "$PWD/_site" /tmp/sub/piste
+          python3 tools/serve.py 8765 _site > /tmp/serve.log 2>&1 &
+          python3 tools/serve.py 8766 /tmp/sub > /tmp/serve-sub.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8765/index.html && curl -sf -o /dev/null http://127.0.0.1:8766/piste/index.html && break; sleep 1; done
+          curl -sf -o /dev/null http://127.0.0.1:8766/piste/index.html || { echo "server did not start"; cat /tmp/serve.log /tmp/serve-sub.log; exit 1; }
+          cd tools/shots
+          npm test
+          node site_check.mjs http://127.0.0.1:8765/ http://127.0.0.1:8766/piste/
 
   deploy:
     needs: test
@@ -59,9 +68,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Build the site
+        run: python3 tools/build_site.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: prototypes
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

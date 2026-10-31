@@ -15,3 +15,5 @@ Thumbs.db
 prototypes/shared/data/graph_study.js
 prototypes/shared/data/network.js
 prototypes/shared/data/engine_routes.js
+# The published site, built by tools/build_site.py
+_site/
