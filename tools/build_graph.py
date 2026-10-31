@@ -413,7 +413,9 @@ def main(extent):
             tier = 5
         elif arterial.get(tid) == 1 or speeds.get(tid, 30) >= 50 or cls in (6, 7) or name.startswith("Voie Privée"):
             tier = 4
-        d = 3 if tier == 5 else 0 if (bidir or sens == 0) else (1 if sens == 1 else 2)
+        # A bike path on an expressway or ramp segment (classes 2, 8) runs beside it, so the cars' one-way doesn't apply
+        # (before 2026-10-30, the Autoroute 10 link to the Samuel-De Champlain bridge path was one-way, cutting off Brossard).
+        d = 3 if tier == 5 else 0 if (bidir or sens == 0 or (bikes and cls in (2, 8))) else (1 if sens == 1 else 2)
         flags = 0
         if bikes:
             if any(b["rev"] for b in bikes): flags |= F_REV

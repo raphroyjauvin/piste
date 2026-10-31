@@ -1,11 +1,12 @@
-# Publishes the prototypes/ folder to GitHub Pages on every push to main: https://www.raphroyjauvin.ca/piste/
-# (the account's Pages use Raph's own domain; raphroyjauvin.github.io/piste forwards there).
+# Tests every push, and publishes the prototypes/ folder to GitHub Pages only when the tests pass on main:
+# https://www.raphroyjauvin.ca/piste/ (the account's Pages use Raph's own domain; raphroyjauvin.github.io/piste forwards there).
+# If a test fails, the site stays on the last good version and GitHub emails the failed run.
 # One-time setup on github.com: Settings > Pages > Build and deployment > Source: "GitHub Actions".
-name: Deploy to GitHub Pages
+name: Test and deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]   # every branch is tested; only main is published
   workflow_dispatch:
 
 permissions:
@@ -13,13 +14,46 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: test-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/shots/package-lock.json
+      # Route safety checks: plain Node, about 2 s (tools/check_routes.js)
+      - name: Route safety checks
+        run: node tools/check_routes.js
+      - name: Install the test tools
+        working-directory: tools/shots
+        run: npm ci
+      # Browser tests (tools/shots/test.mjs) in the runner's Google Chrome, with software WebGL and saved address,
+      # weather and BIXI data (tools/shots/fixtures) instead of live feeds. The server starts in the same step.
+      - name: Browser tests
+        env:
+          PISTE_BROWSER: chrome
+          PISTE_FIXTURES: "1"
+          PISTE_BROWSER_ARGS: "--use-angle=swiftshader --use-gl=angle"
+        run: |
+          python3 tools/serve.py 8765 prototypes > /tmp/serve.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8765/a-positron/index.html && break; sleep 1; done
+          curl -sf -o /dev/null http://127.0.0.1:8765/a-positron/index.html || { echo "server did not start"; cat /tmp/serve.log; exit 1; }
+          cd tools/shots && npm test
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

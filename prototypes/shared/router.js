@@ -250,8 +250,10 @@
     route(from, to, opts = {}) {
       const { w, hill } = opts.w ? opts : weightsFor(opts.strictness ?? 0.8, opts.avoidHills);
       const APPROACH = 1.6; // cost per metre between the clicked point and where the ride starts/ends
-      const sc = from.e !== undefined ? [from] : this.snapCandidates(from[0], from[1]);
-      const tc = to.e !== undefined ? [to] : this.snapCandidates(to[0], to[1]);
+      // opts._wide: second try with more nearby segments (see the end of the search)
+      const slack = opts._wide ? 250 : 40, maxN = opts._wide ? 16 : 8;
+      const sc = from.e !== undefined ? [from] : this.snapCandidates(from[0], from[1], 400, slack, maxN);
+      const tc = to.e !== undefined ? [to] : this.snapCandidates(to[0], to[1], 400, slack, maxN);
       if (!sc.length || !tc.length) return null;
       const n = this.n;
       const gS = this.gScore, prev = this.prevArc, closed = this.closed;
@@ -314,7 +316,12 @@
           if (ng < gS[v]) { gS[v] = ng; prev[v] = k; heap.push(ng + h(v), v); }
         }
       }
-      if (bestDst === Infinity) return null;
+      if (bestDst === Infinity) {
+        // The start or end sits on a piece you can't ride out of or into (e.g. a one-way that stops short in the
+        // City's data): try again from more of the nearby segments before giving up.
+        if (!opts._wide && (from.e === undefined || to.e === undefined)) return this.route(from, to, Object.assign({}, opts, { _wide: true }));
+        return null;
+      }
       // rebuild legs: [{e, fwd, t0, t1}] (t = fraction along edge from node a)
       const legs = [];
       let s, t;

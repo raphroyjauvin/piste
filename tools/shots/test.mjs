@@ -1,33 +1,136 @@
-// Functional tests for the app, in headless Edge. Usage: node C:\bikeapp\tools\shots\test.mjs [name filter]
-// Test the live site instead: set PISTE_BASE=https://www.raphroyjauvin.ca/piste/ first.
+// Functional tests for the app, in a headless Chromium-based browser. Usage: node tools/shots/test.mjs [name filter]
+// Exit code 0 only if every group passed (and at least one ran); 1 otherwise. Environment variables (all optional):
+//   PISTE_BASE=https://www.raphroyjauvin.ca/piste/   test the live site instead of the dev server (http://localhost:8765/)
+//   PISTE_BROWSER=msedge|chrome|chromium             msedge (default): the Edge installed on this PC. chrome: an installed Google Chrome
+//                                                    (preinstalled on GitHub's ubuntu-latest). chromium: Playwright's own build
+//                                                    (npx playwright-core install chromium).
+//   PISTE_BROWSER_ARGS="--flag --flag"               extra Chromium switches (e.g. --use-angle=swiftshader forces software WebGL)
+//   PISTE_FIXTURES=1                                 answer the weather, radar, BIXI and address-search requests from the saved copies in
+//                                                    tools/shots/fixtures (see the README there) instead of the live services, so results
+//                                                    do not depend on today's weather or on those servers being up. CI sets this.
+//   PISTE_OFFLINE=1                                  also cut off the basemap (tiles.openfreemap.org), the terrain beyond our own tiles (s3.amazonaws.com)
+//                                                    and Google Fonts: the app falls back to its blank offline style. The suite passes either way
+//                                                    (checked 2026-10-30); use this if those servers ever make CI flaky.
+//   PISTE_FLAT_RIDE=1|0                              the long GPS-ride groups ride with the flat top-down camera instead of the 3D bird's-eye one.
+//                                                    Default: yes when WebGL is software (SwiftShader), because the 3D view then draws about 1 to 2
+//                                                    frames a second and the smoothness checks mean nothing; no on a PC with a GPU.
+//   PISTE_CPU_SLOWDOWN=4                             slow each page's CPU 4x (Chrome DevTools throttling) to try a slow machine
+//   PISTE_NET_REPORT=1                               print, per group, which outside hosts the page called (to spot a new live dependency)
 import { chromium } from "playwright-core";
+import { readFileSync } from "node:fs";
 
 const BASE = process.env.PISTE_BASE || "http://localhost:8765/";
 const APP = "a-positron/index.html";
 const only = process.argv[2];
-const browser = await chromium.launch({ channel: "msedge", headless: true, args: ["--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"] });
+const on = (v) => /^(1|true|yes|on)$/i.test(v || "");
+const BROWSER = (process.env.PISTE_BROWSER || "msedge").toLowerCase();
+const FIX = on(process.env.PISTE_FIXTURES);
+const SLOWDOWN = +process.env.PISTE_CPU_SLOWDOWN || 1;
+const NET_REPORT = on(process.env.PISTE_NET_REPORT);
+const OFFLINE = on(process.env.PISTE_OFFLINE);
+let FLAT_RIDE = false;   // set below, once we know what kind of WebGL this browser has
+const GROUP_LIMIT_MS = 5 * 60e3;   // no group may run longer than this (a hung page would otherwise hold a CI job for hours)
+const T0 = Date.now();
+
+// Software WebGL (SwiftShader) is what a CI machine without a GPU has; MapLibre needs WebGL either way.
+const launch = { headless: true, args: ["--ignore-gpu-blocklist", "--enable-unsafe-swiftshader", ...(process.env.PISTE_BROWSER_ARGS || "").split(/\s+/).filter(Boolean)] };
+if (BROWSER !== "chromium") launch.channel = BROWSER;   // chromium = no channel = Playwright's own download
+const browser = await chromium.launch(launch);
+console.log(`browser: ${BROWSER} ${browser.version()} | fixtures: ${FIX ? "on" : "off (live data)"} | basemap: ${OFFLINE ? "cut off" : "live"} | cpu slowdown: ${SLOWDOWN}x | base: ${BASE}`);
+// Fail at once, with a clear message, if this browser cannot do WebGL (otherwise every group waits 90 s for a map that never starts)
+{
+  const p = await browser.newPage();
+  const gl = await p.evaluate(() => { const c = document.createElement("canvas").getContext("webgl2") || document.createElement("canvas").getContext("webgl");
+    if (!c) return null; const x = c.getExtension("WEBGL_debug_renderer_info"); return x ? c.getParameter(x.UNMASKED_RENDERER_WEBGL) : "WebGL (renderer hidden)"; });
+  await p.close();
+  FLAT_RIDE = process.env.PISTE_FLAT_RIDE ? on(process.env.PISTE_FLAT_RIDE) : /swiftshader|llvmpipe|software/i.test(gl || "");
+  console.log(`webgl: ${gl || "NOT AVAILABLE"} | long GPS-ride groups: ${FLAT_RIDE ? "flat top-down camera" : "3D bird's-eye camera"}`);
+  if (!gl) { console.log("FAILED: this browser has no WebGL, so the map cannot start. Try PISTE_BROWSER_ARGS=\"--use-angle=swiftshader\" or another PISTE_BROWSER."); await browser.close(); process.exit(1); }
+}
+
+// ---- saved copies of the outside data (tools/shots/fixtures), used only when PISTE_FIXTURES=1 ----
+const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
+const CORS = { "access-control-allow-origin": "*" };
+const STUBBED = new Set(["api.open-meteo.com", "geo.weather.gc.ca", "gbfs.velobixi.com", "api.montreal.ca"]);   // hosts stubOutsideData answers
+const FIX_BIXI_STATIONS = FIX ? JSON.parse(fixture("bixi-station_information.json")).data.stations.length : 0;
+async function stubOutsideData(ctx) {
+  const json = (body) => ({ status: 200, contentType: "application/json", headers: CORS, body });
+  const preflight = (route) => route.request().method() === "OPTIONS" && route.fulfill({ status: 204, headers: { ...CORS, "access-control-allow-headers": "*" } });
+  // Open-Meteo forecast (weather.js): wind, rain, snow and temperature
+  await ctx.route("https://api.open-meteo.com/**", (route) => preflight(route) || route.fulfill(json(fixture("open-meteo.json"))));
+  // Environment Canada radar (weather.js): every tile is the same empty (transparent) picture
+  await ctx.route("https://geo.weather.gc.ca/**", (route) => preflight(route) || route.fulfill({ status: 200, contentType: "image/png", headers: CORS, body: fixture("radar-tile-empty.png") }));
+  // BIXI GBFS (bixi.js): station_information.json and station_status.json
+  await ctx.route("https://gbfs.velobixi.com/**", (route) => {
+    if (preflight(route)) return;
+    const f = /\/(station_information|station_status)\.json/.exec(route.request().url());
+    return f ? route.fulfill(json(fixture(`bixi-${f[1]}.json`))) : route.fulfill({ status: 404, headers: CORS, body: "no fixture" });
+  });
+  // City of Montréal address search (common.js geocoder): answers by the typed text; anything not saved finds nothing
+  const addresses = JSON.parse(fixture("montreal-addresses.json"));
+  await ctx.route("https://api.montreal.ca/**", (route) => {
+    if (preflight(route)) return;
+    const q = (new URL(route.request().url()).searchParams.get("q") || "").trim().toLowerCase().normalize("NFC");
+    if (!addresses[q]) console.log(`      (no saved address result for "${q}": answered with an empty list)`);
+    return route.fulfill(json(JSON.stringify(addresses[q] || { items: [] })));
+  });
+}
+
 const results = [];
+function say(r) {
+  const why = r.error || (r.errors && r.errors.length ? "console/page error: " + r.errors[0].slice(0, 200) : "a check was false (see the JSON line)");
+  console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}  (${r.secs} s)${r.ok ? "" : "  " + why}`);
+}
 // ctxOpts: extra browser-context options (touch, location permission and position for the GPS tests); fn gets (page, ctx)
 async function run(name, url, fn, viewport = { width: 1440, height: 900 }, ctxOpts = {}) {
   if (only && !name.includes(only)) return;
-  const ctx = await browser.newContext({ viewport, ...ctxOpts });
-  const page = await ctx.newPage();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
-  page.on("console", (m) => { if (m.type() === "error" && !/favicon|404|Failed to load resource/.test(m.text())) errors.push(m.text()); });
-  const t = Date.now();
+  console.log(`...   ${name}`);
+  const t = Date.now(), errors = [], hosts = new Set();
+  let ctx, timer;
+  const secs = () => ((Date.now() - t) / 1000).toFixed(1);
   try {
-    await page.goto(BASE + url, { waitUntil: "load", timeout: 90000 });
-    await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
-    const out = await fn(page, ctx);
-    results.push({ name, ok: errors.length === 0 && out.ok !== false, secs: ((Date.now() - t) / 1000).toFixed(1), ...out, errors });
+    ctx = await browser.newContext({ viewport, ...ctxOpts });
+    if (FIX) await stubOutsideData(ctx);
+    if (OFFLINE) await ctx.route(/^https:\/\/(tiles\.openfreemap\.org|s3\.amazonaws\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)\//, (route) => route.abort());
+    // window.__flatRide(): called by the GPS-ride groups right after a ride starts; switches to the flat camera when FLAT_RIDE is on
+    await ctx.addInitScript((flat) => { window.__flatRide = () => { const a = window.__app; if (flat && a && a.state.ride && a.state.rideView === "birdseye") document.querySelector("#ride-view").click(); }; }, FLAT_RIDE);
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => errors.push(String(e)));
+    page.on("console", (m) => { if (m.type() === "error" && !/favicon|404|Failed to load resource/.test(m.text())) errors.push(m.text()); });
+    if (NET_REPORT) page.on("request", (r) => { const u = new URL(r.url()); if (/^https?:$/.test(u.protocol) && u.host !== new URL(BASE).host) hosts.add(u.host); });
+    if (SLOWDOWN > 1) await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: SLOWDOWN });
+    const body = (async () => {
+      await page.goto(BASE + url, { waitUntil: "load", timeout: 90000 });
+      await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+      return fn(page, ctx);
+    })();
+    const limit = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`group still running after ${GROUP_LIMIT_MS / 1000} s, stopped`)), GROUP_LIMIT_MS); });
+    const out = await Promise.race([body, limit]);
+    results.push({ name, ok: errors.length === 0 && out.ok !== false, secs: secs(), ...out, errors });
   } catch (e) {
-    results.push({ name, ok: false, error: e.message.split("\n")[0], errors });
+    results.push({ name, ok: false, secs: secs(), error: e.message.split("\n")[0], errors });
   }
-  await ctx.close();
+  clearTimeout(timer);
+  if (NET_REPORT) console.log(`      outside hosts: ${[...hosts].sort().map((h) => (FIX && STUBBED.has(h) ? h + " (saved copy)" : h)).join(", ") || "none"}`);
+  say(results.at(-1));
+  try { await ctx.close(); } catch (e) { /* the page may already be gone */ }
 }
-const idle = "new Promise((r) => { const m = window.__app.map; let d = false; const f = () => { if (!d) { d = true; r(); } }; m.once('idle', f); m.triggerRepaint(); setTimeout(f, 10000); })";
+// Wait for the map to be idle (all tiles drawn). MapLibre fires 'idle' only once per burst of work, so if the map had already gone idle before
+// we started waiting, the event never comes (the old code then sat out its whole time limit); so a map that has been loaded and still for 0.5 s
+// counts too. The limit was 10 s on a PC with a GPU; software WebGL on a CI machine needs longer, so it is 40 s.
+const idle = "new Promise((r) => { const m = window.__app.map, t0 = performance.now(); let d = false; const f = () => { if (!d) { d = true; r(); } };" +
+  " m.once('idle', f); m.triggerRepaint();" +
+  " const poll = () => { if (d) return; if (performance.now() - t0 > 40000 || (performance.now() - t0 > 500 && m.loaded() && !m.isMoving())) f(); else setTimeout(poll, 100); }; poll(); })";
 const wait = (ms) => `new Promise((r) => setTimeout(r, ${ms}))`;
+// Wait (up to ms) until fn(arg) is true in the page. It never throws: the group then judges whatever state it reached, so a thing that
+// never happens still fails the check, but a slow machine gets the time it needs instead of a fixed pause.
+const until = (page, fn, arg, ms = 15000) => page.waitForFunction(fn, arg, { timeout: ms }).catch(() => {});
+// Read a layout measurement after it has stopped moving (two equal readings 100 ms apart, up to 10 s), for panels that slide into place.
+async function settled(page, fn) {
+  let prev, same = 0;
+  for (let i = 0; i < 100 && same < 2; i++) { const v = JSON.stringify(await page.evaluate(fn)); same = v === prev ? same + 1 : 0; prev = v; if (same < 2) await page.waitForTimeout(100); }
+  return JSON.parse(prev);
+}
 
 await run("search, slider, island routing, ride starts at once", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
   const app = window.__app; const g = BikeCommon.makeGeocoder(app.router);
@@ -39,7 +142,8 @@ await run("search, slider, island routing, ride starts at once", `${APP}?trip=mo
   const far = app.router.route([-73.5768, 45.4796], [-73.6837, 45.4290], { w: BikeRouter.PROFILES.bikemax.w, hill: 4 });
   document.querySelector("#ride-go").click();
   await new Promise((r) => setTimeout(r, 2500)); const d1 = app.state.ride ? app.state.ride.d : -1;
-  await new Promise((r) => setTimeout(r, 1500)); const d2 = app.state.ride ? app.state.ride.d : -1;
+  for (const t0 = performance.now(); app.state.ride && app.state.ride.d <= d1 && performance.now() - t0 < 15000;) await new Promise((r) => setTimeout(r, 100));   // slow machines draw few frames
+  const d2 = app.state.ride ? app.state.ride.d : -1;
   return { ok: inter.length > 0 && addr.length > 0 && !!far && far.length > 9000 && d2 > d1 && d1 >= 0 && !document.querySelector("#sheet"),
     nodes: app.router.n, intersection: inter[0] && inter[0].label, address: addr[0] && addr[0].label, place: place[0] && place[0].label,
     sliderLow: low, sliderHigh: high, lachineKm: far && +(far.length / 1000).toFixed(1), rideAdvanced: [Math.round(d1), Math.round(d2)] };
@@ -115,7 +219,7 @@ await run("climbs and hill-ahead (toned down)", `${APP}?trip=rachel`, async (pag
   return { ok: flatEx === 1.6 && ahead.ex > 1.6 && ahead.ex <= 2.5 && /Climb in/.test(ahead.card) && /Climbing/.test(on), climbs: sel.climbs.length, flatEx, ahead, on };
 }));
 
-await run("suggest a ride: custom loops, stops, 100 km box, headwinds", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+await run("suggest a ride: custom loops, stops, 100 km box, headwinds", `${APP}?trip=montroyal`, async (page) => page.evaluate(async (fix) => {
   const app = window.__app, s = app.state;
   app.setTab("suggest"); app.setSuggMode("custom");
   await app.computeSuggestions(true);
@@ -133,14 +237,15 @@ await run("suggest a ride: custom loops, stops, 100 km box, headwinds", `${APP}?
   await new Promise((r) => setTimeout(r, 3000)); await app.computeSuggestions(true);
   const windy = s.routes.length;
   return { ok: loops.length === 3 && loops.every((k) => Math.abs(k - 10) <= 3) && stops.includes("toilets") && stops.includes("park") && !stops.includes("market") && !stops.includes("shop") && !stops.includes("viewpoint")
-      && startLabel === "Starting location" && clamped === 100 && long.length >= 2 && restroom.length >= 1 && restroom.every((r) => r.stops === 1) && windy >= 1,
+      && startLabel === "Starting location" && clamped === 100 && long.length >= 2 && restroom.length >= 1 && restroom.every((r) => r.stops === 1) && windy >= 1
+      && (!fix || !!s.wxData),   // with the saved forecast the wind data must have loaded, so the headwind costs were really applied
     loops, stops, startLabel, clamped, long, restroom, withHeadwindAvoidance: windy, weatherLoaded: !!s.wxData };
-}));
+}, FIX));
 
 await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, async (page) => {
   const out = await page.evaluate(async () => {
     const app = window.__app, s = app.state;
-    await new Promise((r) => setTimeout(r, 1500));
+    for (const t0 = performance.now(); !(s.routes[0] && document.querySelectorAll(".classic-card").length === 10) && performance.now() - t0 < 20000;) await new Promise((r) => setTimeout(r, 100));   // first ride routed, cards drawn
     const cards = document.querySelectorAll(".classic-card").length;
     const lengths = window.CLASSICS.map((c, i) => { const r = app.classicRoute(i); return r ? [c.id, +(r.length / 1000).toFixed(1), Math.round(r.infraShare * 100)] : [c.id, null]; });
     const sights = (s.routes[0] && s.routes[0].r.stops || []).filter((x) => x.sight).length;
@@ -148,7 +253,7 @@ await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, as
     return { cards, lengths, sights, photo, panelVisible: !document.querySelector("#classics").hidden, first: s.classic };
   });
   await page.evaluate(() => { const tr = document.querySelector("#classic-track"); const c = tr.children[3]; tr.scrollLeft = c.offsetLeft - (tr.clientWidth - c.offsetWidth) / 2; });
-  await page.waitForTimeout(700);
+  await until(page, () => window.__app.state.classic === 3, null, 10000);   // the card under the middle becomes the selected ride
   const afterSwipe = await page.evaluate(() => window.__app.state.classic);
   return { ok: out.cards === 10 && out.lengths.every((l) => l[1] && l[1] > 5) && out.sights >= 2 && out.photo && afterSwipe === 3, ...out, afterSwipe };
 });
@@ -156,7 +261,9 @@ await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, as
 await run("winter mode: 4-season routing, icy map, labels", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
   const app = window.__app, m = app.map, s = app.state;
   const summer = { share: s.routes[0].r.infraShare, bg: m.getPaintProperty("background", "background-color") };
-  app.setWinter(true); await new Promise((r) => setTimeout(r, 2500));
+  app.setWinter(true);
+  for (const t0 = performance.now(); !document.querySelector("#detail").textContent.includes("Without a winter-cleared bike path") && performance.now() - t0 < 20000;) await new Promise((r) => setTimeout(r, 100));   // routes redrawn on the 4-season network
+  await new Promise((r) => setTimeout(r, 500));
   const winter = { share: s.routes[0].r.infraShare, bg: m.getPaintProperty("background", "background-color"), pressed: document.querySelector("#winter-btn").getAttribute("aria-pressed"),
     card: document.querySelector("#wx-card").hidden ? "" : document.querySelector("#wx-card").textContent, notCleared: m.getLayoutProperty("net-not-cleared", "visibility"),
     gapHeading: document.querySelector("#detail").textContent.includes("Without a winter-cleared bike path") };
@@ -166,7 +273,7 @@ await run("winter mode: 4-season routing, icy map, labels", `${APP}?trip=montroy
     summerShare: Math.round(summer.share * 100), winterShare: Math.round(winter.share * 100), winterCard: winter.card.slice(0, 160) };
 }));
 
-await run("wind & rain and live BIXI", `${APP}?trip=rachel`, async (page) => page.evaluate(async () => {
+await run("wind & rain and live BIXI", `${APP}?trip=rachel`, async (page) => page.evaluate(async (minStations) => {
   const app = window.__app, m = app.map, s = app.state;
   app.setWeather(true); await new Promise((r) => setTimeout(r, 4000));
   const card = document.querySelector("#wx-card").textContent;
@@ -177,9 +284,9 @@ await run("wind & rain and live BIXI", `${APP}?trip=rachel`, async (page) => pag
   out.bixiStations = s.bixi ? s.bixi.features.length : 0;
   out.bixiSample = s.bixi ? s.bixi.features.slice(0, 1).map((f) => [f.properties.name, f.properties.bikes, f.properties.docks]) : null;
   app.setWeather(false);
-  out.ok = out.radar === "visible" && out.canvas && /Wind|Calm/.test(out.card) && !!windNote && out.bixiStations > 300;
+  out.ok = out.radar === "visible" && out.canvas && /Wind|Calm/.test(out.card) && !!windNote && out.bixiStations >= minStations;
   return out;
-}));
+}, FIX ? FIX_BIXI_STATIONS : 301));   // live: the whole network (about 800 stations); fixtures: every station in the saved file
 
 await run("French", `${APP}?trip=montroyal&lang=fr`, async (page) => page.evaluate(() => {
   const s = window.__app.state, r = s.routes[0].r;
@@ -213,7 +320,7 @@ await run("2D ride: place icons stay pinned to the map (no shaking)", `${APP}?tr
   ro.observe(probe);
   const onRender = () => { pending = [...app.poiMarkers.values()].map((mk) => [mk, m.project(mk.getLngLat())]); w = 3 - w; probe.style.width = w + "px"; };
   m.on("render", onRender);
-  await new Promise((r) => setTimeout(r, 5000));
+  for (const t0 = performance.now(); (performance.now() - t0 < 5000 || frames < 30) && performance.now() - t0 < 30000;) await new Promise((r) => setTimeout(r, 100));   // a slow machine needs longer to draw 30 frames
   m.off("render", onRender); ro.disconnect(); probe.remove();
   app.pauseRide(true);
   const pop = document.querySelector(".poi-pop");
@@ -223,24 +330,26 @@ await run("2D ride: place icons stay pinned to the map (no shaking)", `${APP}?tr
 
 await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`, async (page) => {
   const H = 874;
-  const half = await page.evaluate(() => Math.round(document.querySelector("#panel").getBoundingClientRect().height));
+  const panelH = () => Math.round(document.querySelector("#panel").getBoundingClientRect().height);
+  const half = await page.evaluate(panelH);
   await page.evaluate(() => window.__app.setSheet("full")); await page.waitForTimeout(400);
-  const full = await page.evaluate(() => Math.round(document.querySelector("#panel").getBoundingClientRect().height));
+  const full = await settled(page, panelH);
   // drag the grabber down a long way: the panel should drop to the small "peek" size
   const g = await page.locator("#grabber").boundingBox();
   await page.mouse.move(g.x + g.width / 2, g.y + 5); await page.mouse.down(); await page.mouse.move(g.x + g.width / 2, g.y + 600, { steps: 12 }); await page.mouse.up();
   await page.waitForTimeout(500);
-  const peek = await page.evaluate(() => Math.round(document.querySelector("#panel").getBoundingClientRect().height));
+  const peek = await settled(page, panelH);
   const layout = await page.evaluate(() => ({ scrollW: document.documentElement.scrollWidth, innerW: innerWidth }));
   await page.evaluate(() => window.__app.setSheet("half")); await page.waitForTimeout(400);
   // tap the destination bar: the card slides so the bars sit just above the keyboard (a guess here: no real keyboard), brand and tabs hide
   const to = await page.locator("#to").boundingBox();
   await page.mouse.click(to.x + 20, to.y + to.height / 2); await page.waitForTimeout(400);
-  const docked = await page.evaluate(() => { const f = document.querySelector("#to").closest(".field").getBoundingClientRect();
+  const docked = await settled(page, () => { const f = document.querySelector("#to").closest(".field").getBoundingClientRect();
     return { searching: document.body.classList.contains("searching"), active: document.activeElement.id, brandHidden: getComputedStyle(document.querySelector("#brand")).display === "none",
       fieldBottom: Math.round(f.bottom), kbTop: Math.round(innerHeight - Math.max(260, innerHeight * 0.47)), clearShown: getComputedStyle(document.querySelector('.clear[data-target="to"]')).display !== "none" }; });
-  // type: suggestions float over the map, above the card
-  await page.keyboard.type("marché jean"); await page.waitForTimeout(800);
+  const suggestShown = () => { const l = document.querySelector("#suggest"); return !l.hidden && l.children.length > 0; };
+  // type: suggestions float over the map, above the card (select the old destination first, so the text searched is exactly "marché jean")
+  await page.keyboard.press("Control+A"); await page.keyboard.type("marché jean"); await until(page, suggestShown);
   const list = await page.evaluate(() => { const l = document.querySelector("#suggest"), p = document.querySelector("#panel");
     return { shown: !l.hidden, aboveCard: l.getBoundingClientRect().bottom <= p.getBoundingClientRect().top + 1, n: l.children.length }; });
   // the ✕ leaves without changing the destination
@@ -251,12 +360,13 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   await page.evaluate(() => { const s = window.__app.state; s.to = null; s.toLabel = ""; document.querySelector("#to").value = ""; });
   const fr = await page.locator("#from").boundingBox();
   await page.mouse.click(fr.x + 20, fr.y + fr.height / 2); await page.waitForTimeout(300);
-  await page.keyboard.press("Control+A"); await page.keyboard.type("marché jean"); await page.waitForTimeout(800);
+  await page.keyboard.press("Control+A"); await page.keyboard.type("marché jean"); await until(page, suggestShown);
   await page.keyboard.press("Enter"); await page.waitForTimeout(300);
   const moved = await page.evaluate(() => ({ active: document.activeElement.id, searching: document.body.classList.contains("searching") }));
   // pick the destination from the list: the search ends, the card comes back and the route shows
-  await page.keyboard.type("parc la fontaine"); await page.waitForTimeout(800);
-  await page.click("#suggest li"); await page.waitForTimeout(900);
+  await page.keyboard.type("parc la fontaine"); await until(page, () => /Fontaine/i.test(document.querySelector("#suggest").textContent));
+  await page.click("#suggest li");
+  await until(page, () => !document.body.classList.contains("searching") && window.__app.state.routes.length > 0 && document.querySelector("#panel").dataset.sheet === "half");   // card back, route drawn
   const done = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), routes: window.__app.state.routes.length, sheet: document.querySelector("#panel").dataset.sheet }));
   return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW
       && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.kbTop && docked.fieldBottom >= docked.kbTop - 30
@@ -271,13 +381,14 @@ await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-
   const follow = await page.evaluate(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const app = window.__app, m = app.map, s = app.state, C = BikeCommon;
-    document.querySelector("#ride-go").click();
+    document.querySelector("#ride-go").click(); window.__flatRide();
     const ride = s.ride, geo = ride.geo;
     const ui = { gps: !!(ride && ride.gps), speedHidden: document.querySelector("#ride-speed").hidden, pauseHidden: document.querySelector("#ride-pause").hidden,
       gpsShown: !document.querySelector("#ride-gps").hidden, first: document.querySelector("#ride-gps").textContent };
     // at every map draw: is the rider on the route, near the latest fix and the true position, with the camera on it?
-    const st = { frames: 0, backwards: 0, offLine: 0, fixMax: 0, fixSum: 0, trueMax: 0, trueSum: 0, camMax: 0, stepMax: 0 };
-    let prevD = -1, prevLL = null;
+    const st = { frames: 0, backwards: 0, offLine: 0, fixMax: 0, fixSum: 0, trueMax: 0, trueSum: 0, camMax: 0, stepMax: 0, stepOver: 0, dtMax: 0, dtSum: 0 };
+    const v = geo.v * geo.k;   // how fast the pretend rider really moves (m/s)
+    let prevD = -1, prevLL = null, prevT = 0, firstT = 0, prevDt = 0, prevDt2 = 0;
     const onRender = () => {
       if (s.ride !== ride || !ride.fix || ride.blend > 0) return;
       const ll = app.riderMarker.getLngLat(), c = m.getCenter(), p = ride.cursor.at(ride.d);
@@ -289,38 +400,50 @@ await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-
       st.offLine = Math.max(st.offLine, C.distM(ll.lng, ll.lat, p.lon, p.lat));
       st.fixMax = Math.max(st.fixMax, ef); st.fixSum += ef; st.trueMax = Math.max(st.trueMax, et); st.trueSum += et;
       st.camMax = Math.max(st.camMax, C.distM(c.lng, c.lat, ll.lng, ll.lat));
-      if (prevLL) st.stepMax = Math.max(st.stepMax, C.distM(prevLL.lng, prevLL.lat, ll.lng, ll.lat));
-      prevD = ride.d; prevLL = ll;
+      // seconds since the last frame counted here. A slow machine draws fewer frames, so the rider rightly moves further between two of them
+      const now = performance.now(), dt = prevT ? (now - prevT) / 1000 : 0; prevT = now; if (!firstT) firstT = now; st.dtMax = Math.max(st.dtMax, dt); st.dtSum += dt;
+      // steps are judged from 1.5 s after the first fix: the rider's first move onto that fix (about the size of the GPS noise) is not a stutter
+      if (prevLL && now - firstT > 1500) { const step = C.distM(prevLL.lng, prevLL.lat, ll.lng, ll.lat); st.stepMax = Math.max(st.stepMax, step); st.stepOver = Math.max(st.stepOver, step - Math.max(3, v * (dt + prevDt + prevDt2) + 1.5)); }   // a step may be 3 m, or what the rider covers in this frame and the two before it (after a long frame the rider catches up) + 1.5 m
+      prevD = ride.d; prevLL = ll; prevDt2 = prevDt; prevDt = dt;
     };
-    m.on("render", onRender); await sleep(8000); m.off("render", onRender);
+    // sample for at least 8 s and at least 41 frames (a slow machine needs longer for that), but never past 30 s
+    m.on("render", onRender);
+    for (const t0 = performance.now(); (performance.now() - t0 < 8000 || st.frames <= 40) && performance.now() - t0 < 30000;) await sleep(100);
+    m.off("render", onRender);
     const r = (v) => +v.toFixed(2);
     return { ...ui, now: document.querySelector("#ride-gps").textContent, d: Math.round(ride.d), fixes: ride.stats.fixes, ignored: ride.stats.ignored, wake: s.wake,
       frames: st.frames, backwards: st.backwards, offLineM: r(st.offLine), toFixMaxM: r(st.fixMax), toFixMeanM: r(st.fixSum / Math.max(1, st.frames)),
-      toTrueMaxM: r(st.trueMax), toTrueMeanM: r(st.trueSum / Math.max(1, st.frames)), cameraM: r(st.camMax), stepMaxM: r(st.stepMax) };
+      toTrueMaxM: r(st.trueMax), toTrueMeanM: r(st.trueSum / Math.max(1, st.frames)), cameraM: r(st.camMax), stepMaxM: r(st.stepMax),
+      stepOverM: r(st.stepOver), frameMaxMs: Math.round(st.dtMax * 1000), frameMeanMs: Math.round((st.dtSum / Math.max(1, st.frames - 1)) * 1000),
+      lagMaxM: r(v * st.dtMax), lagMeanM: r((v * st.dtSum) / Math.max(1, st.frames - 1)) };   // lag*: the distance the rider moves in one frame (the most / on average)
   });
   // drag the map by hand: it stops following and offers "Re-center"; a tap there follows again
   await page.mouse.move(720, 420); await page.mouse.down(); await page.mouse.move(560, 330, { steps: 8 }); await page.mouse.up();
   await page.waitForTimeout(600);
   const dragged = await page.evaluate(() => { const a = window.__app, ll = a.riderMarker.getLngLat(), c = a.map.getCenter();
     return { follow: a.state.follow, button: !document.querySelector("#ride-recenter").hidden, centerToRiderM: Math.round(BikeCommon.distM(c.lng, c.lat, ll.lng, ll.lat)) }; });
-  await page.click("#ride-recenter"); await page.waitForTimeout(900);
+  await page.click("#ride-recenter");
+  await page.waitForFunction(() => { const a = window.__app, ll = a.riderMarker.getLngLat(), c = a.map.getCenter(); return a.state.follow && BikeCommon.distM(c.lng, c.lat, ll.lng, ll.lat) < 0.5; }, null, { timeout: 15000 }).catch(() => {});
   const recentered = await page.evaluate(() => { const a = window.__app, ll = a.riderMarker.getLngLat(), c = a.map.getCenter();
     return { follow: a.state.follow, button: !document.querySelector("#ride-recenter").hidden, centerToRiderM: +BikeCommon.distM(c.lng, c.lat, ll.lng, ll.lat).toFixed(2) }; });
   // arrival: start again 160 m before the end
   const arrival = await page.evaluate(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const app = window.__app, s = app.state, total = s.routes[s.sel].r.length;
-    app.endRide(); app.startGpsRide({ replay: { speedup: 3, startAt: total - 160 } });
+    app.endRide(); app.startGpsRide({ replay: { speedup: 3, startAt: total - 160 } }); window.__flatRide();
     const ride = s.ride, t0 = performance.now(); let toast = "";
-    while (!ride.arrived && performance.now() - t0 < 25000) { await sleep(200); }
+    while (!ride.arrived && performance.now() - t0 < 60000) { await sleep(200); }
     const secs = +((performance.now() - t0) / 1000).toFixed(1);
     toast = document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent;
     await sleep(3000);
     return { arrived: ride.arrived, secs, toast, endedAfter: s.ride === null && !document.querySelector("#panel").hidden, wakeAfter: s.wake };
   });
   const f = follow;
+  // The rider is drawn once per frame, so on a slow machine the picture is up to one frame behind: a position error may be as large as
+  // the distance covered in a frame (lag) plus half the usual limit. On a fast machine the limit is the usual one.
+  const allow = (limit, lag) => Math.max(limit, lag + limit / 2);
   const ok = f.gps && f.speedHidden && f.pauseHidden && f.gpsShown && /Waiting for GPS/.test(f.first) && /km\/h/.test(f.now) && f.d > 80 && f.ignored >= 2
-    && f.frames > 40 && f.backwards === 0 && f.offLineM < 0.5 && f.toFixMaxM < 12 && f.toFixMeanM < 6 && f.toTrueMeanM < 8 && f.cameraM < 0.5 && f.stepMaxM < 3
+    && f.frames > 40 && f.backwards === 0 && f.offLineM < 0.5 && f.toFixMaxM < allow(12, f.lagMaxM) && f.toFixMeanM < allow(6, f.lagMeanM) && f.toTrueMeanM < allow(8, f.lagMeanM) && f.cameraM < 0.5 && f.stepOverM <= 0
     && !dragged.follow && dragged.button && dragged.centerToRiderM > 30 && recentered.follow && !recentered.button && recentered.centerToRiderM < 0.5
     && arrival.arrived && /Arrived/.test(arrival.toast) && arrival.endedAfter && arrival.wakeAfter === "off";
   return { ok, follow, dragged, recentered, arrival };
@@ -333,13 +456,13 @@ await run("GPS ride (replayed track): a detour triggers exactly one reroute", `$
   const toasts = new Set(), toastEl = document.querySelector("#toast");
   new MutationObserver(() => { if (!toastEl.hidden) toasts.add(toastEl.textContent); }).observe(toastEl, { childList: true, attributes: true, characterData: true, subtree: true });
   const planned = s.routes[s.sel].r, plannedTrack = C.makeTrack(planned);
-  document.querySelector("#ride-go").click();
+  document.querySelector("#ride-go").click(); window.__flatRide();
   const ride = s.ride, geo = ride.geo;
   let offDrawn = 0;   // while off route, the rider is drawn where the phone is, not on the route
   const onRender = () => { if (s.ride === ride && ride.route === planned) { const ll = app.riderMarker.getLngLat(); offDrawn = Math.max(offDrawn, plannedTrack.locate(ll.lng, ll.lat).off); } };
   m.on("render", onRender);
   const t0 = performance.now();
-  while (s.reroutes < 1 && performance.now() - t0 < 30000) await sleep(200);
+  while (s.reroutes < 1 && performance.now() - t0 < 60000) await sleep(200);
   m.off("render", onRender);
   const secsToReroute = +((performance.now() - t0) / 1000).toFixed(1);
   await sleep(12000);   // long enough for a second reroute, if there were one
@@ -361,9 +484,9 @@ await run("GPS ride (replayed track): on a classic ride, a reroute rejoins the r
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const app = window.__app, s = app.state;
   const planned = s.routes[0].r;
-  document.querySelector("#ride-go").click();
+  document.querySelector("#ride-go").click(); window.__flatRide();
   const t0 = performance.now();
-  while (s.reroutes < 1 && performance.now() - t0 < 25000) await sleep(200);
+  while (s.reroutes < 1 && performance.now() - t0 < 60000) await sleep(200);
   await sleep(1500);
   const r = s.ride.route, log = s.rerouteLog[0] || {}, left = planned.length - (log.d || 0);   // what was left of the ride when you went off it
   const out = { reroutes: s.reroutes, rejoin: s.rideOpts.rejoin, leftM: Math.round(left), newM: Math.round(r.length), plannedSights: planned.stops.map((x) => x.label),
@@ -385,7 +508,9 @@ await run("GPS: location refused shows a calm message, and the preview still wor
   const back = { ride: s.ride === null, panel: !document.querySelector("#panel").hidden, hudHidden: document.querySelector("#ride-hud").hidden, previewButton: !document.querySelector("#notice-preview").hidden };
   window.__app.setLang("fr"); const fr = document.querySelector("#notice-text").textContent; window.__app.setLang("en");
   document.querySelector("#notice-preview").click();
-  await sleep(1200); const d1 = s.ride ? s.ride.d : -1; await sleep(1200); const d2 = s.ride ? s.ride.d : -1;
+  await sleep(1200); const d1 = s.ride ? s.ride.d : -1;
+  for (const t0 = performance.now(); s.ride && s.ride.d <= d1 && performance.now() - t0 < 15000;) await sleep(100);   // slow machines draw few frames
+  const d2 = s.ride ? s.ride.d : -1;
   const preview = { sim: !!s.ride && !s.ride.gps, speedShown: !document.querySelector("#ride-speed").hidden, gpsHidden: document.querySelector("#ride-gps").hidden, noticeGone: document.querySelector("#notice").hidden };
   return { ok: previewLink && /can't use your location/.test(notice) && /accès à votre position/.test(fr) && back.ride && back.panel && back.hudHidden && back.previewButton
       && preview.sim && preview.speedShown && preview.gpsHidden && preview.noticeGone && d1 >= 0 && d2 > d1,
@@ -397,9 +522,9 @@ await run("GPS: the browser's own location moves the ride", `${APP}?trip=montroy
   const pts = await page.evaluate(() => { const cur = BikeCommon.buildCursor(window.__app.state.routes[0].r);
     return Array.from({ length: 15 }, (_, i) => { const p = cur.at(40 + i * 10); return [p.lon, p.lat]; }); });
   await ctx.setGeolocation({ longitude: pts[0][0], latitude: pts[0][1], accuracy: 8 });
-  await page.evaluate(() => document.querySelector("#ride-go").click());
+  await page.evaluate(() => { document.querySelector("#ride-go").click(); window.__flatRide(); });   // flat camera on software WebGL: long frames would merge several of the positions below
   for (const [lon, lat] of pts) { await ctx.setGeolocation({ longitude: lon, latitude: lat, accuracy: 8 }); await page.waitForTimeout(450); }
-  await page.waitForTimeout(800);
+  await until(page, () => window.__app.state.ride && window.__app.state.ride.d > 140);   // the ride catches up with the last position (180 m)
   return page.evaluate(() => {
     const s = window.__app.state, r = s.ride, status = document.querySelector("#ride-gps").textContent;
     const out = { gps: !!(r && r.gps), fixes: r && r.stats.fixes, d: r && Math.round(r.d), status, rider: getComputedStyle(document.querySelector(".rider-badge")).visibility, reroutes: s.reroutes };
@@ -413,7 +538,9 @@ await run("phone: GPS ride bar, preview link", `${APP}?trip=rachel&gps=replay&gp
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const app = window.__app, s = app.state, go = document.querySelector("#ride-go"), pv = document.querySelector("#ride-preview");
   const link = { coarse: matchMedia("(pointer: coarse)").matches, preview: !!pv, below: !!pv && pv.getBoundingClientRect().top >= go.getBoundingClientRect().bottom, text: pv && pv.textContent };
-  go.click(); await sleep(3500);
+  go.click();
+  for (const t0 = performance.now(); !/km\/h/.test(document.querySelector("#ride-gps").textContent) && performance.now() - t0 < 20000;) await sleep(100);   // first fixes in
+  await sleep(1500);
   const bar = document.querySelector(".ride-bar").getBoundingClientRect();
   const shown = [...document.querySelectorAll(".ride-buttons > *")].filter((el) => !el.hidden);
   const ui = { gps: !!(s.ride && s.ride.gps), shown: shown.map((el) => el.id).join(","), status: document.querySelector("#ride-gps").textContent,
@@ -427,7 +554,14 @@ await run("phone: GPS ride bar, preview link", `${APP}?trip=rachel&gps=replay&gp
 }), { width: 402, height: 874 }, { hasTouch: true, isMobile: true });
 
 await browser.close();
-let failed = 0;
-for (const r of results) { console.log(JSON.stringify(r)); if (!r.ok) failed++; }
-console.log(failed ? `${failed} test(s) FAILED` : `all ${results.length} tests passed`);
-process.exitCode = failed ? 1 : 0;
+// ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----
+const failed = results.filter((r) => !r.ok);
+console.log("\n=== details ===");
+for (const r of results) console.log(JSON.stringify(r));
+console.log("\n=== summary ===");
+for (const r of results) say(r);
+if (process.env.GITHUB_ACTIONS) for (const r of failed) console.log(`::error title=Piste test failed::${r.name}: ${r.error || (r.errors && r.errors[0]) || "a check was false"}`.replace(/\r?\n/g, " "));
+const total = ((Date.now() - T0) / 1000).toFixed(0);
+if (!results.length) console.log(`FAILED: no test group matched${only ? ` the filter "${only}"` : ""}`);
+else console.log(failed.length ? `${failed.length} of ${results.length} test(s) FAILED in ${total} s` : `all ${results.length} tests passed in ${total} s`);
+process.exitCode = failed.length || !results.length ? 1 : 0;

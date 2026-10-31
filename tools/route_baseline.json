@@ -1,0 +1,771 @@
+{
+ "network": {
+  "km": 5934,
+  "oneWayDeadEnds": 337,
+  "biggestDeadEnd": 35
+ },
+ "randomShare": {
+  "yourRoute|summer": 87.7,
+  "mostLanes|summer": 88.4,
+  "yourRoute|winter": 71.9
+ },
+ "randomLongDetours": {
+  "mostLanes|winter": 7,
+  "yourRoute|summer": 9,
+  "avoidHills|summer": 5,
+  "mostLanes|summer": 6,
+  "yourRoute|winter": 8
+ },
+ "routes": {
+  "plateau-downtown": {
+   "yourRoute|summer": {
+    "km": 3.77,
+    "bikePaths": 100,
+    "climb": 20,
+    "busy": 0
+   },
+   "avoidHills|summer": {
+    "km": 3.79,
+    "bikePaths": 100,
+    "climb": 12,
+    "busy": 0
+   },
+   "mostLanes|summer": {
+    "km": 3.77,
+    "bikePaths": 100,
+    "climb": 20,
+    "busy": 0
+   },
+   "mostDirect|summer": {
+    "km": 3.11,
+    "bikePaths": 39.9,
+    "climb": 21,
+    "busy": 1866
+   },
+   "yourRoute|winter": {
+    "km": 4.1,
+    "bikePaths": 89.1,
+    "climb": 16,
+    "busy": 0
+   },
+   "mostLanes|winter": {
+    "km": 4.1,
+    "bikePaths": 89.1,
+    "climb": 16,
+    "busy": 0
+   }
+  },
+  "rosemont-oldport": {
+   "yourRoute|summer": {
+    "km": 4.88,
+    "bikePaths": 99.3,
+    "climb": 19,
+    "busy": 35
+   },
+   "avoidHills|summer": {
+    "km": 4.88,
+    "bikePaths": 99.3,
+    "climb": 19,
+    "busy": 35
+   },
+   "mostLanes|summer": {
+    "km": 4.88,
+    "bikePaths": 99.3,
+    "climb": 19,
+    "busy": 35
+   },
+   "mostDirect|summer": {
+    "km": 4.55,
+    "bikePaths": 55.9,
+    "climb": 17,
+    "busy": 2007
+   },
+   "yourRoute|winter": {
+    "km": 4.88,
+    "bikePaths": 99.3,
+    "climb": 19,
+    "busy": 35
+   },
+   "mostLanes|winter": {
+    "km": 4.88,
+    "bikePaths": 99.3,
+    "climb": 19,
+    "busy": 35
+   }
+  },
+  "verdun-downtown": {
+   "yourRoute|summer": {
+    "km": 6.13,
+    "bikePaths": 98.8,
+    "climb": 20,
+    "busy": 73
+   },
+   "avoidHills|summer": {
+    "km": 6.13,
+    "bikePaths": 98.8,
+    "climb": 20,
+    "busy": 73
+   },
+   "mostLanes|summer": {
+    "km": 6.13,
+    "bikePaths": 98.8,
+    "climb": 20,
+    "busy": 73
+   },
+   "mostDirect|summer": {
+    "km": 5.58,
+    "bikePaths": 71.3,
+    "climb": 18,
+    "busy": 572
+   },
+   "yourRoute|winter": {
+    "km": 5.89,
+    "bikePaths": 92.2,
+    "climb": 18,
+    "busy": 297
+   },
+   "mostLanes|winter": {
+    "km": 6.21,
+    "bikePaths": 91.6,
+    "climb": 29,
+    "busy": 373
+   }
+  },
+  "villeray-mileend": {
+   "yourRoute|summer": {
+    "km": 4.13,
+    "bikePaths": 94.1,
+    "climb": 24,
+    "busy": 19
+   },
+   "avoidHills|summer": {
+    "km": 4.13,
+    "bikePaths": 94.1,
+    "climb": 24,
+    "busy": 19
+   },
+   "mostLanes|summer": {
+    "km": 4.13,
+    "bikePaths": 94.1,
+    "climb": 24,
+    "busy": 19
+   },
+   "mostDirect|summer": {
+    "km": 3.04,
+    "bikePaths": 36.5,
+    "climb": 28,
+    "busy": 1411
+   },
+   "yourRoute|winter": {
+    "km": 4.13,
+    "bikePaths": 82.4,
+    "climb": 24,
+    "busy": 495
+   },
+   "mostLanes|winter": {
+    "km": 4.13,
+    "bikePaths": 82.4,
+    "climb": 24,
+    "busy": 495
+   }
+  },
+  "ndg-concordia": {
+   "yourRoute|summer": {
+    "km": 5.85,
+    "bikePaths": 90.8,
+    "climb": 25,
+    "busy": 537
+   },
+   "avoidHills|summer": {
+    "km": 5.85,
+    "bikePaths": 90.8,
+    "climb": 24,
+    "busy": 537
+   },
+   "mostLanes|summer": {
+    "km": 5.85,
+    "bikePaths": 90.8,
+    "climb": 25,
+    "busy": 537
+   },
+   "mostDirect|summer": {
+    "km": 5.58,
+    "bikePaths": 80.2,
+    "climb": 16,
+    "busy": 1044
+   },
+   "yourRoute|winter": {
+    "km": 5.85,
+    "bikePaths": 90.8,
+    "climb": 25,
+    "busy": 537
+   },
+   "mostLanes|winter": {
+    "km": 5.85,
+    "bikePaths": 90.8,
+    "climb": 25,
+    "busy": 537
+   }
+  },
+  "hochelaga-plateau": {
+   "yourRoute|summer": {
+    "km": 5.96,
+    "bikePaths": 97.5,
+    "climb": 38,
+    "busy": 147
+   },
+   "avoidHills|summer": {
+    "km": 5.96,
+    "bikePaths": 97.5,
+    "climb": 38,
+    "busy": 147
+   },
+   "mostLanes|summer": {
+    "km": 5.96,
+    "bikePaths": 97.5,
+    "climb": 38,
+    "busy": 147
+   },
+   "mostDirect|summer": {
+    "km": 5.96,
+    "bikePaths": 93.8,
+    "climb": 38,
+    "busy": 147
+   },
+   "yourRoute|winter": {
+    "km": 5.96,
+    "bikePaths": 94.5,
+    "climb": 38,
+    "busy": 147
+   },
+   "mostLanes|winter": {
+    "km": 5.96,
+    "bikePaths": 94.5,
+    "climb": 38,
+    "busy": 147
+   }
+  },
+  "sainthenri-mcgill": {
+   "yourRoute|summer": {
+    "km": 4.79,
+    "bikePaths": 96.6,
+    "climb": 58,
+    "busy": 0
+   },
+   "avoidHills|summer": {
+    "km": 4.79,
+    "bikePaths": 96.6,
+    "climb": 58,
+    "busy": 0
+   },
+   "mostLanes|summer": {
+    "km": 4.79,
+    "bikePaths": 96.6,
+    "climb": 58,
+    "busy": 0
+   },
+   "mostDirect|summer": {
+    "km": 3.47,
+    "bikePaths": 42.9,
+    "climb": 42,
+    "busy": 1377
+   },
+   "yourRoute|winter": {
+    "km": 4.51,
+    "bikePaths": 85.2,
+    "climb": 51,
+    "busy": 416
+   },
+   "mostLanes|winter": {
+    "km": 4.51,
+    "bikePaths": 85.2,
+    "climb": 51,
+    "busy": 416
+   }
+  },
+  "lachine-downtown": {
+   "yourRoute|summer": {
+    "km": 12.61,
+    "bikePaths": 95.7,
+    "climb": 35,
+    "busy": 302
+   },
+   "avoidHills|summer": {
+    "km": 12.61,
+    "bikePaths": 95.7,
+    "climb": 35,
+    "busy": 302
+   },
+   "mostLanes|summer": {
+    "km": 12.61,
+    "bikePaths": 95.7,
+    "climb": 35,
+    "busy": 302
+   },
+   "mostDirect|summer": {
+    "km": 12.21,
+    "bikePaths": 92.8,
+    "climb": 29,
+    "busy": 421
+   },
+   "yourRoute|winter": {
+    "km": 13.11,
+    "bikePaths": 84.5,
+    "climb": 73,
+    "busy": 1861
+   },
+   "mostLanes|winter": {
+    "km": 13.11,
+    "bikePaths": 84.5,
+    "climb": 73,
+    "busy": 1861
+   }
+  },
+  "ahuntsic-plateau": {
+   "yourRoute|summer": {
+    "km": 7.11,
+    "bikePaths": 100,
+    "climb": 54,
+    "busy": 0
+   },
+   "avoidHills|summer": {
+    "km": 7.11,
+    "bikePaths": 100,
+    "climb": 54,
+    "busy": 0
+   },
+   "mostLanes|summer": {
+    "km": 7.11,
+    "bikePaths": 100,
+    "climb": 54,
+    "busy": 0
+   },
+   "mostDirect|summer": {
+    "km": 7.15,
+    "bikePaths": 99.5,
+    "climb": 54,
+    "busy": 36
+   },
+   "yourRoute|winter": {
+    "km": 7.11,
+    "bikePaths": 100,
+    "climb": 54,
+    "busy": 0
+   },
+   "mostLanes|winter": {
+    "km": 7.11,
+    "bikePaths": 100,
+    "climb": 54,
+    "busy": 0
+   }
+  },
+  "outremont-udem": {
+   "yourRoute|summer": {
+    "km": 2.69,
+    "bikePaths": 40.9,
+    "climb": 64,
+    "busy": 1384
+   },
+   "avoidHills|summer": {
+    "km": 2.69,
+    "bikePaths": 41,
+    "climb": 64,
+    "busy": 1384
+   },
+   "mostLanes|summer": {
+    "km": 2.69,
+    "bikePaths": 41,
+    "climb": 64,
+    "busy": 1384
+   },
+   "mostDirect|summer": {
+    "km": 2.71,
+    "bikePaths": 40.6,
+    "climb": 68,
+    "busy": 1407
+   },
+   "yourRoute|winter": {
+    "km": 2.7,
+    "bikePaths": 41.2,
+    "climb": 64,
+    "busy": 1384
+   },
+   "mostLanes|winter": {
+    "km": 2.7,
+    "bikePaths": 41.2,
+    "climb": 64,
+    "busy": 1384
+   }
+  },
+  "nunsisland-oldmtl": {
+   "yourRoute|summer": {
+    "km": 7.43,
+    "bikePaths": 96.8,
+    "climb": 43,
+    "busy": 164
+   },
+   "avoidHills|summer": {
+    "km": 7.43,
+    "bikePaths": 96.8,
+    "climb": 43,
+    "busy": 164
+   },
+   "mostLanes|summer": {
+    "km": 7.43,
+    "bikePaths": 96.8,
+    "climb": 43,
+    "busy": 164
+   },
+   "mostDirect|summer": {
+    "km": 6.82,
+    "bikePaths": 88.7,
+    "climb": 44,
+    "busy": 338
+   },
+   "yourRoute|winter": {
+    "km": 7.73,
+    "bikePaths": 77.4,
+    "climb": 51,
+    "busy": 297
+   },
+   "mostLanes|winter": {
+    "km": 7.73,
+    "bikePaths": 77.4,
+    "climb": 51,
+    "busy": 297
+   }
+  },
+  "oldport-jeandrapeau": {
+   "yourRoute|summer": {
+    "km": 6.2,
+    "bikePaths": 89.9,
+    "climb": 55,
+    "busy": 38
+   },
+   "avoidHills|summer": {
+    "km": 6.2,
+    "bikePaths": 89.9,
+    "climb": 55,
+    "busy": 38
+   },
+   "mostLanes|summer": {
+    "km": 6.2,
+    "bikePaths": 89.9,
+    "climb": 55,
+    "busy": 38
+   },
+   "mostDirect|summer": {
+    "km": 5.56,
+    "bikePaths": 52.3,
+    "climb": 54,
+    "busy": 1380
+   },
+   "yourRoute|winter": {
+    "km": 5.93,
+    "bikePaths": 49.5,
+    "climb": 56,
+    "busy": 38
+   },
+   "mostLanes|winter": {
+    "km": 5.93,
+    "bikePaths": 49.5,
+    "climb": 56,
+    "busy": 38
+   }
+  },
+  "pointeclaire-dorval": {
+   "yourRoute|summer": {
+    "km": 10.05,
+    "bikePaths": 38.9,
+    "climb": 22,
+    "busy": 1096
+   },
+   "avoidHills|summer": {
+    "km": 10.05,
+    "bikePaths": 38.9,
+    "climb": 22,
+    "busy": 1096
+   },
+   "mostLanes|summer": {
+    "km": 10.05,
+    "bikePaths": 38.9,
+    "climb": 22,
+    "busy": 1096
+   },
+   "mostDirect|summer": {
+    "km": 8.76,
+    "bikePaths": 6.2,
+    "climb": 21,
+    "busy": 1116
+   },
+   "yourRoute|winter": {
+    "km": 9.05,
+    "bikePaths": 0,
+    "climb": 20,
+    "busy": 9051
+   },
+   "mostLanes|winter": {
+    "km": 9.05,
+    "bikePaths": 0,
+    "climb": 20,
+    "busy": 9051
+   }
+  },
+  "montrealnord-stmichel": {
+   "yourRoute|summer": {
+    "km": 7.64,
+    "bikePaths": 83.7,
+    "climb": 44,
+    "busy": 665
+   },
+   "avoidHills|summer": {
+    "km": 7.66,
+    "bikePaths": 83.7,
+    "climb": 39,
+    "busy": 665
+   },
+   "mostLanes|summer": {
+    "km": 7.66,
+    "bikePaths": 83.7,
+    "climb": 39,
+    "busy": 665
+   },
+   "mostDirect|summer": {
+    "km": 4.79,
+    "bikePaths": 7.2,
+    "climb": 19,
+    "busy": 4242
+   },
+   "yourRoute|winter": {
+    "km": 10.03,
+    "bikePaths": 92,
+    "climb": 57,
+    "busy": 665
+   },
+   "mostLanes|winter": {
+    "km": 10.03,
+    "bikePaths": 92,
+    "climb": 57,
+    "busy": 665
+   }
+  },
+  "pat-anjou": {
+   "yourRoute|summer": {
+    "km": 12,
+    "bikePaths": 97.7,
+    "climb": 42,
+    "busy": 213
+   },
+   "avoidHills|summer": {
+    "km": 11.92,
+    "bikePaths": 97.6,
+    "climb": 42,
+    "busy": 213
+   },
+   "mostLanes|summer": {
+    "km": 12,
+    "bikePaths": 97.7,
+    "climb": 42,
+    "busy": 213
+   },
+   "mostDirect|summer": {
+    "km": 9.15,
+    "bikePaths": 37.7,
+    "climb": 48,
+    "busy": 4525
+   },
+   "yourRoute|winter": {
+    "km": 11.53,
+    "bikePaths": 74.1,
+    "climb": 42,
+    "busy": 213
+   },
+   "mostLanes|winter": {
+    "km": 11.53,
+    "bikePaths": 74.1,
+    "climb": 42,
+    "busy": 213
+   }
+  },
+  "cdn-downtown": {
+   "yourRoute|summer": {
+    "km": 9.78,
+    "bikePaths": 99.1,
+    "climb": 43,
+    "busy": 85
+   },
+   "avoidHills|summer": {
+    "km": 9.78,
+    "bikePaths": 99.1,
+    "climb": 43,
+    "busy": 85
+   },
+   "mostLanes|summer": {
+    "km": 9.78,
+    "bikePaths": 99.1,
+    "climb": 43,
+    "busy": 85
+   },
+   "mostDirect|summer": {
+    "km": 4.41,
+    "bikePaths": 17.3,
+    "climb": 46,
+    "busy": 3644
+   },
+   "yourRoute|winter": {
+    "km": 7.9,
+    "bikePaths": 93.3,
+    "climb": 39,
+    "busy": 531
+   },
+   "mostLanes|winter": {
+    "km": 7.9,
+    "bikePaths": 93.3,
+    "climb": 39,
+    "busy": 531
+   }
+  },
+  "classic-oldport": {
+   "classic|summer": {
+    "km": 9.12,
+    "bikePaths": 91.9,
+    "climb": 67,
+    "busy": 537
+   },
+   "classic|winter": {
+    "km": 12.82,
+    "bikePaths": 91.1,
+    "climb": 98,
+    "busy": 537
+   }
+  },
+  "classic-plateau": {
+   "classic|summer": {
+    "km": 10.35,
+    "bikePaths": 96.4,
+    "climb": 61,
+    "busy": 258
+   },
+   "classic|winter": {
+    "km": 10.76,
+    "bikePaths": 87.1,
+    "climb": 67,
+    "busy": 490
+   }
+  },
+  "classic-montroyal": {
+   "classic|summer": {
+    "km": 10.51,
+    "bikePaths": 76.7,
+    "climb": 125,
+    "busy": 2207
+   },
+   "classic|winter": {
+    "km": 11.44,
+    "bikePaths": 48.7,
+    "climb": 157,
+    "busy": 5300
+   }
+  },
+  "classic-jeantalon": {
+   "classic|summer": {
+    "km": 9.52,
+    "bikePaths": 87.9,
+    "climb": 43,
+    "busy": 370
+   },
+   "classic|winter": {
+    "km": 9.97,
+    "bikePaths": 83,
+    "climb": 45,
+    "busy": 775
+   }
+  },
+  "classic-olympic": {
+   "classic|summer": {
+    "km": 15.47,
+    "bikePaths": 99.3,
+    "climb": 83,
+    "busy": 14
+   },
+   "classic|winter": {
+    "km": 15.75,
+    "bikePaths": 81.2,
+    "climb": 82,
+    "busy": 1883
+   }
+  },
+  "classic-jeandrapeau": {
+   "classic|summer": {
+    "km": 15.32,
+    "bikePaths": 93.9,
+    "climb": 100,
+    "busy": 134
+   },
+   "classic|winter": {
+    "km": 14.26,
+    "bikePaths": 49.2,
+    "climb": 87,
+    "busy": 848
+   }
+  },
+  "classic-visitation": {
+   "classic|summer": {
+    "km": 9.53,
+    "bikePaths": 90.6,
+    "climb": 48,
+    "busy": 563
+   },
+   "classic|winter": {
+    "km": 10.35,
+    "bikePaths": 90.9,
+    "climb": 59,
+    "busy": 563
+   }
+  },
+  "classic-verdun": {
+   "classic|summer": {
+    "km": 25.98,
+    "bikePaths": 96.5,
+    "climb": 88,
+    "busy": 395
+   },
+   "classic|winter": {
+    "km": 22.41,
+    "bikePaths": 73.6,
+    "climb": 78,
+    "busy": 1505
+   }
+  },
+  "classic-lachine": {
+   "classic|summer": {
+    "km": 26.85,
+    "bikePaths": 97.7,
+    "climb": 73,
+    "busy": 302
+   },
+   "classic|winter": {
+    "km": 31.62,
+    "bikePaths": 85.3,
+    "climb": 134,
+    "busy": 1861
+   }
+  },
+  "classic-pointeclaire": {
+   "classic|summer": {
+    "km": 56.72,
+    "bikePaths": 78.7,
+    "climb": 139,
+    "busy": 302
+   },
+   "classic|winter": {
+    "km": 65.37,
+    "bikePaths": 54.8,
+    "climb": 270,
+    "busy": 1861
+   }
+  }
+ },
+ "recorded": "2026-10-31",
+ "graphBuilt": "2026-10-30 20:12"
+}
