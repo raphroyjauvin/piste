@@ -686,6 +686,7 @@ await run("welcome: first visit", APP, async (page, ctx) => {
     await page.setViewportSize({ width: w, height: h });
     await page.goto(BASE + APP + `?safe=${safe}`, { waitUntil: "load" });
     await until(page, welcomeUp, null, 90000);
+    await page.evaluate(() => Promise.all(document.querySelector("#welcome").getAnimations({ subtree: true }).filter((a) => a.effect.getTiming().iterations !== Infinity).map((a) => a.finished)));   // its fade-in can still be running on a slow machine
     phones.push(await settled(page, welcomeFits));
   }
   // storage blocked (some private modes): the card still shows, once per page load, and closes without errors
