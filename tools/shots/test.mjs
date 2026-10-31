@@ -995,6 +995,7 @@ await run("feedback dialog: opens, stays inside the app, sends through Web3Forms
   await page.fill("#fb-message", "x"); await page.fill("#fb-email", "nope"); await page.click("#fb-send"); const badEmail = await status();
   // no key (the constant is empty): Send opens the mail app, with the subject and message filled in, and nothing is posted
   await page.fill("#fb-subject", "Path question"); await page.fill("#fb-message", "Closed near Rosemont"); await page.fill("#fb-email", "");
+  await page.evaluate(() => window.pisteTour.setFeedbackKey(""));   // the no-key path: Send falls back to the mail app
   await page.click("#fb-send"); const noKey = await status(); const noKeyMails = await page.evaluate(() => window.__mails.slice());
   const noKeyCalls = calls.length;
   // with a key: posted to Web3Forms as JSON, thanks, then it closes by itself and clears; counted as feedback-sent; focus returns

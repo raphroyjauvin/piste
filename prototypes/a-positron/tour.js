@@ -20,7 +20,7 @@
 
   // Web3Forms (https://web3forms.com) mails each feedback form to Raph. The access key is made to sit in front-end code, so it is safe here.
   // While it is empty, or if a send fails, the form opens the person's mail app instead, so feedback is never lost.
-  const WEB3FORMS_KEY = "";
+  const WEB3FORMS_KEY = "c72ac173-e7f7-4c62-94a7-dfddd9314afe";
   const WEB3FORMS_URL = "https://api.web3forms.com/submit";
   let feedbackKey = WEB3FORMS_KEY;   // window.pisteTour.setFeedbackKey changes it (tests)
 
