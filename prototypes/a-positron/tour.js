@@ -51,11 +51,14 @@
   let dlg = null;   // the open dialog: { layer, card, opener, inerted, onClose }
   const focusables = (root) => [...root.querySelectorAll("button, a[href], input, textarea")]
     .filter((x) => !x.disabled && !x.classList.contains("hp") && x.getClientRects().length && getComputedStyle(x).visibility !== "hidden");
+  // Keeps the dialog above a phone keyboard: only when one shrinks the visible area does the layer follow it;
+  // otherwise the CSS fills the screen (the visual viewport can report a stale size for a frame after a resize)
   function fitViewport() {
     const v = window.visualViewport;
-    if (!dlg || !v) return;
-    dlg.layer.style.setProperty("--vv-top", v.offsetTop + "px");
-    dlg.layer.style.setProperty("--vv-h", v.height + "px");
+    if (!dlg) return;
+    const s = dlg.layer.style;
+    if (v && innerHeight - v.height > 100) { s.setProperty("--vv-top", v.offsetTop + "px"); s.setProperty("--vv-h", Math.min(v.height, innerHeight) + "px"); }
+    else { s.removeProperty("--vv-top"); s.removeProperty("--vv-h"); }
   }
   function dialogKey(e) {
     if (!dlg) return;
@@ -76,6 +79,7 @@
     if (!reduced()) dlg.card.animate([{ opacity: 0, transform: "translateY(14px)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: EASE });
     document.addEventListener("keydown", dialogKey, true);
     if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, fitViewport);
+    addEventListener("resize", fitViewport);
     (first || dlg.card).focus({ preventScroll: true });
     return true;
   }
@@ -84,6 +88,7 @@
     const d = dlg; dlg = null;
     document.removeEventListener("keydown", dialogKey, true);
     if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.removeEventListener(ev, fitViewport);
+    removeEventListener("resize", fitViewport);
     d.layer.hidden = true;
     for (const el of d.inerted) el.inert = false;
     if (d.onClose) d.onClose();

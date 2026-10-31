@@ -1045,7 +1045,7 @@ await run("feedback dialog: opens, stays inside the app, sends through Web3Forms
     && failed.open && failed.kind === "error" && failed.sendOn && failMails.length === 2 && failMails[1] === "mailto:support@pistemtl.ca?subject=Second&body=Second%20message" && eventsAfterFail.filter((e) => e === "feedback-sent").length === 1
     && bot.calls === 0 && esc.closed && esc.focus === "feedback-link" && cancel.closed && cancel.focus === "feedback-link"
     && fr.title === "Envoyer un commentaire" && /courriel/.test(fr.email) && fr.send === "Envoyer" && fr.cancel === "Annuler" && /^Ou écrivez-nous à/.test(fr.alt)
-    && phone.inside && phone.fonts.every((f) => f >= 16) && phone.hits.every((h) => h >= 44) && phone.vvh === phone.vv && phone.active === "FORM" && phone.noScroll;
+    && phone.inside && phone.fonts.every((f) => f >= 16) && phone.hits.every((h) => h >= 44) && (phone.vvh === "" || phone.vvh === phone.vv) && phone.active === "FORM" && phone.noScroll;
   return { ok, opened, empty, badEmail, noKey, noKeyMails, thanks, sent, payload, failed, failMails, bot, esc, cancel, fr, phone, calls: calls.length };
 });
 
