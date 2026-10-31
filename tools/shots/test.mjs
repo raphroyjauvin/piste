@@ -1065,7 +1065,8 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
   await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(400);
   await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
   const phone = await settled(page, () => { const c = document.querySelector("#about-card"), cr = c.getBoundingClientRect(), b = document.querySelector("#about-close").getBoundingClientRect();
-    return { scrolls: c.scrollHeight > c.clientHeight + 20, closeInView: b.top >= cr.top && b.bottom <= cr.bottom + 1 && b.bottom <= innerHeight, inside: cr.left >= 0 && cr.right <= innerWidth && cr.top >= 0 && cr.bottom <= innerHeight }; });
+    return { scrolls: c.scrollHeight > c.clientHeight + 20, closeInView: b.top >= cr.top && b.bottom <= cr.bottom + 1 && b.bottom <= innerHeight, inside: cr.left >= 0 && cr.right <= innerWidth && cr.top >= 0 && cr.bottom <= innerHeight,
+      rect: [cr.left, cr.top, cr.right, cr.bottom].map(Math.round).join(","), view: innerWidth + "x" + innerHeight }; });
   await page.keyboard.press("Escape"); await until(page, () => document.querySelector("#about").hidden);
   await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300);
   await page.evaluate(() => window.__app.setLang("fr"));
@@ -1085,7 +1086,7 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
     french: fr.link === "À propos et conditions" && frDlg.title === "À propos de Piste" && /Vie privée/i.test(frDlg.text) && /à vos propres risques/.test(frDlg.text),
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
-  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), foot, dlg: { ...dlg, text: undefined }, esc, outside, phone, fr, frTitle: frDlg.title };
+  return { ok: !bad.length, ...(bad.length ? { error: `failed checks: ${bad.join(", ")} (phone card ${phone.rect} in ${phone.view})` } : {}), foot, dlg: { ...dlg, text: undefined }, esc, outside, phone, fr, frTitle: frDlg.title };
 }, { width: 1440, height: 900 });
 
 await browser.close();
