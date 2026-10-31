@@ -17,7 +17,7 @@
 
   // ------------------------------------------------------------------ feedback: a mail with a blank template, nothing about the person
   const feedbackHref = () => `mailto:${MAIL}?subject=${encodeURIComponent(t("feedbackSubject"))}&body=${encodeURIComponent(t("feedbackBody"))}`;
-  function setLinks() { document.querySelectorAll("a[data-mailto]").forEach((a) => (a.href = feedbackHref())); }
+  function setLinks() { document.querySelectorAll("a[data-mailto]").forEach((a) => { a.href = feedbackHref(); a.onclick = () => P && P.track("feedback", { from: a.id === "welcome-feedback" ? "welcome" : "panel" }); }); }
 
   // safe areas in px (env() or the phone preview's ?safe=), read through a probe because the CSS variables may hold env()
   let probe = null;
@@ -68,6 +68,7 @@
     document.removeEventListener("keydown", welcomeKey, true);
     const a = welcome.animate([{ opacity: 1 }, { opacity: 0 }], { duration: tour ? 150 : 180, easing: "ease-out", fill: "forwards" });
     a.onfinish = () => { welcome.hidden = true; a.cancel(); };
+    P.track("welcome", { choice: tour ? "tour" : "explore" });
     if (tour) start(0);
     else if (visible(welcomeFocus) && welcomeFocus !== document.body) welcomeFocus.focus({ preventScroll: true });
     else if (document.activeElement) document.activeElement.blur();
@@ -353,7 +354,7 @@
       return;
     }
   }
-  function next() { if (open) { if (cur >= STEPS.length - 1) end(); else go(cur + 1, 1); } }
+  function next() { if (open) { if (cur >= STEPS.length - 1) end(true); else go(cur + 1, 1); } }
   function back() { if (open && cur > 0) go(cur - 1, -1); }
 
   function frame(now) {
@@ -434,6 +435,7 @@
     document.addEventListener("keydown", onKey, true);
     addEventListener("resize", onResize);
     go(Math.max(0, Math.min(STEPS.length - 1, i | 0)));
+    P.track("tour-start");
     cancelAnimationFrame(raf); raf = requestAnimationFrame(frame);
     return true;
   }
@@ -453,8 +455,9 @@
     panel.scrollTop = o.scroll; setTimeout(() => { if (!open) panel.scrollTop = o.scroll; }, 360);   // again once the sheet has its size
     P.map.easeTo(Object.assign({}, o.cam, { duration: reduced() ? 0 : 600 }));
   }
-  function end() {
+  function end(done) {
     if (!open) return;
+    P.track(done ? "tour-done" : "tour-skip", { step: cur + 1 });
     open = false; tr = null; settled = false;
     cancelAnimationFrame(raf);
     document.removeEventListener("keydown", onKey, true);

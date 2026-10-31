@@ -72,6 +72,23 @@
     return main || cross ? I.place(main || cross) : t("droppedPin");
   }
 
+  // Usage counts with Umami Cloud (cookieless), only on the published site (pistemtl.ca). Events carry names and small numbers,
+  // never places, addresses or coordinates; page views drop the ?query and #hash (shared links can hold coordinates).
+  // ?notrack=1 stops counting this browser (e.g. Raph's own phone), ?notrack=0 counts it again. Tests set umami.disabled too.
+  const UMAMI_ID = "6ed89953-c8a1-440d-9214-82a3a2dfa38d";   // shared with raphroyjauvin.ca (the free plan has one website): filter by hostname
+  {
+    const nt = new URLSearchParams(location.search).get("notrack");
+    try { if (nt === "1") localStorage.setItem("umami.disabled", "1"); else if (nt === "0") localStorage.removeItem("umami.disabled"); } catch (e) { /* private */ }
+    if (UMAMI_ID && /(^|\.)pistemtl\.ca$/.test(location.hostname)) {
+      const s = document.createElement("script");
+      s.defer = true; s.src = "https://cloud.umami.is/script.js";
+      Object.assign(s.dataset, { websiteId: UMAMI_ID, excludeSearch: "true", excludeHash: "true", doNotTrack: "true" });
+      document.head.appendChild(s);
+    }
+  }
+  const touring = () => { try { return !!(window.pisteTour && window.pisteTour.info().open); } catch (e) { return false; } };
+  const count = (name, data) => { if (touring() && !/^tour/.test(name)) return; try { if (window.umami) window.umami.track(name, data); } catch (e) { /* blocked or offline */ } };
+  let lastTracked = "";   // the last planned route or classic counted, so slider tweaks don't count again (kept in memory only)
   const store = { get(k, d) { try { return localStorage.getItem("piste-" + k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem("piste-" + k, v); } catch (e) { /* private */ } } };
   const state = { from: null, to: null, fromLabel: "", toLabel: "", routes: [], sel: 0, mode: "explore", is3d: false,
     pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
@@ -268,6 +285,7 @@
   ];
   const summerPaint = {};
   function setWinter(on) {
+    if (on && !state.winter) count("winter");
     state.winter = on;
     router.setWinter(on);
     document.body.classList.toggle("winter", on);
@@ -301,6 +319,7 @@
     return state.wxData;
   }
   function setWeather(on) {
+    if (on && !state.wx) count("weather");
     state.wx = on;
     $("#wx-btn").setAttribute("aria-pressed", String(on));
     applyLayers();
@@ -678,6 +697,8 @@
     state.routes = keep; state.sel = 0;
     renderRoutes(); drawRoutes();
     if (fit && keep.length) fitRoute(keep[0].r);
+    const key = `route|${state.from}|${state.to}`;
+    if (keep.length && key !== lastTracked && !touring()) { lastTracked = key; count("route", { km: Math.round(keep[0].r.length / 1000), winter: state.winter }); }
   }
   // "Suggest a ride": three rides from the start, loop or one-way, of about the asked length, optionally via a stop
   let suggToken = 0;
@@ -695,6 +716,7 @@
     state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), end: c.end, loop: c.loop }));
     state.sel = 0;
     if (!picks.length) toast(t("nothingFits"));
+    else count("suggest", { shape: state.sugg.loop ? "loop" : "one-way", km: state.sugg.km, stop: state.sugg.stop ? "yes" : "no" });
     renderRoutes(); drawRoutes();
     if (fit && state.routes.length) fitRoute(state.routes[0].r);
   }
@@ -780,6 +802,7 @@
     state.sel = 0;
     renderRoutes(); drawRoutes();
     if (fit && r) fitRoute(r);
+    if (r && `classic|${c.id}` !== lastTracked && !touring()) { lastTracked = `classic|${c.id}`; count("classic", { ride: c.id }); }
   }
   let scrollT = null;
   track.addEventListener("scroll", () => {
@@ -938,6 +961,7 @@
 
   // ------------------------------------------------------------------ language
   function setLang(l) {
+    if (l !== I.lang) count("language", { lang: l });
     I.lang = l; I.save(); I.apply();
     $("#lang-btn").textContent = l === "fr" ? "EN" : "FR";
     viewBtn.title = t(viewBtn.dataset.i18nTitle || "to3d");
@@ -1062,6 +1086,8 @@
     unlockAudio();
     if (state.sound === "voice") C.voice.prime();
     if (gps) startGpsRide(); else startRide();
+    const r = state.routes[state.sel];
+    count("ride", { kind: gps ? "gps" : "preview", km: r ? Math.round(r.r.length / 1000) : 0, winter: state.winter });
   }
   // the ride starts straight away (bird's-eye 3D); sound is a button in the ride bar. Shared by the GPS ride and the preview.
   function prepareRide(view, gps) {
@@ -1449,6 +1475,6 @@
     startGpsRide, endRide, gpsDefault, setFollow, riderMarker };
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
-    computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length };
+    computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };
   document.dispatchEvent(new Event("piste:ready"));
 })();

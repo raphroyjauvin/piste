@@ -18,6 +18,7 @@ for (const base of bases) {
   const origin = new URL(base).origin;
   console.log(`\n${base}`);
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await ctx.addInitScript(() => { try { localStorage.setItem("umami.disabled", "1"); } catch (e) { /* storage blocked */ } });   // checks never count as visits
   const page = await ctx.newPage();
   const bad = [], errors = [];
   page.on("response", (r) => { if (r.url().startsWith(origin) && r.status() >= 400) bad.push(`${r.status()} ${r.url().slice(origin.length)}`); });
