@@ -634,13 +634,23 @@
     el.value = state[which + "Label"] || "";   // nothing new: keep the place as it was
     leaveSearch(search.before);
   }
+  // A tap that opens search moves the card up before the finger lifts. iPhone Safari then sends that tap's mouse events to whatever
+  // is under the finger by then (the card's background), takes it as a tap outside and closes the keyboard, which closes search.
+  // So the rest of that tap is cancelled: its touchend, and any mouse events it still produces in the next moment.
+  let tapOpenedSearch = false, swallowUntil = 0;
+  for (const t of ["mousedown", "mouseup", "click"]) document.addEventListener(t, (e) => {
+    if (performance.now() < swallowUntil && e.target !== fromEl && e.target !== toEl) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
   for (const el of [fromEl, toEl]) {
     el.addEventListener("pointerdown", (e) => {
       if (!isPhone() || state.mode === "ride" || search.which) return;   // already searching: the bars sit above the keyboard
       e.preventDefault();                 // move the card first, then focus, so iPhone Safari has no reason to scroll the page
+      if (e.pointerType !== "mouse") { tapOpenedSearch = true; swallowUntil = performance.now() + 800; }
       enterSearch(el.id);
       el.focus({ preventScroll: true });
     });
+    el.addEventListener("touchend", (e) => { if (tapOpenedSearch) { tapOpenedSearch = false; e.preventDefault(); } }, { passive: false });
+    el.addEventListener("touchcancel", () => { tapOpenedSearch = false; });
     el.addEventListener("focus", () => { if (isPhone() && state.mode !== "ride") enterSearch(el.id); });
   }
   document.querySelectorAll(".clear").forEach((b) => onPress(b, () => clearField(b.dataset.target)));

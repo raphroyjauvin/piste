@@ -1092,6 +1092,30 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
   return { ok: !bad.length, ...(bad.length ? { error: `failed checks: ${bad.join(", ")} (phone card ${phone.rect} in ${phone.view})` } : {}), foot, dlg: { ...dlg, text: undefined }, esc, outside, phone, fr, frTitle: frDlg.title };
 }, { width: 1440, height: 900 });
 
+// iPhone Safari sends a tap's mouse events after the finger lifts, to whatever is under it by then. The tap that opens search has
+// moved the card, so that would be a "tap outside" that closes the keyboard (2026-10-31 bug). The rest of that tap must be cancelled.
+await run("phone: the tap that opens a search bar isn't taken as a tap outside", APP, async (page) => page.evaluate(async () => {
+  const out = {};
+  for (const id of ["to", "from"]) {
+    const el = document.getElementById(id), b = el.getBoundingClientRect(), x = b.left + 40, y = b.top + b.height / 2;
+    el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: "touch", isPrimary: true, pointerId: 3 }));
+    const te = new Event("touchend", { bubbles: true, cancelable: true }); el.dispatchEvent(te);
+    await new Promise((r) => setTimeout(r, 300));
+    const under = document.elementFromPoint(x, y) || document.body;
+    const md = new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: x, clientY: y, detail: 1 }); under.dispatchEvent(md);
+    const ck = new MouseEvent("click", { bubbles: true, cancelable: true, clientX: x, clientY: y, detail: 1 }); under.dispatchEvent(ck);
+    await new Promise((r) => setTimeout(r, 300));
+    out[id] = { touchendCancelled: te.defaultPrevented, mousedownCancelled: under === el || md.defaultPrevented, clickCancelled: under === el || ck.defaultPrevented,
+      searching: document.body.classList.contains("searching"), focused: document.activeElement === el };
+    window.__app.cancelSearch && window.__app.cancelSearch(); el.blur();
+    await new Promise((r) => setTimeout(r, 1000));   // past the swallow window: later taps on the card act normally again
+    const later = new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }); document.querySelector("#panel").dispatchEvent(later);
+    out[id].laterNotSwallowed = !later.defaultPrevented;
+  }
+  const ok = Object.values(out).every((o) => o.touchendCancelled && o.mousedownCancelled && o.clickCancelled && o.searching && o.focused && o.laterNotSwallowed);
+  return { ok, ...(ok ? {} : { error: "failed: " + JSON.stringify(out) }), out };
+}), { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
 await browser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----
 const failed = results.filter((r) => !r.ok);
