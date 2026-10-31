@@ -1,6 +1,6 @@
 # Piste: a Montreal bike commuter app
 
-Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one web prototype (A), routing and map layers on real data across the whole island, published on GitHub Pages.**
+Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one web prototype (A), routing and map layers on real data across the whole island, published on GitHub Pages only after the automatic tests pass.**
 
 ## The idea
 - You enter a destination. The app routes you along bike infrastructure as much as possible, even when that is not the shortest path.
@@ -13,10 +13,10 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 - It has "Avoid hills" and "Avoid headwinds" options, a winter mode (only the 4-season network counts), a wind and rain layer, and an English / Québec French switch.
 
 ## Try it
-- **On your phone:** https://www.raphroyjauvin.ca/piste/ (in Safari, Share → Add to Home Screen opens it full screen). Allow location when asked, so "Let's ride!" can follow you (GPS needs https: it works on the address above, but not on the PC's `http://…:8765` address opened from the phone). GitHub Pages serves it on Raph's own domain; raphroyjauvin.github.io/piste forwards there.
-- **On this PC:** double-click `prototypes\start-prototypes.bat`, then open http://localhost:8765/.
+- **On your phone:** https://www.pistemtl.ca/ once the domain is set up (pending, 2026-10-30). Until then: https://www.raphroyjauvin.ca/piste/, which now opens the app directly. In Safari, Share → Add to Home Screen opens it full screen. Allow location when asked, so "Let's ride!" can follow you (GPS needs https: it works on the addresses above, but not on the PC's `http://…:8765` address opened from the phone). GitHub Pages serves the site; raphroyjauvin.github.io/piste forwards to the raphroyjauvin.ca address.
+- **On this PC:** double-click `prototypes\start-prototypes.bat`, then open http://localhost:8765/ (it forwards to the app at http://localhost:8765/a-positron/). Local development is unchanged: the app runs from `prototypes/a-positron/`.
 - **Phone screens on the monitor:** http://localhost:8765/phone.html shows the app inside iPhone-sized screens, side by side.
-- **Links that open a given view:** add options to the app's address, for example https://www.raphroyjauvin.ca/piste/a-positron/?winter=1 (the short address forwards without them). Newer options:
+- **Links that open a given view:** add options right after the app's address, for example https://www.pistemtl.ca/?winter=1&lang=fr (on this PC, http://localhost:8765/a-positron/?winter=1). Old `/a-positron/` links still work: they forward to the new address and keep their options. Newer options:
   - `?classic=<id>`: open a classic ride (the ids are listed in `docs/06_prototypes.md`)
   - `?winter=1`: winter mode on
   - `?wx=1`: wind and rain layer on
@@ -42,7 +42,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 - 2026-10-28 (Raph): elevation must be very clear in 2D. Built: soft elevation colours, stronger LiDAR shading, 5 m contours (labelled every 25 m), uphill chevrons on climbs. (Toned down, and the chevrons replaced by 1 m contours, on 2026-10-29: see below.)
 - 2026-10-28 (Raph): the 3D ride camera sits lower, more behind the rider (not fully behind). Built: pitch 70°, rider at 70% of the screen height.
 - 2026-10-28 (Raph): metro and BIXI icons should look like their real signs, without copyright problems. Built from scratch: white down-arrow on a blue disc for the metro; a BIXI-red tag with a plain bike.
-- 2026-10-28 (Raph): public GitHub repo `raphroyjauvin/piste`, published with GitHub Pages. Pages switched on the same day; the site is https://www.raphroyjauvin.ca/piste/ and the tests pass against it.
+- 2026-10-28 (Raph): public GitHub repo `raphroyjauvin/piste`, published with GitHub Pages. Pages switched on the same day; the site is https://www.raphroyjauvin.ca/piste/ and the tests pass against it. (On 2026-10-30 the site moved to the root and a test gate was added: see the last entries below.)
 - 2026-10-28 (Raph): **suggest a ride**: a start point, loop or one-way, an optional stop by category (coffee, food, shopping, any map category) and a distance; the app suggests three routes. Built the same day as a second tab; see `docs/06_prototypes.md`. (Stops and distance range changed on 2026-10-29: see below.)
 - 2026-10-28 (Raph), to discuss: an AI agent that understands ride requests in plain language; simple graphics on the 3D massing by business type (cafés, shops…).
 - 2026-10-28 (Claude): phone preview page (`prototypes/phone.html`) for designing the phone layout on the monitor; the real iPhone (via Pages) stays the final check.
@@ -119,6 +119,31 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
   - A pretend GPS (`?gps=replay`) feeds a test track through the same code as real GPS, so the tests and screenshot P7 run without a phone. Other options: `?ride=gps`, `?gps=1`, `?gps=0`. Details, numbers and tests in `docs/06_prototypes.md`; rerouting in `docs/05_routing.md`.
   - Not checked yet on a real iPhone (see Open questions).
   - Small change: the preview's "4×" label resets when a new preview starts.
+- 2026-10-30 (Raph): **welcome card, feedback link and guided tour**, before the first real test ride. Built (`prototypes/a-positron/tour.js`):
+  - **Welcome card, first visit only:** what Piste does, a "Beta" note (routes can be wrong; follow the road and the signs; tell us what you find), [Take the tour · 40 s], [Explore on my own] and a small "Send feedback" link. Either button (or Esc) marks it as seen.
+  - **Feedback:** a mail to support@pistemtl.ca with the subject "Piste feedback" ("Commentaires Piste" in French) and a blank template (what happened, where). Nothing about the person, their location or route goes in it. It sits at the very bottom of the panel with a small, faint "Take the tour" next to it.
+  - **Tour, 8 steps of a few seconds each:** search, route style, route colours (on the route on screen, or a demo route from Parc La Fontaine to the Old Port), "Let's ride", Suggest a ride, winter mode, weather and map tools, feedback. A dimmed screen with a cut-out that glides to each feature, a short callout next to it, Back / Next / Skip and the arrow keys. Ending or skipping puts everything back (routes, places, tab, winter mode, the card's size and the map view).
+  - Details and tests: see `docs/06_prototypes.md`.
+- 2026-10-30: **route safety checks.** Built: `node tools/check_routes.js [--update] [--verbose]`, in plain Node (no browser), about 2 s. It plans 1,380 routes on the published graph: 16 fixed commutes, 200 random trips of 1–15 km (the same seeded trips every run) and the 10 classic rides, in every route type, summer and winter. Run it after rebuilding the graph or changing the router.
+  - **It fails on any of these:** a closed or wrong-way segment; a break in a route; the same street ridden twice; a cut-off part of the network; an expressway open to bikes; one-way dead ends over 50 intersections (places you can ride into but not out of, or the reverse; 10 to 50 is only a warning); no route found.
+  - **Baseline:** it compares each route's bike-path share and length with `tools/route_baseline.json`, a saved copy of the last good results. After a change you meant to make, `--update` saves the new results as the baseline. The exit code is 1 on failure. Long detours are listed (`--verbose` shows them all) and their number is compared with the baseline.
+  - GitHub runs it before every publish (see the next entry).
+- 2026-10-30 (Claude, from the checks): **two routing bugs found and fixed.** Details in `docs/05_routing.md`.
+  - The Samuel-De Champlain bridge bike path was one-way in the graph, because the expressway segment's car direction was copied onto it. That cut off the Brossard side (334 intersections). Fix: a bike path on an expressway or ramp segment (Géobase classes 2 and 8) is two-way (`tools/build_graph.py`); graph rebuilt.
+  - A start or end on a dead-end one-way service road found no route (random trip 193). Fix: the router tries once more with more nearby segments before giving up (`prototypes/shared/router.js`, `route()`).
+- 2026-10-30 (Claude, from the checks): **known gap, not fixed.** The Sainte-Anne-de-Bellevue village core (around -73.9535, 45.4043) has 35 intersections you can't ride into, because its exits are one-way in the City's Géobase data (Rue Saint-Pierre, Rue du Collège, Route Transcanadienne). The City's data doesn't connect them in both directions; the check reports it as a warning. See Open questions.
+- 2026-10-30: **tests run before every publish** (`.github/workflows/pages.yml`, GitHub Actions). Only `main` publishes, and only if every test passes. Otherwise the site stays on the last good version and GitHub emails the failed run. A run takes about 4–5 minutes. First green run: 2026-10-30. Every push to any branch runs:
+  - the route checks;
+  - `npm ci` (installs the test tools) and `python3 tools/build_site.py` (builds the site);
+  - the browser tests on the built site, in the runner's Google Chrome. The machine has no graphics card, so the map is drawn by software WebGL (WebGL is how the browser draws the map). The outside data (saved address, weather, radar and BIXI answers in `tools/shots/fixtures`) is replayed, so results don't depend on today's weather. On that machine, the long GPS ride tests use the flat top-down camera, because the 3D one draws only 1 or 2 frames a second;
+  - `tools/shots/site_check.mjs`, which loads the built site at a domain root and under a `/piste/` folder.
+- 2026-10-30 (Raph): **the site opens the app directly, at www.pistemtl.ca.** Raph bought pistemtl.ca at Porkbun on 2026-10-30, with email forwarding for support@pistemtl.ca (the feedback address), and agreed the domain should open the app with no landing page. Built:
+  - `python tools/build_site.py [out_dir]` builds `_site/` (not in git): the app's files at the root (their `../` paths rewritten, so it works at a domain root or under a folder), shared data, vendor, icons, screens and `phone.html` copied beside it, the about page at `/about/`, and the home-screen manifest's `start_url` set to `./`.
+  - Old links keep working: `/a-positron/` and `about.html` forward to the new places and keep the `?query` and `#hash`.
+  - Local development is unchanged: the app runs from `prototypes/a-positron/` through `tools/serve.py`.
+  - **Live address:** https://www.pistemtl.ca/ once Raph sets up the DNS (the domain's address records) and the custom domain in GitHub Pages (pending). Until then: https://www.raphroyjauvin.ca/piste/, which now opens the app directly.
+  - URL options now go straight after the root, for example `https://www.pistemtl.ca/?winter=1&lang=fr`. The frames in `phone.html` add `&welcome=0`, so the welcome card doesn't cover them.
+  - Tests against a built or live site: `PISTE_APP=index.html` with `PISTE_BASE=<site address>` runs the browser tests; `node tools/shots/site_check.mjs <base url> [...]` checks a built site. Details in `docs/06_prototypes.md`.
 
 ## Open questions for Raph
 1. GPS ride, to check on a real iPhone ride (it only works over https, so on the live site):
@@ -132,6 +157,9 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 4. 3D storefront graphics: which style.
 5. Planif-Neige (live snow clearing): shelved until winter (2026-10-30). The City will send a token when the 2026-2027 version restarts. It covers streets only, not bike paths or sidewalks, and a token can't ship in the page, so it would need a small server. When it arrives, decide whether it's worth it for streets without a bike path. Until then, winter mode uses the 4-season network and the forecast.
 6. Working name: keep "Piste"?
+7. **Should detours be capped?** The router can take a long way round to stay on bike paths. Example: Côte-des-Neiges → Peel metro comes out at 9.8 km on 99% bike paths, against 4.4 km for the shortest legal route. `node tools/check_routes.js --verbose` lists 41 long detours. A detour is "long" when the route is longer than the limit below times the shortest legal route, and more than 300 m longer: 1.8× for "Your route", 2.0× for "Most bike paths" and "Avoid hills", 1.15× for "Most direct". Today they are only counted against the baseline, so the count can't grow. Decide whether to cap the detour for good (and at what size), or accept it as the price of bike paths.
+8. **Sainte-Anne-de-Bellevue village core:** 35 intersections around -73.9535, 45.4043 can't be ridden into, because their exits are one-way in the City's Géobase data (Rue Saint-Pierre, Rue du Collège, Route Transcanadienne). Not fixed; the route check reports it as a warning. Decide: ask the City, or override the segments in `tools/build_graph.py` (the same choice as for Habitat 67).
+9. **Domain:** set up the DNS and the custom domain in GitHub Pages so www.pistemtl.ca opens the app (pending since 2026-10-30).
 
 ## Folder map
 - `CLAUDE.md`: working rules for Claude sessions.
@@ -151,12 +179,14 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
   - `build_layers.py`: the older study-area map layers. The island scripts import its helpers; the app no longer loads most of what it builds
   - `compare_engines.py`, `bench_routing.js`: benchmarks
   - `check_classics.js`: prints every classic ride's length and bike-path share, summer and winter
+  - `check_routes.js`: route safety checks (1,380 routes, about 2 s); `route_baseline.json` is its saved baseline
+  - `build_site.py`: builds the published site into `_site/` (not in git), with the app at the root
   - `serve.py`: dev server
-  - `shots/`: tests (`test.mjs`), a quick load check (`smoke.mjs`), screenshots (`shoot.mjs`), app icons (`make_icons.mjs`)
-- `prototypes/` (this folder is the published website):
-  - `a-positron/`: the app
+  - `shots/`: tests (`test.mjs`), a check of the built site (`site_check.mjs`), a quick load check (`smoke.mjs`), screenshots (`shoot.mjs`), app icons (`make_icons.mjs`); `fixtures/` holds the saved weather, radar, BIXI and address data the tests replay
+- `prototypes/` (the source of the published website; `tools/build_site.py` reshapes it into `_site/`):
+  - `a-positron/`: the app (published at the site root)
   - `phone.html`: the app on iPhone-sized screens
-  - `about.html`: overview with screenshots
+  - `about.html`: overview with screenshots (published at `/about/`)
   - `shared/`:
     - `router.js`, `common.js`: the router, common UI code and the ride code (the preview simulator, the GPS ride and a pretend GPS for tests)
     - `i18n.js`: English and Québec French strings
@@ -170,6 +200,6 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
   - `vendor/`: MapLibre GL JS 5.24 and pmtiles 4.5.0
   - `icons/`, `manifest.webmanifest`: home-screen app icon
   - `screens/`: screenshots
-- `.github/workflows/pages.yml`: publishes `prototypes/` to GitHub Pages on every push to `main`.
+- `.github/workflows/pages.yml`: on every push to any branch, runs the route checks, builds the site and runs the browser tests; on `main`, and only if all pass, publishes `_site/` to GitHub Pages.
 - `data/raw/`: downloads exactly as published, with `_download_log.csv`. Not in git; rebuild with `tools/fetch_data.py all` (and `tools/island_tiles.py` / `tools/island_buildings.py` for the island-wide extras).
 - `data/build/`: derived files (the merged terrain model, graph JSON, tile build scratch). Not in git.

@@ -1,5 +1,5 @@
 // Route safety checks: plan hundreds of trips across the island on the published routing graph and fail on
-// unsafe or broken routes. Runs in plain Node (no browser), in about a minute. GitHub runs it before every deploy.
+// unsafe or broken routes. Runs in plain Node (no browser), in about 2 seconds. GitHub runs it before every deploy.
 //
 // Usage: node tools/check_routes.js            run the checks; exit code 1 if any fails
 //        node tools/check_routes.js --update   also record the current routes as the new baseline

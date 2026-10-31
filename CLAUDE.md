@@ -3,8 +3,8 @@
 This is Raph Roy-Jauvin's personal side project, separate from his day job. Never use work databases, scripts, credentials or files for it. This repo is public: keep anything about work out of it.
 
 Read `README.md` first: decisions, open questions, folder map. Details are in `docs\`:
-- `05_routing.md`: graph (study area and island), router, winter tiers
-- `06_prototypes.md`: the app (prototype A), its URL options and the phone preview
+- `05_routing.md`: graph (study area and island), router, winter tiers, route safety checks
+- `06_prototypes.md`: the app (prototype A), its URL options, the phone preview, tests and the site build
 - `03_data_sources.md`: data
 
 ## How to work here
@@ -19,15 +19,19 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   6. `node tools/bench_routing.js`
   7. `tools/compare_engines.py`
 - **Classic rides:** after rebuilding the island graph or editing `prototypes/shared/data/classics.js`, run `node tools/check_classics.js`. It routes every classic ride and prints its length and bike-path share, summer and winter.
+- **Route checks:** after rebuilding the graph or changing the router, run `node tools/check_routes.js [--update] [--verbose]` (about 2 s, plain Node, exit code 1 on failure). It plans 1,380 routes and fails on closed or wrong-way segments, broken routes, a street ridden twice, a cut-off network, an open expressway, big one-way dead ends or no route found, and compares bike-path share and length with `tools/route_baseline.json`. `--update` records a new baseline after a change you meant to make. Details: `docs/05_routing.md`.
 - **Serve:** `tools/serve.py` on port 8765. The preview config is `.claude/launch.json` ("bikeapp-prototypes").
 - **Test:**
-  - `node tools/shots/test.mjs [name filter]` runs the functional tests: 17 groups, all passing on 2026-10-30 (exit code 1 if any fail). The phone group has no real keyboard, so it only checks the guessed search position: check search changes on a real iPhone.
+  - `node tools/shots/test.mjs [name filter]` runs the functional tests: 20 groups, all passing on 2026-10-30 (exit code 1 if any fail). Every group starts with the first-visit welcome card already seen, except the welcome and tour groups. The phone group has no real keyboard, so it only checks the guessed search position: check search changes on a real iPhone.
   - The GPS ride tests (6 groups) use a pretend GPS: `?gps=replay&gpsx=<speed-up>&gpsat=<metres>&detour=<metres>` (`ReplayGeo` in `shared/common.js`; add `&gpsdeny` for "location refused"). Real GPS can only be checked on the iPhone, on the live site: geolocation needs HTTPS, so it doesn't work from `http://<this PC>:8765` on the phone.
   - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/` (A = desktop, P = phone).
   - `node tools/shots/smoke.mjs "?winter=1"` is a quick load check: it opens one app URL and prints console errors and a few state values (the dev server must be running).
-  - These all use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden.
+  - These all use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden (`PISTE_BROWSER=chrome` and `PISTE_BROWSER_ARGS` pick another browser; GitHub uses Chrome).
+  - `PISTE_FIXTURES=1` answers the weather, radar, BIXI and address requests from saved copies in `tools/shots/fixtures`, so results don't depend on today's data (GitHub sets it).
+  - The published site has the app at its root: `python tools/build_site.py` builds `_site/`; `PISTE_APP=index.html` makes the tests use that layout (with `PISTE_BASE=<site address>` for a built or live site); `node tools/shots/site_check.mjs <base url> [...]` checks a built site (old links forward, about page, manifest, no 404s).
+  - Test gate: GitHub runs the route checks, the browser tests and `site_check.mjs` on every push, and publishes only if all pass (see Publish). Run them here first.
   - `prototypes/phone.html` shows the app in iPhone-sized screens; the real iPhone (GitHub Pages) is the final check.
-- **Publish:** `git push` to `main`; `.github/workflows/pages.yml` deploys `prototypes/` to https://www.raphroyjauvin.ca/piste/ (raphroyjauvin.github.io/piste forwards there). `PISTE_BASE=https://www.raphroyjauvin.ca/piste/` runs the tests against the live site. Git lives in `C:\Program Files\Git\cmd` (prefix PATH in each shell). The repo is public: never commit `docs/mapideas/`, raw data, credentials, or anything about Raph's work.
+- **Publish:** `git push`. `.github/workflows/pages.yml` tests every push to any branch (route checks, `npm ci`, `python3 tools/build_site.py`, the browser tests on the built site, `site_check.mjs`; about 4–5 min). Only `main` publishes, and only if every test passes; otherwise the site stays on the last good version and GitHub emails the failed run. The site has the app at its root: https://www.pistemtl.ca/ once Raph sets up DNS and the custom domain (pending, 2026-10-30); until then https://www.raphroyjauvin.ca/piste/ (raphroyjauvin.github.io/piste forwards there). Old `/a-positron/` links forward. `PISTE_APP=index.html PISTE_BASE=<site address>` runs the tests against the live site. Git lives in `C:\Program Files\Git\cmd` (prefix PATH in each shell). The repo is public: never commit `docs/mapideas/`, raw data, credentials, or anything about Raph's work.
 
 ## Rules
 - `data\raw\` holds downloads exactly as published. Never edit or delete them. Use one folder per dataset and log every download.
