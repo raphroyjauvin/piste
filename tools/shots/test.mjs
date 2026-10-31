@@ -1064,6 +1064,7 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
   // a phone: the text scrolls inside the card, and Close stays in view at the bottom of it
   await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(400);
   await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
+  await page.evaluate(() => Promise.all(document.querySelector("#about-card").getAnimations().map((a) => a.finished)));   // its slide-in can still be running on a slow machine
   const phone = await settled(page, () => { const c = document.querySelector("#about-card"), cr = c.getBoundingClientRect(), b = document.querySelector("#about-close").getBoundingClientRect();
     return { scrolls: c.scrollHeight > c.clientHeight + 20, closeInView: b.top >= cr.top && b.bottom <= cr.bottom + 1 && b.bottom <= innerHeight, inside: cr.left >= 0 && cr.right <= innerWidth && cr.top >= 0 && cr.bottom <= innerHeight,
       rect: [cr.left, cr.top, cr.right, cr.bottom].map(Math.round).join(","), view: innerWidth + "x" + innerHeight }; });
