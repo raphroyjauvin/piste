@@ -456,7 +456,7 @@ def main(extent):
     def key(x, y):
         return (round(x * 10), round(y * 10))
 
-    nodes, edges = {}, []
+    nodes, edges, slivers = {}, [], []
 
     def node_of(x, y):
         k = key(x, y)
@@ -469,9 +469,40 @@ def main(extent):
             continue
         a = node_of(*e["xy"][0]); b = node_of(*e["xy"][-1])
         L = sum(math.dist(p, q) for p, q in zip(e["xy"], e["xy"][1:]))
-        if L < 0.3 or (a == b and len(e["xy"]) < 3):
+        if L < 0.3:
+            # A sliver: a short path (here, an OSM spur at right angles to the street) had both ends snapped onto the same
+            # street a few cm apart, so snap_into cut the street in three and the middle piece, like the path itself, is
+            # under 0.3 m. Dropping it left a gap in the street; the two nodes are one junction and must become one node.
+            # Why it is safe: the street itself is continuous in the City's data. Example, found 2026-10-31: Rue Sainte-Anne
+            # at -73.95305, 45.40404 (Géobase ID_TRC 1619225, SENS_CIR 0 = two-way; bike network ID_CYCL 24971, NBR_VOIE 2)
+            # was cut by a 17 cm sliver, which isolated the village core of Sainte-Anne-de-Bellevue. No direction changes.
+            # tools/check_routes.js fails if any two nodes under 0.3 m apart are left without a segment between them.
+            if a != b and e["tier"] != 5 and e["dir"] != 3:   # a closed sliver stays a gap
+                slivers.append((a, b))
+            continue
+        if a == b and len(e["xy"]) < 3:
             continue
         edges.append(dict(e, a=a, b=b, len=L))
+    # close the slivers: nodes joined by a sliver edge are one node
+    sliver_parent = list(range(len(nodes)))
+
+    def sliver_find(i):
+        while sliver_parent[i] != i:
+            sliver_parent[i] = sliver_parent[sliver_parent[i]]
+            i = sliver_parent[i]
+        return i
+
+    for a, b in slivers:
+        sliver_parent[sliver_find(b)] = sliver_find(a)
+    merged_edges = []
+    for e in edges:
+        e["a"], e["b"] = sliver_find(e["a"]), sliver_find(e["b"])
+        if e["a"] == e["b"] and len(e["xy"]) < 3:
+            continue
+        merged_edges.append(e)
+    closed = sum(1 for i in range(len(sliver_parent)) if sliver_find(i) != i)
+    edges = merged_edges
+    print(f"sliver edges (<0.3 m) closed by joining their nodes: {len(slivers)} ({closed} nodes merged)")
     node_xy = [None] * len(nodes)
     for (kx, ky), i in nodes.items():
         node_xy[i] = (kx / 10, ky / 10)

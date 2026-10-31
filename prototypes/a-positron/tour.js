@@ -1,4 +1,4 @@
-/* Piste: the first-visit welcome card, the feedback links and the guided tour. Loaded after app.js.
+/* Piste: the first-visit welcome card, the feedback form and About dialogs, and the guided tour. Loaded after app.js.
    It steers the app only through window.piste (set by app.js once the map is ready).
    ?welcome=1 shows the welcome card again, ?welcome=0 never shows it. window.pisteTour is for tests and screenshots. */
 (function () {
@@ -11,13 +11,18 @@
   const EASE = "cubic-bezier(.2, .8, .2, 1)";
   const easeOut = (x) => 1 - Math.pow(1 - x, 3);
   const MAIL = "support@pistemtl.ca";
-  // the demo route when none is showing: Parc La Fontaine to the Old Port (bike paths, a shared stretch and one short gap)
-  const DEMO = { from: [-73.57204, 45.52787], to: [-73.5545, 45.5048] };
+  // The demo route when none is showing: Georges-Vanier metro to Verdun metro (4.1 km, 11% longer than the shortest legal path). With "Your
+  // route" at any slider position it rides 2.0 km on protected bike paths, 0.8 km painted, 0.9 km shared and one 331 m stretch with none, so
+  // the colours step shows every kind, and its route card stays short (one stretch) so it fits on a 360 x 640 phone. The test checks 250 m
+  // or more of each of the three kinds; if the router changes, re-pick the pair (the test says which kind went missing).
+  const DEMO = { from: [-73.576435, 45.488962], to: [-73.571654, 45.459432] };
   let P = null;   // window.piste
 
-  // ------------------------------------------------------------------ feedback: a mail with a blank template, nothing about the person
-  const feedbackHref = () => `mailto:${MAIL}?subject=${encodeURIComponent(t("feedbackSubject"))}&body=${encodeURIComponent(t("feedbackBody"))}`;
-  function setLinks() { document.querySelectorAll("a[data-mailto]").forEach((a) => { a.href = feedbackHref(); a.onclick = () => P && P.track("feedback", { from: a.id === "welcome-feedback" ? "welcome" : "panel" }); }); }
+  // Web3Forms (https://web3forms.com) mails each feedback form to Raph. The access key is made to sit in front-end code, so it is safe here.
+  // While it is empty, or if a send fails, the form opens the person's mail app instead, so feedback is never lost.
+  const WEB3FORMS_KEY = "";
+  const WEB3FORMS_URL = "https://api.web3forms.com/submit";
+  let feedbackKey = WEB3FORMS_KEY;   // window.pisteTour.setFeedbackKey changes it (tests)
 
   // safe areas in px (env() or the phone preview's ?safe=), read through a probe because the CSS variables may hold env()
   let probe = null;
@@ -40,6 +45,122 @@
   }
   const visible = (el) => !!el && el.isConnected && el.getClientRects().length > 0;
 
+  // ------------------------------------------------------------------ dialogs: the feedback form and About & terms
+  // Small cards over everything (even the welcome card). The rest of the page goes inert while one is open; Esc closes it, Tab stays inside,
+  // and focus goes back to the button that opened it. The card follows the visible area, so it stays above a phone's keyboard.
+  let dlg = null;   // the open dialog: { layer, card, opener, inerted, onClose }
+  const focusables = (root) => [...root.querySelectorAll("button, a[href], input, textarea")]
+    .filter((x) => !x.disabled && !x.classList.contains("hp") && x.getClientRects().length && getComputedStyle(x).visibility !== "hidden");
+  function fitViewport() {
+    const v = window.visualViewport;
+    if (!dlg || !v) return;
+    dlg.layer.style.setProperty("--vv-top", v.offsetTop + "px");
+    dlg.layer.style.setProperty("--vv-h", v.height + "px");
+  }
+  function dialogKey(e) {
+    if (!dlg) return;
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeDialog(); return; }
+    if (e.key !== "Tab") return;
+    const f = focusables(dlg.card);
+    if (!f.length) return;
+    e.preventDefault();
+    const i = f.indexOf(document.activeElement);
+    f[e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i < 0 || i === f.length - 1 ? 0 : i + 1)].focus();
+  }
+  function openDialog(layer, opener, first, onClose) {
+    if (dlg) return false;
+    dlg = { layer, card: layer.querySelector('[role="dialog"]'), opener, inerted: [], onClose };
+    for (const el of document.body.children) if (el !== layer && el.tagName !== "SCRIPT" && !el.inert) { el.inert = true; dlg.inerted.push(el); }
+    layer.hidden = false; fitViewport();
+    layer.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? 0 : 160, easing: "ease-out" });
+    if (!reduced()) dlg.card.animate([{ opacity: 0, transform: "translateY(14px)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: EASE });
+    document.addEventListener("keydown", dialogKey, true);
+    if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, fitViewport);
+    (first || dlg.card).focus({ preventScroll: true });
+    return true;
+  }
+  function closeDialog() {
+    if (!dlg) return;
+    const d = dlg; dlg = null;
+    document.removeEventListener("keydown", dialogKey, true);
+    if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.removeEventListener(ev, fitViewport);
+    d.layer.hidden = true;
+    for (const el of d.inerted) el.inert = false;
+    if (d.onClose) d.onClose();
+    if (visible(d.opener)) d.opener.focus({ preventScroll: true });
+  }
+
+  // --- feedback: Subject, Message, an optional email. Never anything about where the person is or what route they planned.
+  const fb = { layer: null, form: null, subject: null, message: null, email: null, bot: null, status: null, send: null, mail: null, busy: false, msg: "", kind: "", timer: 0, run: 0 };
+  function fbStatus(key, kind = "") { fb.msg = key; fb.kind = kind; fb.status.textContent = key ? t(key) : ""; fb.status.dataset.kind = kind; }
+  const fbValues = () => ({ subject: fb.subject.value.trim() || t("feedbackSubject"), message: fb.message.value.trim(), email: fb.email.value.trim() });
+  const mailHref = (v) => `mailto:${MAIL}?subject=${encodeURIComponent(v.subject)}` + (v.message ? `&body=${encodeURIComponent(v.message)}` : "");
+  const fbSyncMail = () => { fb.mail.href = mailHref(fbValues()); };   // the address link always opens a draft with what was typed
+  function fbOpenMail() { fbSyncMail(); fb.mail.click(); }
+  function fbInvalid(el, key) {
+    el.setAttribute("aria-invalid", "true"); fbStatus(key, "error"); el.focus();
+  }
+  function fbBusy(on) { fb.busy = on; fb.form.setAttribute("aria-busy", String(on)); fb.send.disabled = on; fb.send.textContent = t(on ? "fbSending" : "fbSend"); }
+  async function fbPost(v) {   // resolves when Web3Forms accepted it; throws otherwise
+    const ctl = new AbortController(), kill = setTimeout(() => ctl.abort(), 12000);
+    try {
+      const res = await fetch(WEB3FORMS_URL, { method: "POST", signal: ctl.signal, headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(Object.assign({ access_key: feedbackKey, subject: v.subject, from_name: "Piste", message: v.message, botcheck: false }, v.email ? { email: v.email } : {})) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success !== true) throw new Error(data.message || `HTTP ${res.status}`);
+    } finally { clearTimeout(kill); }
+  }
+  async function fbSubmit(e) {
+    e.preventDefault();
+    if (fb.busy) return;
+    const v = fbValues();
+    for (const x of [fb.message, fb.email]) x.removeAttribute("aria-invalid");
+    if (!v.message) return fbInvalid(fb.message, "fbNeedMessage");
+    if (v.email && !fb.email.checkValidity()) return fbInvalid(fb.email, "fbBadEmail");
+    if (fb.bot.checked) return fbThanks(false);   // the hidden trap field was ticked: a bot, who gets the same thanks and nothing is sent
+    if (!feedbackKey) { fbOpenMail(); fbStatus("fbMailOpened"); return; }   // no key yet: the mail app (inside this tap, so phones allow it)
+    const run = ++fb.run;
+    fbBusy(true); fbStatus("fbSending");
+    let sent = false;
+    try { await fbPost(v); sent = true; } catch (err) { console.warn("Piste feedback not sent:", err.message); }
+    if (sent) P.track("feedback-sent");
+    if (run !== fb.run) return;   // the dialog was closed meanwhile
+    fbBusy(false);
+    if (sent) fbThanks(true);
+    else { fbStatus("fbError", "error"); fbOpenMail(); }
+  }
+  function fbThanks() {
+    fbStatus("fbThanks", "ok"); fb.send.disabled = true;
+    fb.form.reset(); fbSyncMail();
+    clearTimeout(fb.timer); fb.timer = setTimeout(closeDialog, 1800);
+  }
+  function fbReset() {   // when it closes: a fresh status (a draft that wasn't sent stays in the fields)
+    clearTimeout(fb.timer); fb.run++;
+    fbBusy(false); fbStatus("");
+    for (const x of [fb.message, fb.email]) x.removeAttribute("aria-invalid");
+  }
+  function openFeedback(opener) {
+    if (openDialog(fb.layer, opener, P.isPhone() ? null : fb.subject, fbReset)) {   // phones: no keyboard until a field is tapped
+      fbSyncMail();
+      P.track("feedback", { from: opener.id === "welcome-feedback" ? "welcome" : "panel" });
+    }
+  }
+  function initDialogs() {
+    Object.assign(fb, { layer: $("#feedback"), form: $("#feedback-form"), subject: $("#fb-subject"), message: $("#fb-message"), email: $("#fb-email"),
+      bot: $("#fb-botcheck"), status: $("#fb-status"), send: $("#fb-send"), mail: $("#fb-mail") });
+    fb.form.addEventListener("submit", fbSubmit);
+    fb.form.addEventListener("input", () => { fbSyncMail(); for (const x of [fb.message, fb.email]) x.removeAttribute("aria-invalid"); });
+    $("#fb-cancel").addEventListener("click", closeDialog);
+    fb.layer.addEventListener("click", (e) => { if (e.target === fb.layer && !fb.subject.value && !fb.message.value && !fb.email.value) closeDialog(); });   // not over a draft
+    const about = $("#about");
+    $("#about-close").addEventListener("click", closeDialog);
+    about.addEventListener("click", (e) => { if (e.target === about) closeDialog(); });
+    $("#about-link").addEventListener("click", (e) => openDialog(about, e.currentTarget, null));
+    for (const id of ["#feedback-link", "#welcome-feedback"]) $(id).addEventListener("click", (e) => openFeedback(e.currentTarget));
+    fbSyncMail();
+  }
+  function refreshDialogText() { if (!fb.status) return; fbStatus(fb.msg, fb.kind); fb.send.textContent = t(fb.busy ? "fbSending" : "fbSend"); fbSyncMail(); }
+
   // ------------------------------------------------------------------ welcome card (first visit)
   const welcome = $("#welcome");
   let welcomeFocus = null, welcomeState = "";   // "seen" (not shown), "due", "shown", "closed"
@@ -57,7 +178,7 @@
     document.addEventListener("keydown", welcomeKey, true);
   }
   function welcomeKey(e) {
-    if (welcome.hidden) return;
+    if (welcome.hidden || dlg) return;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeWelcome(false); }
     else if (e.key === "Tab") trapTab(e, welcome);
   }
@@ -84,9 +205,11 @@
       targets: ["@route", "#routes", "#legend details"], phoneTargets: ["@route", "#routes .route-card.sel"], place: ["right", "below", "above", "left"] },
     { k: 4, id: "ride", sheet: "half", route: true, note: true, scroll: "#ride-go", targets: [["#ride-go", "#ride-preview"]], place: ["right", "above", "below"] },
     { k: 5, id: "suggest", tab: "suggest", sheet: "half", scroll: ".tabs", targets: ["#tab-suggest", "#classics"], place: ["right", "above", "below"] },
-    { k: 6, id: "winter", sheet: "peek", route: true, winter: true, camera: "wide", targets: ["#winter-btn", "#wx-card"], place: ["left", "below", "above"] },
-    { k: 7, id: "tools", sheet: "peek", targets: [["#view-btn", "#layers-btn"]], place: ["left", "below", "above"] },
-    { k: 8, id: "feedback", sheet: "half", scroll: "@bottom", targets: ["#foot-links"], place: ["right", "above", "below"] },
+    { k: 6, id: "view3d", sheet: "peek", targets: ["#view-btn"], place: ["left", "below", "above"] },
+    { k: 7, id: "weather", sheet: "peek", targets: ["#wx-btn"], place: ["left", "below", "above"] },
+    { k: 8, id: "winter", sheet: "peek", route: true, winter: true, camera: "wide", targets: ["#winter-btn", "#wx-card"], place: ["left", "below", "above"] },
+    { k: 9, id: "layers", sheet: "peek", targets: ["#layers-btn"], place: ["left", "below", "above"] },
+    { k: 10, id: "feedback", sheet: "half", scroll: "@bottom", targets: ["#foot-links"], place: ["right", "above", "below"] },
   ];
   const specsOf = (st) => (P.isPhone() && st.phoneTargets) || st.targets;
 
@@ -394,7 +517,7 @@
   }
 
   function onKey(e) {
-    if (!open) return;
+    if (!open || dlg) return;
     const k = e.key, onButton = card.contains(document.activeElement) && document.activeElement.tagName === "BUTTON";
     if (k === "Escape") end();
     else if (k === "ArrowRight" || (k === "Enter" && !onButton)) next();
@@ -409,7 +532,7 @@
     drawn = ""; tr.stable = 0; tr.placed = "";
   }
   function onLang() {
-    setLinks();
+    refreshDialogText();
     if (!open) return;
     if (demo) {   // the demo places' names follow the language
       const s = P.state;
@@ -483,12 +606,12 @@
   // ------------------------------------------------------------------ start-up, once the map is ready
   function init() {
     P = window.piste;
-    setLinks();
+    initDialogs();
     document.addEventListener("piste:lang", onLang);
     $("#welcome-tour").onclick = () => closeWelcome(true);
     $("#welcome-skip").onclick = () => closeWelcome(false);
     $("#tour-again").onclick = () => start(0);
-    window.pisteTour = { start, next, back, end, info, steps: STEPS.map((s) => s.id), get welcome() { return welcomeState; } };
+    window.pisteTour = { start, next, back, end, info, steps: STEPS.map((s) => s.id), setFeedbackKey: (k) => { feedbackKey = k; }, get welcome() { return welcomeState; } };
     const w = params.get("welcome");
     welcomeState = w === "1" || (w !== "0" && P.store.get("welcomed", "") !== "1" && P.state.mode !== "ride") ? "due" : "seen";
     if (welcomeState === "due") setTimeout(showWelcome, 250);

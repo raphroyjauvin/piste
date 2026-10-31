@@ -27,7 +27,8 @@
   <div id="grabber" class="grabber" role="button" tabindex="0" aria-label="Resize panel"><i></i></div>
   <header class="brand" id="brand">
     <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#0095E6"/><path d="M9 21.5 13.2 11h5.6L23 21.5M13.2 11l3 10.5" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div><h1>Piste</h1><p data-i18n="tagline"></p></div>
+    <div class="brand-text"><h1>Piste</h1><p data-i18n="tagline"></p></div>
+    <button type="button" id="lang-btn" class="lang-btn" data-i18n-title="langBtn">FR</button>
   </header>
 
   <div class="tabs" role="tablist">
@@ -47,15 +48,19 @@
 
   <section class="search go-or-custom" aria-label="Plan a ride">
     <label for="from" class="field-label custom-only" data-i18n="startLabel" hidden></label>
-    <div class="field"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg></span>
-      <input id="from" enterkeyhint="next" data-i18n-ph="fromPh" autocomplete="off" spellcheck="false">
-      <button type="button" class="clear" data-target="from" data-i18n-title="cancel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
-      <button type="button" class="pick" data-target="from" data-i18n-title="pickFrom"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+    <div class="field-row"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg></span>
+      <div class="field">
+        <button type="button" class="field-btn locate" id="locate" data-i18n-title="useMyLocation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 19.4 20 12 16.2 4.6 20z"/></svg></button>
+        <input id="from" enterkeyhint="next" data-i18n-ph="fromPh" autocomplete="off" spellcheck="false">
+        <button type="button" class="field-btn clear" data-target="from" data-i18n-title="clearField"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
+      </div>
     </div>
-    <div class="field go-only"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#0095E6" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#0095E6"/></svg></span>
-      <input id="to" enterkeyhint="go" data-i18n-ph="toPh" autocomplete="off" spellcheck="false">
-      <button type="button" class="clear" data-target="to" data-i18n-title="cancel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
-      <button type="button" class="pick" data-target="to" data-i18n-title="pickTo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+    <div class="field-row go-only"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#0095E6" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#0095E6"/></svg></span>
+      <div class="field">
+        <button type="button" class="field-btn pick" data-target="to" data-i18n-title="pickTo"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+        <input id="to" enterkeyhint="go" data-i18n-ph="toPh" autocomplete="off" spellcheck="false">
+        <button type="button" class="field-btn clear" data-target="to" data-i18n-title="clearField"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
+      </div>
     </div>
     <ul id="suggest" class="suggest" hidden></ul>
   </section>
@@ -88,9 +93,10 @@
   <footer class="credits">
     <p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC · OpenFreeMap</p>
     <div id="foot-links" class="foot-links">
-      <a id="feedback-link" class="feedback-link" data-mailto href="mailto:support@pistemtl.ca?subject=Piste%20feedback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="feedback"></span></a>
+      <button type="button" id="feedback-link" class="feedback-link" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="feedback"></span></button>
       <button type="button" id="tour-again" class="tour-again" data-i18n="takeTour"></button>
     </div>
+    <p class="legal"><span class="copyright">© 2026 Raphaël Roy-Jauvin</span><button type="button" id="about-link" class="about-link" aria-haspopup="dialog" data-i18n="aboutLink"></button></p>
   </footer>
 </aside>
 
@@ -105,7 +111,6 @@
   <button type="button" id="winter-btn" class="round-btn" aria-pressed="false" data-i18n-title="winterBtn">
     <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 4v24M5.6 10l20.8 12M5.6 22l20.8-12M12.6 5.8 16 8.6l3.4-2.8M12.6 26.2 16 23.4l3.4 2.8M4.7 14.4l4.1-1.5L8 8.6M27.3 17.6l-4.1 1.5.8 4.3M4.7 17.6l4.1 1.5-.8 4.3M27.3 14.4l-4.1-1.5.8-4.3"/></svg>
   </button>
-  <button type="button" id="lang-btn" class="round-btn lang-btn" data-i18n-title="langBtn">FR</button>
   <button type="button" id="layers-btn" class="ctl-btn" aria-expanded="false" aria-controls="layers" data-i18n="layers"></button>
   <div id="layers" class="layers" hidden>
     <h3 data-i18n="layersMap"></h3>
@@ -185,7 +190,35 @@
       <button type="button" id="welcome-tour" class="primary welcome-go"><span data-i18n="tourStart"></span><small data-i18n="tourTime"></small></button>
       <button type="button" id="welcome-skip" class="welcome-alt" data-i18n="exploreAlone"></button>
     </div>
-    <a id="welcome-feedback" class="feedback-link welcome-feedback" data-mailto href="mailto:support@pistemtl.ca?subject=Piste%20feedback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="sendFeedback"></span></a>
+    <button type="button" id="welcome-feedback" class="feedback-link welcome-feedback" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="sendFeedback"></span></button>
+  </div>
+</div>
+
+<!-- feedback form and "About & terms" (tour.js): one small dialog each, in the welcome card's style -->
+<div id="feedback" class="dialog-layer" hidden>
+  <form id="feedback-form" class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="fb-title" tabindex="-1" novalidate>
+    <h2 id="fb-title" class="dialog-title" data-i18n="fbTitle"></h2>
+    <div class="dialog-field"><label for="fb-subject" data-i18n="fbSubject"></label><input id="fb-subject" name="subject" type="text" maxlength="120" autocomplete="off" enterkeyhint="next"></div>
+    <div class="dialog-field"><label for="fb-message" data-i18n="fbMessage"></label><textarea id="fb-message" name="message" rows="4" maxlength="2000" required data-i18n-ph="fbMessagePh"></textarea></div>
+    <div class="dialog-field"><label for="fb-email" data-i18n="fbEmail"></label><input id="fb-email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" maxlength="200" enterkeyhint="done"></div>
+    <input type="checkbox" name="botcheck" id="fb-botcheck" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <p id="fb-status" class="fb-status" role="status" aria-live="polite"></p>
+    <div class="dialog-buttons"><button type="button" id="fb-cancel" class="dialog-alt" data-i18n="cancel"></button><button type="submit" id="fb-send" class="primary dialog-go" data-i18n="fbSend"></button></div>
+    <p class="dialog-alt-line"><span data-i18n="fbAlt"></span> <a id="fb-mail" href="mailto:support@pistemtl.ca">support@pistemtl.ca</a></p>
+  </form>
+</div>
+
+<div id="about" class="dialog-layer" hidden>
+  <div id="about-card" class="dialog-card about-card" role="dialog" aria-modal="true" aria-labelledby="ab-title" tabindex="-1">
+    <h2 id="ab-title" class="dialog-title" data-i18n="aboutTitle"></h2>
+    <section><h3 data-i18n="abWhoT"></h3><p data-i18n="abWho"></p></section>
+    <section><h3 data-i18n="abRiskT"></h3><p data-i18n="abRisk"></p></section>
+    <section><h3 data-i18n="abPrivT"></h3>
+      <ul><li data-i18n="abPriv1"></li><li data-i18n="abPriv2"></li><li data-i18n="abPriv3"></li><li data-i18n="abPriv4"></li><li data-i18n="abPriv5"></li><li data-i18n="abPriv6"></li></ul></section>
+    <section><h3 data-i18n="abDataT"></h3><p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC · OpenFreeMap</p></section>
+    <p class="dialog-alt-line"><span data-i18n="abContact"></span> <a href="mailto:support@pistemtl.ca">support@pistemtl.ca</a></p>
+    <p class="copyright">© 2026 Raphaël Roy-Jauvin</p>
+    <div class="dialog-buttons"><button type="button" id="about-close" class="primary dialog-go" data-i18n="close"></button></div>
   </div>
 </div>
 

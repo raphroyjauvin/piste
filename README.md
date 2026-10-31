@@ -144,6 +144,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
   - **Live address:** https://www.pistemtl.ca/ once Raph sets up the DNS (the domain's address records) and the custom domain in GitHub Pages (pending). Until then: https://www.raphroyjauvin.ca/piste/, which now opens the app directly.
   - URL options now go straight after the root, for example `https://www.pistemtl.ca/?winter=1&lang=fr`. The frames in `phone.html` add `&welcome=0`, so the welcome card doesn't cover them.
   - Tests against a built or live site: `PISTE_APP=index.html` with `PISTE_BASE=<site address>` runs the browser tests; `node tools/shots/site_check.mjs <base url> [...]` checks a built site. Details in `docs/06_prototypes.md`.
+- 2026-10-31 (Raph): **ownership and feedback.** Raph approved: a "© 2026 Raphaël Roy-Jauvin" line at the bottom of the panel and in the map credits; an "About & terms" dialog (who made it, ride-at-your-own-risk, privacy written from what the code sends, data credits); and a `LICENSE` file (all rights reserved; vendor code and data keep their own licences). Feedback is now a small dialog that posts to Web3Forms and falls back to the mail app; **the Web3Forms key (`WEB3FORMS_KEY` in `a-positron/tour.js`) is still empty until Raph gets one.** Also this day: one tour step per map button, a demo route with three kinds of bike path, the language button in the card's header, the credits "i" at the bottom right, search bars with "Use my location" and a clear ×, and no "Routed on this device" line. Details in `docs/06_prototypes.md`.
 
 ## Open questions for Raph
 1. GPS ride, to check on a real iPhone ride (it only works over https, so on the live site):
@@ -163,6 +164,7 @@ Working name. Started 2026-10-25 by Raph Roy-Jauvin, with Claude. **Stage: one w
 
 ## Folder map
 - `CLAUDE.md`: working rules for Claude sessions.
+- `LICENSE`: all rights reserved (2026, Raphaël Roy-Jauvin): the code is public to read, not licensed for reuse. Third-party code in `prototypes/vendor/` and all data keep their own licences (listed in the file and in `docs/03_data_sources.md`).
 - `docs/`:
   - `01_existing_apps.md`: competitor scan
   - `02_cartography.md`: cartography principles and palette

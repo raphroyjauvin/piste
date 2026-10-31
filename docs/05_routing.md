@@ -1,7 +1,31 @@
 # Routing: how it works and how it compares (2026-10-25)
 
+## Update 2026-10-31: detour cap, and a graph bug that cut off Sainte-Anne-de-Bellevue (and about 190 other junctions)
+
+### Detour cap (Raph, 2026-10-31; internal, nothing is shown in the app)
+- **Rule:** "Your route" (with or without avoid hills or headwinds) and "Most bike paths" may be at most max(1.5 × the shortest legal route, shortest + 300 m) long. The shortest legal route is the same trip routed with every bike-legal segment costing just its length (`SHORTEST` in `router.js`). The 300 m floor stops a very short trip being pushed onto a busy street to save a few metres. Not capped: "Most direct" (keeps its own 1.15 listed limit), classic rides and Suggest a ride (those aim at a length).
+- **How a route over the cap is fixed:** plan again with the strictness lowered by 0.15 a step (hill and wind settings kept), keep the first route that fits (so the most bike-path-heavy one that fits), and if none fits use the "Most direct" settings.
+- **The API (all in `prototypes/shared/router.js`, used by the app and by `check_routes.js`, so they cannot drift apart):**
+  - `routeSettings(kind, settings)`: the router options for "yourRoute", "mostLanes" or "mostDirect". `settings` = `{ strictness, avoidHills, wind }`.
+  - `relaxSteps(kind, settings)`: the steps (a function of the step number; null after the last).
+  - `router.detourLimit(from, to)`: the limit in metres.
+  - `router.routeCapped(from, to, opts, relaxFn, limit)`: the generic method; the result has `limit` and `steps` (how many relaxations it took).
+  - `router.planRoute(from, to, kind, settings, limit)`: what the app calls. `limit` is optional; pass `detourLimit()` when planning several kinds between the same two points, as `computeRoutes` does.
+  - In `app.js`: `computeRoutes` and the GPS reroute (`newRouteFrom`, to the destination only; a reroute that rejoins a suggested or classic ride is not capped). `planSettings()` reads the slider, hills and wind.
+- **Effect** (measured on the graph before the repair below): 154 of the 1,080 capped routes in `check_routes` were altered (10 of the 96 commute routes; 150 after the repair). The altered ones went from 17.9 km to 12.9 km on average and from 86.5% to 61.6% on bike paths. Example: Côte-des-Neiges to Peel metro, "Your route", summer, was 9.8 km at 99% on bike paths (2.2 × the shortest 4.4 km); it is now 4.6 km at 47% (5 relaxing steps). Average bike-path share over the 200 random trips: "Your route" 87.7% → 84.2%, "Most bike paths" 88.4% → 84.6%, winter 71.9% → 69.3% (the graph fix below then moved these to 84.0%, 84.3%, 68.8%).
+- **`check_routes.js`:** plans these types with `router.planRoute`, like the app. A route over the cap is a failure. Added checks: the relaxing steps, the limit (floor and factor), a route that fits is returned unchanged, same input gives the same route, "Most direct" is not capped. It also measures planning speed.
+- **Speed (measured):** one trip = three routes. Without the cap: median 2.4 ms, 95th percentile 8.4 ms, 3.0 searches. With the cap: 3.8 ms, 25 ms, 5.0 searches (Node, desktop). In the app in Edge, `computeRoutes` took 0.9 to 6.3 ms on five trips, the hardest being 5 relaxing steps. The check fails if one trip takes over 1 s.
+- **Supersedes** the "Long detours" limits above (1.8×, 2.0×) for the capped types: those are now the cap. They apply only to "Most direct" (1.15).
+
+### Sainte-Anne-de-Bellevue village core: fixed (2026-10-31)
+- **What the data says.** Rue Sainte-Anne is two-way in the City's data: Géobase `SENS_CIR` 0 (ID_TRC 1619225, 1619212, 4015520 to 4015524), and the bike network (`reseau_cyclable.geojson`) has bike facilities on it with `NBR_VOIE` 2 (ID_CYCL 24971, 26431, 23578) and no one-way attribute. Rue du Collège north of Rue Sainte-Anne is a real one-way: Géobase ID_TRC 1619224, `SENS_CIR` 1 (northbound), and no bike facility in the bike network. So the data supports neither "contraflow" nor "opening" it, and it stays one-way (`check_routes.js` checks that).
+- **What was wrong (the 2026-10-30 note above was wrong too: it was not the one-ways).** In the graph, Rue Sainte-Anne was cut in two at -73.95305, 45.40404: the two halves ended 8 cm apart (nodes 22536 and 22537). `build_graph.py` splits a street where a path joins it. A short OpenStreetMap park-path spur at right angles to the street had both its ends snapped onto the street 17 cm apart, so the street became three pieces; the middle piece and the spur itself (both under 0.3 m) were thrown away by the `L < 0.3` rule while the two nodes stayed separate. That left the village core (35 intersections: Rue Sainte-Anne west of Rue du Collège, the park and bike paths, Route Verte, Pont Galipeault) connected to the rest only by Rue du Collège, which is one-way out. The car one-ways were innocent: they just made the break visible.
+- **Fix (`tools/build_graph.py`, the nodes step).** A dropped sliver under 0.3 m now joins its two nodes into one. A closed (tier 5) sliver is left alone. No street direction changes. 488 slivers closed, 265 nodes merged.
+- **Effect.** Pairs of intersections under 0.3 m apart with no segment between them: 193 → 0 (`check_routes.js` now fails on any). One-way dead-end intersections: 337 → 72 (largest area 35 → 7). The Sainte-Anne warning is gone. Pont Galipeault area to the east end of Rue Sainte-Anne: 894 m (35% on bike paths) and 1,355 m (25%) the other way, now 403 m (100%) both ways.
+- **Side effects of the repair.** Counting the cap and the repair together, 37 of the 96 commute routes and 9 of the 20 classic-ride routes differ from the old baseline (the cap alone leaves the classics unchanged, so all 9 are from the repair). Classic rides: Old Port winter 12.8 km at 91% → 11.3 km at 87% (this one failed the 3-point baseline check; a shortcut that was cut off before), Point-Claire summer 56.7 km at 79% → 55.6 km at 81%, winter 65.4 km at 55% → 66.1 km at 59%, Lachine winter 85% → 88%; the others moved by under 0.5 km. Baseline re-recorded.
+
 ## Update 2026-10-30: route safety checks, two fixes, a known gap
-`node tools/check_routes.js [--update] [--verbose]` plans routes on the island graph and fails on unsafe or broken ones. It runs in plain Node (no browser) in about 2 s. Run it after rebuilding the graph or changing the router. GitHub runs it before every publish (`06_prototypes.md`, "The published site").
+`node tools/check_routes.js [--update] [--verbose]` plans routes on the island graph and fails on unsafe or broken ones. It runs in plain Node (no browser) in about 5 s. Run it after rebuilding the graph or changing the router. GitHub runs it before every publish (`06_prototypes.md`, "The published site").
 - **What it routes: 1,380 routes in all.** 16 fixed commutes (Parc La Fontaine to McGill metro, Verdun metro to Square-Victoria, Lachine to Peel Basin, Côte-des-Neiges to Peel metro and others), 200 random trips of 1–15 km between points on bike-legal streets (the seed is fixed, so every run plans the same trips) and the 10 classic rides. Each is planned in every route type ("Your route", "Your route" with avoid hills, "Most bike paths", "Most direct", with the app's weights), summer and winter.
 - **It fails on any of these:**
   - a closed or wrong-way segment (closed to bikes, or a one-way street ridden the wrong way)
@@ -16,7 +40,7 @@
 - **Long detours** are listed and counted against the baseline (for the random trips, the count may not grow by more than 2 for a route type and season). A route is a long detour when it is longer than the limit times the shortest legal route (every bike-legal segment costs just its length) and more than 300 m longer. Limits: 1.8× for "Your route", 2.0× for "Most bike paths" and "Avoid hills", 1.15× for "Most direct". 41 are listed today (`--verbose`). Some are the price of staying on bike paths: Côte-des-Neiges → Peel comes out at 9.8 km on 99% bike paths, against 4.4 km for the shortest legal route. **Open question for Raph:** should detours be capped? (README, Open questions.)
 - **Fix 1: the Samuel-De Champlain bridge bike path was one-way.** The graph copied the car direction of the expressway segment onto the bike path that runs beside it. That cut off the Brossard side of the bridge (334 intersections). Now a bike path on an expressway or ramp segment (Géobase `CLASSE` 2 or 8) is two-way (`tools/build_graph.py`). The graph was rebuilt.
 - **Fix 2: no route from a one-way dead end.** A start or end on a dead-end one-way service road found no route (random trip 193). Now `route()` in `prototypes/shared/router.js` tries once more with more nearby segments (up to 16 candidates within 250 m of the nearest, instead of 8 within 40 m) before it gives up.
-- **Known gap, not fixed: the Sainte-Anne-de-Bellevue village core.** 35 intersections around -73.9535, 45.4043 can't be ridden into, because their exits are one-way in the City's Géobase data (Rue Saint-Pierre, Rue du Collège, Route Transcanadienne). It is a gap in the data (the City's streets aren't connected in both directions), not a bug in the build. The check reports it as a warning (10 to 50 intersections). Same choice as for Habitat 67 below: ask the City, or override the segments in `tools/build_graph.py`.
+- **Known gap (fixed 2026-10-31, see the update above; this note was wrong about the cause): the Sainte-Anne-de-Bellevue village core.** 35 intersections around -73.9535, 45.4043 can't be ridden into, because their exits are one-way in the City's Géobase data (Rue Saint-Pierre, Rue du Collège, Route Transcanadienne). It is a gap in the data (the City's streets aren't connected in both directions), not a bug in the build. The check reports it as a warning (10 to 50 intersections). Same choice as for Habitat 67 below: ask the City, or override the segments in `tools/build_graph.py`.
 
 ## Update 2026-10-30: rerouting during a GPS ride
 The router itself didn't change. A GPS ride (see `06_prototypes.md`, Ride) calls it again from where you are when you leave the route. Routes take 1–8 ms island-wide, so a reroute doesn't stall the ride.
@@ -84,7 +108,7 @@ Winter mode changes the tier of the City's bike facilities. The graph keeps its 
 - The classic rides were designed around it. It isn't fixed in our graph.
 - To decide: ask the City about the segment, or override it in `tools/build_graph.py`.
 
-### Data issue: Sainte-Anne-de-Bellevue village core (found 2026-10-30)
+### Data issue: Sainte-Anne-de-Bellevue village core (found 2026-10-30, fixed 2026-10-31: a build bug, not the data; see the update at the top)
 - 35 intersections around -73.9535, 45.4043 can't be ridden into, because their exits are one-way in the City's Géobase data (Rue Saint-Pierre, Rue du Collège, Route Transcanadienne). Not fixed.
 - `check_routes.js` reports it as a warning (a group of 10 to 50 intersections). It would fail the check at more than 50.
 - To decide: the same as for Habitat 67 (ask the City, or override the segments in `tools/build_graph.py`).
@@ -124,6 +148,7 @@ Result for the study area: 6,645 nodes, 10,526 edges, 0.7 MB.
 
 ## The router (`prototypes/shared/router.js`)
 - **Search:** A* with a binary heap; cost = length × tier weight + climb × hill weight.
+- **Planning a trip (2026-10-31):** `planRoute(from, to, kind, settings, limit)` plans "Your route", "Most bike paths" or "Most direct" and applies the detour cap to the first two (see the update at the top). It is deterministic: the same trip and settings give the same legs.
 - **Weights:** "Most bike paths" uses A 1.0, B 1.05, C 1.12, D 3.2, E 7. "Most direct" is all 1.0 (E 1.15). The slider blends the two.
 - **Snapping:** each end of the trip tries up to 8 nearby edges, within 40 m of the closest, so the route can start on the far carriageway of a divided boulevard or on a quiet side street. That fixed a needless 190 m busy loop at Assomption metro. A point more than 400 m from the nearest edge can't be snapped and has no route; that is why a suggested stop that far from the bike network is skipped. If no route comes out (for example the start sits on a dead-end one-way service road), `route()` tries once more with more candidates: up to 16, within 250 m of the nearest instead of 8 within 40 m (2026-10-30).
 - **Output:**
@@ -154,6 +179,7 @@ GraphHopper needs an API key, so it wasn't tested.
 - **Olympic Park paths were missing.** Fixed by merging OSM bike-legal paths (Biodôme trip: 81% → 93% bike infrastructure, and 0.2 km shorter).
 - **Divided boulevards forced a busy loop at the start.** Fixed with multi-candidate snapping.
 - **The Samuel-De Champlain bridge bike path was one-way** (found by `check_routes.js`, 2026-10-30). It copied the expressway segment's car direction and cut off the Brossard side (334 intersections). Fixed in `tools/build_graph.py`: bike paths on expressway or ramp segments (classes 2 and 8) are two-way. Graph rebuilt (still 37,770 nodes and 56,315 edges).
+- **Streets cut by a dropped 8 cm sliver** (found 2026-10-31 while looking into Sainte-Anne-de-Bellevue): see the update at the top. 193 gaps, fixed in `build_graph.py` and guarded by `check_routes.js`.
 - **No route from a dead-end one-way service road** (random trip 193, 2026-10-30). Fixed by a second try with more nearby segments (see Snapping).
 
 ## Next improvements

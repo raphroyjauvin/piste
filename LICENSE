@@ -1,0 +1,35 @@
+Copyright (c) 2026 Raphaël Roy-Jauvin. All rights reserved.
+
+The source code in this repository is public so that it can be read, but it is
+not licensed for reuse: no permission is given to copy, modify, distribute or
+use it, in whole or in part, without written permission from the copyright
+holder (support@pistemtl.ca).
+
+Third-party code keeps its own licences. The libraries in prototypes/vendor/
+(MapLibre GL JS, under the BSD 3-Clause licence, and PMTiles, under the BSD
+3-Clause licence) are not covered by the notice above; their licence texts are
+in prototypes/vendor/maplibre/LICENSE.txt and prototypes/vendor/pmtiles/LICENSE.txt.
+
+Data keeps its own licences, and each source must be credited as it asks. This
+notice does not cover it. The sources the app uses, and their licences:
+
+  - Ville de Montréal open data (bike network, streets, speed limits, works,
+    parks and others): Creative Commons Attribution 4.0 (CC BY 4.0).
+  - OpenStreetMap contributors (paths off the island, places, building
+    footprints): Open Database Licence (ODbL).
+  - OpenFreeMap and OpenMapTiles (the base map): the OpenStreetMap licence above,
+    with OpenMapTiles' own attribution.
+  - NRCan HRDEM and the CMM 2023 and 2024 LiDAR terrain and building heights:
+    Open Government Licence - Canada.
+  - AWS Terrain Tiles (elevation beyond our own terrain tiles): public dataset,
+    under its own terms.
+  - STM GTFS (metro lines and stations): STM's open data terms.
+  - BIXI GBFS (station locations and live status): BIXI's open data terms.
+  - Open-Meteo (weather forecast): CC BY 4.0, free for non-commercial use.
+  - Environment and Climate Change Canada (rain radar, through GeoMet): Open
+    Government Licence - Canada.
+  - Wikimedia Commons photos of the classic rides: their authors' free licences
+    (CC BY and CC BY-SA), credited on each card and listed in
+    prototypes/shared/photos/credits.json.
+
+The full list and the notes on each source are in docs/03_data_sources.md.

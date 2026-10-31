@@ -4,7 +4,7 @@
 (async function () {
   "use strict";
   const C = window.BikeCommon, I = window.BikeI18n, WX = window.BikeWeather, BX = window.BikeBixi;
-  const { Router, weightsFor, PROFILES } = window.BikeRouter;
+  const { Router, weightsFor, routeSettings, PROFILES } = window.BikeRouter;
   const $ = (s) => document.querySelector(s);
   const t = (k, v) => I.t(k, v);
   const params = new URLSearchParams(location.search);
@@ -112,7 +112,7 @@
   }
   const map = new maplibregl.Map({
     container: "map", style, center: [-73.585, 45.522], zoom: 12.8, maxPitch: 80,
-    attributionControl: { compact: true, customAttribution: "Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC" },
+    attributionControl: { compact: true, customAttribution: "© 2026 Raphaël Roy-Jauvin · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC" },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
@@ -451,8 +451,11 @@
   // ------------------------------------------------------------------ UI: search
   const fromEl = $("#from"), toEl = $("#to"), sug = $("#suggest"), sugHome = sug.parentElement;
   let sugItems = [], sugActive = -1, sugTarget = null, sugTimer = null;
+  const syncFieldLabels = () => { for (const el of [fromEl, toEl]) el.setAttribute("aria-label", el.placeholder); };   // the placeholder is the only visible name
+  syncFieldLabels();
   for (const el of [fromEl, toEl]) {
     el.addEventListener("input", () => {
+      if (!el.value.trim() && state[el.id]) { clearPoint(el.id); recompute(true); }   // all the text deleted: that place, and the route, go
       sugTarget = el.id; clearTimeout(sugTimer);
       sugTimer = setTimeout(async () => { sugItems = await geocoder.search(el.value); sugActive = -1; renderSuggest(); }, 160);
     });
@@ -502,12 +505,23 @@
     recompute(true);
   }
 
-  document.querySelectorAll(".pick").forEach((b) => b.addEventListener("click", () => {
-    state.pick = state.pick === b.dataset.target ? null : b.dataset.target;
-    document.querySelectorAll(".pick").forEach((x) => x.classList.toggle("on", x.dataset.target === state.pick));
+  // The small buttons inside the search bars. A press must not take the focus off the bar being typed in (the keyboard would drop and the
+  // typed text be taken as a choice), so a mouse or a finger acts on press; a keyboard (or script) click, which has detail 0, acts on click.
+  function onPress(btn, fn) {
+    const act = (e) => { e.preventDefault(); fn(e); };
+    btn.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") act(e); });
+    btn.addEventListener("mousedown", act);
+    btn.addEventListener("click", (e) => { if (e.detail === 0) fn(e); });
+  }
+  const pickBtns = [...document.querySelectorAll(".pick")];
+  function togglePick(target) {   // destination bar, left button: tap the map to choose the place
+    state.pick = state.pick === target ? null : target;
+    pickBtns.forEach((x) => { x.classList.toggle("on", x.dataset.target === state.pick); x.setAttribute("aria-pressed", String(x.dataset.target === state.pick)); });
     map.getCanvas().style.cursor = state.pick ? "crosshair" : "";
-    if (state.pick && isPhone()) setSheet("peek");
-  }));
+    if (state.pick && search.which) abandonSearch("peek");
+    else if (state.pick && isPhone()) setSheet("peek");
+  }
+  pickBtns.forEach((b) => onPress(b, () => togglePick(b.dataset.target)));
 
   // draggable endpoints: location pins (start mostly blue, destination mostly white with blue)
   const markers = {};
@@ -542,6 +556,18 @@
   function clearPoint(which) {
     state[which] = null; state[which + "Label"] = ""; (which === "from" ? fromEl : toEl).value = "";
     if (markers[which]) { markers[which].remove(); delete markers[which]; }
+  }
+  function clearField(which) {   // the x: that place goes (field, marker, route and route cards); the other place stays
+    const had = !!state[which];
+    clearPoint(which);
+    if (search.which) leaveSearch(search.before);   // phones: the keyboard closes, and the x never opens it
+    else if (!isPhone()) (which === "from" ? fromEl : toEl).focus({ preventScroll: true });
+    if (had) recompute(true);
+  }
+  function abandonSearch(sheetAfter) {   // leave the typing state with the places as they were
+    const which = search.which; if (!which) return;
+    (which === "from" ? fromEl : toEl).value = state[which + "Label"] || "";
+    leaveSearch(sheetAfter);
   }
   const kbOpen = () => !!window.visualViewport && innerHeight - visualViewport.height > 120;
   function keyboardTop() {   // page coordinates; until the keyboard is up, a guess (iPhone keyboards take 40-46% of the screen)
@@ -617,11 +643,34 @@
     });
     el.addEventListener("focus", () => { if (isPhone() && state.mode !== "ride") enterSearch(el.id); });
   }
-  document.querySelectorAll(".clear").forEach((b) => {
-    const go = (e) => { e.preventDefault(); cancelSearch(); };
-    b.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") go(e); });
-    b.addEventListener("mousedown", go);
-  });
+  document.querySelectorAll(".clear").forEach((b) => onPress(b, () => clearField(b.dataset.target)));
+
+  // start bar, left button: "Use my location" (the browser asks once; a refusal or failure gets a calm message)
+  const locateBtn = $("#locate");
+  let islandBox = null;   // the mapped area, from the routing graph (a start outside it can't be routed)
+  const insideMap = (lon, lat) => {
+    if (!islandBox) { const xs = router.lon, ys = router.lat; islandBox = [Infinity, Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < xs.length; i++) { islandBox[0] = Math.min(islandBox[0], xs[i]); islandBox[1] = Math.min(islandBox[1], ys[i]); islandBox[2] = Math.max(islandBox[2], xs[i]); islandBox[3] = Math.max(islandBox[3], ys[i]); } }
+    const m = 0.01;   // about 1 km of slack
+    return lon > islandBox[0] - m && lon < islandBox[2] + m && lat > islandBox[1] - m && lat < islandBox[3] + m;
+  };
+  function useMyLocation() {
+    if (state.mode === "ride" || locateBtn.getAttribute("aria-busy") === "true") return;
+    if (search.which) abandonSearch(search.before);   // typing: keep the places as they were, drop the keyboard
+    if (!navigator.geolocation) { toast(t("locUnavailable")); return; }
+    locateBtn.setAttribute("aria-busy", "true");
+    const slow = setTimeout(() => toast(t("locating")), 1200);
+    const done = () => { clearTimeout(slow); locateBtn.removeAttribute("aria-busy"); };
+    navigator.geolocation.getCurrentPosition((pos) => {
+      done();
+      const { longitude: lon, latitude: lat } = pos.coords;
+      if (!insideMap(lon, lat)) { toast(t("locOutside")); return; }
+      setPoint("from", [lon, lat], t("myLocation"));
+      if (state.tab !== "go" || state.to) recompute(true);   // a destination is set: route now
+      else map.easeTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 14.5), duration: 600 });
+    }, (err) => { done(); toast(t(err && err.code === 1 ? "locDenied" : "locUnavailable")); }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }
+  onPress(locateBtn, useMyLocation);
   if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, () => { if (search.which && kbOpen()) dock(true); });
 
   // ------------------------------------------------------------------ map clicks
@@ -664,16 +713,15 @@
   // ------------------------------------------------------------------ routing
   function overlap(a, b) { let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++; return c / Math.max(a.sig.size, b.sig.size); }
   // the router settings behind each kind of route (a GPS reroute uses the same ones as the route you started)
-  function routeWeights(key) {
-    const wind = windWeights();
-    if (key === "mostLanes") return Object.assign({ w: PROFILES.bikemax.w, hill: hills.checked ? 12 : 4 }, wind);
-    if (key === "mostDirect") return { w: PROFILES.direct.w, hill: hills.checked ? 12 : 0 };
-    return Object.assign({}, weightsFor(+strict.value / 100, hills.checked), wind);   // "Your route" and suggested rides
-  }
+  // What the panel says now (slider, hills, wind), in the form the router takes (see routeSettings in shared/router.js).
+  function planSettings() { return { strictness: +strict.value / 100, avoidHills: hills.checked, wind: windWeights() }; }
+  function routeWeights(key) { return routeSettings(key, planSettings()); }   // "Your route" and suggested rides use "yourRoute"
   function selWeights(sel) {
     if (sel.classic) return { w: PROFILES.bikemax.w, hill: 4 };   // as classicRoute()
     return routeWeights(sel.key || "yourRoute");
   }
+  // Detour cap (2026-10-31, internal): router.planRoute keeps "Your route" and "Most bike paths" to at most
+  // max(1.5 x the shortest legal route, shortest + 300 m), relaxing the settings when needed; "Most direct" has no cap.
   let suggTimer = null;
   function recompute(fit) {
     if (state.mode === "ride") return;
@@ -688,7 +736,8 @@
   function computeRoutes(fit) {
     if (!state.from || !state.to) { state.routes = []; renderRoutes(); drawRoutes(); return; }
     const t1 = performance.now();
-    const cands = ["yourRoute", "mostLanes", "mostDirect"].map((key) => ({ key, r: router.route(state.from, state.to, routeWeights(key)) })).filter((c) => c.r);
+    const settings = planSettings(), lim = router.detourLimit(state.from, state.to);   // the limit is the same for all three
+    const cands = ["yourRoute", "mostLanes", "mostDirect"].map((key) => ({ key, r: router.planRoute(state.from, state.to, key, settings, lim) })).filter((c) => c.r);
     state.lastMs = performance.now() - t1;
     cands.forEach((c) => (c.sig = new Set(c.r.legs.map((l) => l.e))));
     const keep = [];
@@ -851,7 +900,7 @@
         <div class="rc-sub">${C.fmtKm(r.length)} · ${t("climbM", { m: Math.round(r.climb) })} · ${gaps.length ? (gaps.length > 1 ? t("gapsN", { n: gaps.length }) : t("gaps1")) : t("lanesAllWay")}</div>
         ${compBar(r)}
         <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></button>`;
-    }).join("") + `<div class="routed-in">${t("routedIn", { ms: state.lastMs.toFixed(1) })}</div>`;
+    }).join("");
     box.querySelectorAll(".route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
     const sel = state.routes[state.sel], r = sel.r, gaps = C.mainGaps(r);
     const gapHtml = gaps.length
@@ -962,7 +1011,7 @@
   // ------------------------------------------------------------------ language
   function setLang(l) {
     if (l !== I.lang) count("language", { lang: l });
-    I.lang = l; I.save(); I.apply();
+    I.lang = l; I.save(); I.apply(); syncFieldLabels();
     $("#lang-btn").textContent = l === "fr" ? "EN" : "FR";
     viewBtn.title = t(viewBtn.dataset.i18nTitle || "to3d");
     strictOut.textContent = strictLabel(+strict.value); kmLabel(); renderStopChips();
@@ -985,15 +1034,19 @@
   }
   function setSheet(s, animate = true) {
     sheet.state = s; panel.dataset.sheet = s;
-    if (!isPhone()) { panel.style.height = ""; return; }
+    if (!isPhone()) { panel.style.height = ""; syncSheetTall(); return; }
     panel.classList.toggle("dragging", !animate);
     panel.style.height = sheetHeight(s) + "px";
+    syncSheetTall();
   }
+  // The sheet up over the whole map (judged from the height it is set to, so at once and not frame by frame as it animates):
+  // the map buttons and the map credits step aside, so nothing floats over the card's header.
+  function syncSheetTall() { document.body.classList.toggle("sheet-tall", isPhone() && (parseFloat(panel.style.height) || 0) > innerHeight - 150); }
   (function dragSheet() {
     let y0 = 0, h0 = 0, lastY = 0, lastT = 0, vy = 0, moved = false, active = false;
     const zone = [$("#grabber"), $("#brand")];
     const down = (e) => {
-      if (!isPhone() || search.which) return;
+      if (!isPhone() || search.which || e.target.closest("button")) return;
       active = true; moved = false; y0 = lastY = e.clientY; lastT = performance.now(); h0 = panel.getBoundingClientRect().height; vy = 0;
       panel.classList.add("dragging"); e.currentTarget.setPointerCapture(e.pointerId);
     };
@@ -1018,6 +1071,12 @@
     addEventListener("resize", () => { if (search.which) dock(false); else setSheet(sheet.state, false); });
   })();
   setSheet("half", false);
+  if ("ResizeObserver" in window) {   // the credits ("i") ride just above the sheet on phones
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty("--sheet-h", panel.offsetHeight + "px");
+      syncSheetTall();
+    }).observe(panel);
+  }
 
   // ------------------------------------------------------------------ ride (simulation)
   let audio = null;
@@ -1131,7 +1190,9 @@
     const r = sel.r;
     // a reroute uses the same settings as this route: to the destination (Go somewhere),
     // or back onto the planned ride a little ahead (suggested and classic rides, which may loop or have stops)
-    state.rideOpts = { w: selWeights(sel), dest: state.tab === "go" && state.to ? state.to : null, rejoin: state.tab !== "go" };
+    // `plan`: a reroute to the destination is planned like the route itself, detour cap included (settings kept as they were now)
+    const plan = state.tab === "go" && state.to && !sel.classic ? { kind: sel.key || "yourRoute", settings: planSettings() } : null;
+    state.rideOpts = { w: selWeights(sel), dest: state.tab === "go" && state.to ? state.to : null, rejoin: state.tab !== "go", plan };
     gpsStatus({ state: "wait" });
     state.ride = new C.RideGPS(r, { geo, pois: C.routePOIs(r, window.POIS, 70), onFrame: rideFrame, onEvent: rideEvent,
       onStatus: gpsStatus, onOffRoute: rerouteFrom, onError: gpsError });
@@ -1168,7 +1229,8 @@
       }
       return router.route(from, cur.coords[cur.coords.length - 1], ro.w);
     }
-    return router.route(from, ro.dest || cur.coords[cur.coords.length - 1], ro.w);
+    const to = ro.dest || cur.coords[cur.coords.length - 1];
+    return ro.plan ? router.planRoute(from, to, ro.plan.kind, ro.plan.settings) : router.route(from, to, ro.w);
   }
   function rerouteFrom(p) {
     const ride = state.ride, ro = state.rideOpts; if (!ride || !ro) return false;

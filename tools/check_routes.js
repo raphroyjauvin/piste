@@ -1,5 +1,5 @@
 // Route safety checks: plan hundreds of trips across the island on the published routing graph and fail on
-// unsafe or broken routes. Runs in plain Node (no browser), in about 2 seconds. GitHub runs it before every deploy.
+// unsafe or broken routes. Runs in plain Node (no browser), in about 5 seconds. GitHub runs it before every deploy.
 //
 // Usage: node tools/check_routes.js            run the checks; exit code 1 if any fails
 //        node tools/check_routes.js --update   also record the current routes as the new baseline
@@ -7,10 +7,15 @@
 //
 // What fails the check (any one is enough):
 //  - Network: the bike network splits into pieces; a road named "Autoroute"/"Bretelle" is open to bikes without a
-//    bike path; more one-way dead ends than the baseline (places you can ride into but not out of).
+//    bike path; more one-way dead ends than the baseline (places you can ride into but not out of); a gap in a street
+//    (two intersections under 0.3 m apart with no segment between them).
+//  - The capped-routing API in prototypes/shared/router.js (relaxing steps, the limit, repeatable results) and places that
+//    were fixed (Sainte-Anne-de-Bellevue village core): a failed expectation is a failure. Planning speed is measured and
+//    printed; one trip taking over 1 s fails.
 //  - Any route: no route found; a start or end snaps more than 150 m away (commutes only); a segment closed to bikes;
 //    a one-way street ridden the wrong way; a break where two segments don't meet; riding the same segment twice;
-//    a detour far longer than the shortest legal path (limits per route type below).
+//    a route longer than the detour cap (max(1.5 x the shortest legal path, shortest + 300 m); "Your route" and "Most
+//    bike paths" are planned with Router.routeCapped, like the app does); "Most direct" has its own 1.15 limit (listed).
 //  - Commutes and classic rides, against tools/route_baseline.json: the share on bike paths drops by more than
 //    3 points, the ride gets more than 15% longer, or the longest stretch on a busy street without a bike path
 //    grows by more than 300 m.
@@ -19,7 +24,7 @@
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.resolve(__dirname, "..");
-const { Router, PROFILES, weightsFor, distM } = require(path.join(ROOT, "prototypes/shared/router.js"));
+const { Router, PROFILES, SHORTEST, DETOUR, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM } = require(path.join(ROOT, "prototypes/shared/router.js"));
 const BASELINE = path.join(__dirname, "route_baseline.json");
 const UPDATE = process.argv.includes("--update"), VERBOSE = process.argv.includes("--verbose");
 
@@ -29,16 +34,20 @@ const G = ctx.window.GRAPH_ISLAND, CLASSICS = ctx.window.CLASSICS;
 const r = new Router(G);
 const t0 = Date.now();
 
-// ---------------------------------------------------------------- route types, as the app builds them (app.js routeWeights)
+// ---------------------------------------------------------------- route types, planned by the same Router.planRoute as the app
+// What each kind means (settings, the detour cap, the relaxing steps) lives in prototypes/shared/router.js, so the app and
+// this check cannot drift apart. Detour cap (2026-10-31): "Your route" and "Most bike paths" are at most
+// max(1.5 x the shortest legal path, shortest + 300 m); a route over the cap is a failure. "Most direct" has no cap:
+// it keeps its own 1.15 limit.
 const STRICT = 0.85;   // the app's default slider position
 const TYPES = {
-  yourRoute: { label: "Your route", opts: weightsFor(STRICT, false), winter: true, maxDetour: 1.8 },
-  avoidHills: { label: "Your route, avoid hills", opts: weightsFor(STRICT, true), winter: false, maxDetour: 2.0 },
-  mostLanes: { label: "Most bike paths", opts: { w: PROFILES.bikemax.w, hill: 4 }, winter: true, maxDetour: 2.0 },
-  mostDirect: { label: "Most direct", opts: { w: PROFILES.direct.w, hill: 0 }, winter: false, maxDetour: 1.15 },
+  yourRoute: { label: "Your route", kind: "yourRoute", settings: { strictness: STRICT }, winter: true },
+  avoidHills: { label: "Your route, avoid hills", kind: "yourRoute", settings: { strictness: STRICT, avoidHills: true }, winter: false },
+  mostLanes: { label: "Most bike paths", kind: "mostLanes", settings: {}, winter: true },
+  mostDirect: { label: "Most direct", kind: "mostDirect", settings: {}, winter: false, maxDetour: 1.15 },
 };
-// shortest legal path: every bike-legal segment costs its length
-const SHORTEST = { w: [1, 1, 1, 1, 1, Infinity], hill: 0 };
+const isCapped = (T) => CAPPED_KINDS.includes(T.kind);
+// SHORTEST (the shortest legal path: every bike-legal segment costs its length) and DETOUR come from the router
 
 // ---------------------------------------------------------------- trips
 // Real commutes and errands across the island. Expectations live in the baseline, not here.
@@ -149,6 +158,23 @@ const network = {};
     const msg = `Network: ${a.n} intersections ${a.kind} because of one-way segments, near ${a.at} (${[...a.names].slice(0, 4).join(", ")})`;
     if (a.n > 50) fail(msg); else if (a.n >= 10) warn(msg);
   }
+  // Gaps in a street: two intersections less than 0.3 m apart with no segment between them are one junction the build
+  // failed to join (a sliver of a split street was dropped, 2026-10-31: it cut off Sainte-Anne-de-Bellevue's village core).
+  const cell = 0.00001, hash = new Map();   // ~1 m cells
+  for (let i = 0; i < r.n; i++) { const k = Math.floor(r.lon[i] / cell) + "," + Math.floor(r.lat[i] / cell); (hash.get(k) || hash.set(k, []).get(k)).push(i); }
+  const joined = new Set();
+  for (let e = 0; e < r.m; e++) joined.add(Math.min(r.ea[e], r.eb[e]) * 1e6 + Math.max(r.ea[e], r.eb[e]));
+  let gaps = 0;
+  for (let i = 0; i < r.n; i++) {
+    const ci = Math.floor(r.lon[i] / cell), cj = Math.floor(r.lat[i] / cell);
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const j of hash.get((ci + di) + "," + (cj + dj)) || []) {
+      if (j <= i || distM(r.lon[i], r.lat[i], r.lon[j], r.lat[j]) >= 0.3 || joined.has(i * 1e6 + j)) continue;
+      gaps++;
+      if (gaps <= 5) fail(`Network: gap in the street at ${r.lon[i].toFixed(6)},${r.lat[i].toFixed(6)}: two intersections under 0.3 m apart with no segment between them (see the sliver step in tools/build_graph.py)`);
+    }
+  }
+  network.gaps = gaps;
+  if (gaps > 5) fail(`Network: ${gaps} gaps in the street in all`);
 }
 
 // ---------------------------------------------------------------- 2. every route
@@ -179,7 +205,7 @@ const summary = (rt) => ({ km: +(rt.length / 1000).toFixed(2), bikePaths: Math.r
 
 const results = {};   // id -> { "type|season": summary }
 let routes = 0, slowest = 0;
-const detours = {}, longDetours = [], overLimit = {};
+const detours = {}, longDetours = [], overLimit = {}, capStats = {}, capped = [];
 function planTrip([id, label, a, b], isCommute) {
   results[id] = {};
   if (isCommute) for (const [p, which] of [[a, "start"], [b, "end"]]) {
@@ -191,16 +217,27 @@ function planTrip([id, label, a, b], isCommute) {
     const season = winter ? "winter" : "summer";
     const short = r.route(a, b, SHORTEST);
     if (!short) { fail(`${id} (${label}), ${season}: no route at all`); continue; }
+    // the limit the app uses; the rule is restated here from the short route on purpose, as a check on detourLimit()
+    const limit = r.detourLimit(a, b), spec = Math.max(DETOUR.factor * short.length, short.length + DETOUR.floor);
+    if (Math.abs(limit - spec) > 1e-6) fail(`${id} (${label}), ${season}: detourLimit() gives ${Math.round(limit)} m, the rule says ${Math.round(spec)} m`);
     for (const [key, T] of Object.entries(TYPES)) {
       if (winter && !T.winter) continue;
       const t = Date.now();
-      const rt = r.route(a, b, T.opts);
+      const rt = r.planRoute(a, b, T.kind, T.settings, limit);
       slowest = Math.max(slowest, Date.now() - t); routes++;
       const where = `${id} (${label}), ${T.label}, ${season}`;
       if (!rt) { fail(`${where}: no route`); continue; }
       checkRoute(rt, where);
       const ratio = rt.length / Math.max(short.length, 1);
       (detours[key] = detours[key] || []).push(ratio);
+      if (isCapped(T)) {
+        const cs = capStats[key] = capStats[key] || { n: 0, relaxed: 0 };
+        cs.n++;
+        if (rt.steps) { cs.relaxed++; capped.push({ where, steps: rt.steps, km: rt.length / 1000, share: rt.infraShare }); }
+        if (rt.length > limit) fail(`${where}: ${km(rt.length)} is over the detour cap of ${km(limit)} (shortest legal path ${km(short.length)}); even the "Most direct" settings don't fit`);
+        results[id][`${key}|${season}`] = summary(rt);
+        continue;
+      }
       // long detours are listed, and their number is compared with the baseline (some are the price of staying on bike paths)
       if (ratio > T.maxDetour && rt.length - short.length > 300) {
         longDetours.push(`${where}: ${km(rt.length)} at ${pct(rt.infraShare)} on bike paths, ${ratio.toFixed(2)} times the shortest legal path (${km(short.length)}, ${pct(short.infraShare)})`);
@@ -213,6 +250,83 @@ function planTrip([id, label, a, b], isCommute) {
 }
 for (const t of COMMUTES) planTrip(t, true);
 for (const t of RANDOM) planTrip(t, false);
+
+// ---------------------------------------------------------------- 2b. the capped-routing API (prototypes/shared/router.js)
+{
+  const expect = (ok, msg) => { if (!ok) fail(`Router API: ${msg}`); };
+  const sameW = (x, y) => !!x && !!y && x.hill === y.hill && x.w.length === y.w.length && x.w.every((v, i) => v === y.w[i]);
+  const direct = routeSettings("mostDirect", {}), directHills = routeSettings("mostDirect", { avoidHills: true });
+  // relaxSteps: the strictness drops 0.15 a step, then the "Most direct" settings, then null
+  const st = relaxSteps("yourRoute", { strictness: 0.85 });
+  [0.7, 0.55, 0.4, 0.25, 0.1].forEach((x, i) => expect(sameW(st(i + 1), weightsFor(x, false)), `your route, step ${i + 1} is not strictness ${x}`));
+  expect(sameW(st(6), direct), "your route, step 6 is not the Most direct settings");
+  expect(st(7) === null, "your route has a step 7");
+  expect(JSON.stringify(st(3)) === JSON.stringify(st(3)), "relaxSteps is not repeatable");
+  expect(relaxSteps("yourRoute", { strictness: 0 })(1) === null, "strictness 0 should have no relaxing steps (it is already direct)");
+  const sh = relaxSteps("yourRoute", { strictness: 0.85, avoidHills: true });
+  expect([1, 2, 3, 4, 5, 6].every((i) => sh(i).hill === 12), "avoid hills not kept through the steps");
+  expect(sameW(sh(6), directHills), "avoid hills, the last step is not Most direct with hills avoided");
+  const wind = { windFwd: new Float32Array(1), windBack: new Float32Array(1) };
+  const sw = relaxSteps("yourRoute", { strictness: 0.85, wind });
+  expect([1, 2, 3, 4, 5].every((i) => sw(i).windFwd === wind.windFwd && sw(i).windBack === wind.windBack), "wind not kept through the steps");
+  const sm = relaxSteps("mostLanes", {});
+  expect(sameW(sm(1), Object.assign(weightsFor(0.85, false), { hill: 4 })) && sm(8) === null && sameW(sm(7), direct), "most bike paths steps are wrong (0.85 first, hill 4, direct at step 7, none after)");
+  expect(!("limit" in (r.planRoute(...COMMUTES[0].slice(2), "mostDirect") || {})), "Most direct must not be capped");
+  // the limit: 1.5 x for long trips, shortest + 300 m for short ones
+  const near = [[-73.5698, 45.5171], [-73.5698, 45.5190]], [, , farA, farB] = COMMUTES.find((c) => c[0] === "lachine-downtown");
+  const sNear = r.route(near[0], near[1], SHORTEST).length, sFar = r.route(farA, farB, SHORTEST).length;
+  expect(sNear < 600 && Math.abs(r.detourLimit(near[0], near[1]) - (sNear + DETOUR.floor)) < 1e-6, "a short trip's limit is not shortest + 300 m");
+  expect(sFar > 3000 && Math.abs(r.detourLimit(farA, farB) - sFar * DETOUR.factor) < 1e-6, "a long trip's limit is not 1.5 x the shortest");
+  // routeCapped: a route that fits is returned as planned; when nothing fits, the last step (Most direct) is returned
+  const o = routeSettings("yourRoute", { strictness: STRICT }), relax = relaxSteps("yourRoute", { strictness: STRICT });
+  const plain = r.route(farA, farB, o), fits = r.routeCapped(farA, farB, o, relax, Infinity), none = r.routeCapped(farA, farB, o, relax, 0);
+  expect(fits.steps === 0 && JSON.stringify(fits.legs) === JSON.stringify(plain.legs), "a route under the limit should come back unchanged");
+  expect(none.steps === 6 && Math.abs(none.length - r.route(farA, farB, direct).length) < 1e-6, "when no step fits, the Most direct route should come back");
+  expect(r.routeCapped(farA, farB, o, null, 0).steps === 0, "no steps given: the first route comes back");
+  // repeatable: the same trip planned twice gives the same legs
+  let same = true;
+  for (const [, , a, b] of COMMUTES.slice(0, 6)) for (const k of Object.values(TYPES)) {
+    const x = r.planRoute(a, b, k.kind, k.settings), y = r.planRoute(a, b, k.kind, k.settings);
+    if (JSON.stringify(x.legs) !== JSON.stringify(y.legs) || x.steps !== y.steps) same = false;
+  }
+  expect(same, "planning the same trip twice gave different routes");
+  // a limit passed in or not gives the same route
+  const [, , ca, cb] = COMMUTES[5];
+  expect(JSON.stringify(r.planRoute(ca, cb, "mostLanes", {}).legs) === JSON.stringify(r.planRoute(ca, cb, "mostLanes", {}, r.detourLimit(ca, cb)).legs), "planRoute differs with and without the limit passed");
+}
+
+// ---------------------------------------------------------------- 2c. places that were fixed: they must stay fixed
+// Sainte-Anne-de-Bellevue village core (2026-10-31). Rue Sainte-Anne is two-way in the City's data (Géobase ID_TRC 1619225,
+// SENS_CIR 0; bike network ID_CYCL 24971 and 26431, NBR_VOIE 2) but the graph had an 8 cm gap in it, so the core could be
+// left by Rue du Collège and not entered. Rue du Collège north of Sainte-Anne is a real one-way (Géobase 1619224, SENS_CIR 1,
+// no bike facility in the bike network): it must stay one-way.
+{
+  const west = [-73.9556, 45.40448], east = [-73.9505, 45.4033], collegeNorth = [-73.95266, 45.40587], corner = [-73.95353, 45.40425];
+  for (const [label, a, b] of [["west to east", west, east], ["east to west", east, west]]) {
+    const rt = r.planRoute(a, b, "yourRoute", { strictness: STRICT });
+    if (!rt) fail(`Sainte-Anne-de-Bellevue ${label}: no route`);
+    else if (rt.length > 500) fail(`Sainte-Anne-de-Bellevue ${label}: ${Math.round(rt.length)} m, expected about 400 m along Rue Sainte-Anne (the core was cut off)`);
+  }
+  const back = r.planRoute(collegeNorth, corner, "yourRoute", { strictness: STRICT });
+  if (back && back.legs.some((l) => r.names[r.ename[l.e]] === "Rue du Collège")) fail("Sainte-Anne-de-Bellevue: a route rides Rue du Collège southbound, against its one-way");
+}
+
+// ---------------------------------------------------------------- 2d. planning speed, measured (what the app does for one trip)
+const speed = {};
+{
+  const trips = [...COMMUTES, ...RANDOM], kinds = [TYPES.yourRoute, TYPES.mostLanes, TYPES.mostDirect];   // what computeRoutes plans
+  const plain = (a, b) => { for (const T of kinds) r.route(a, b, routeSettings(T.kind, T.settings)); };
+  const capped = (a, b) => { const lim = r.detourLimit(a, b); for (const T of kinds) r.planRoute(a, b, T.kind, T.settings, lim); };
+  const time = (fn, list = trips) => list.map(([, , a, b]) => { const t = process.hrtime.bigint(); fn(a, b); return Number(process.hrtime.bigint() - t) / 1e6; });
+  time(plain, trips.slice(0, 30)); time(capped, trips.slice(0, 30));   // warm up the JIT
+  const calls = { n: 0 }, orig = r.route.bind(r);
+  r.route = (...args) => { calls.n++; return orig(...args); };
+  const timesCapped = time(capped); const callsCapped = calls.n; calls.n = 0;
+  const timesPlain = time(plain); const callsPlain = calls.n;
+  r.route = orig;
+  Object.assign(speed, { plain: timesPlain, capped: timesCapped, callsPlain: callsPlain / trips.length, callsCapped: callsCapped / trips.length, trips: trips.length });
+  if (Math.max(...timesCapped) > 1000) fail(`Planning speed: one trip took ${Math.round(Math.max(...timesCapped))} ms with the detour cap (limit 1000 ms)`);
+}
 
 // the 10 classic rides, built exactly like the app's classicRoute(): most bike paths, the way back avoiding the way out
 for (const c of CLASSICS) {
@@ -284,7 +398,9 @@ console.log(`Route safety checks: ${COMMUTES.length} commutes, ${RANDOM.length} 
 console.log(`Network: ${network.km} km in ${network.pieces} piece(s); one-way dead ends: ${network.oneWayDeadEnds}${base ? ` (baseline ${base.network.oneWayDeadEnds})` : ""}`);
 console.log(`Random trips on bike paths (average): your route ${randomShare["yourRoute|summer"]}%, most bike paths ${randomShare["mostLanes|summer"]}%, winter ${randomShare["yourRoute|winter"]}%`);
 console.log("Detour vs the shortest legal path (median / 95th percentile / max, limit):");
-for (const [key, xs] of Object.entries(detours)) console.log(`  ${TYPES[key].label.padEnd(26)} ${q(xs, 0.5).toFixed(2)} / ${q(xs, 0.95).toFixed(2)} / ${Math.max(...xs).toFixed(2)}, limit ${TYPES[key].maxDetour}`);
+for (const [key, xs] of Object.entries(detours)) console.log(`  ${TYPES[key].label.padEnd(26)} ${q(xs, 0.5).toFixed(2)} / ${q(xs, 0.95).toFixed(2)} / ${Math.max(...xs).toFixed(2)}, ${isCapped(TYPES[key]) ? `capped at max(${DETOUR.factor}x, +${DETOUR.floor} m)` : `limit ${TYPES[key].maxDetour}`}`);
+for (const [key, cs] of Object.entries(capStats)) console.log(`  ${TYPES[key].label.padEnd(26)} cap made ${cs.relaxed} of ${cs.n} routes less strict`);
+console.log(`Planning one trip (the 3 route types, ${speed.trips} trips, ms, median / 95th / max): without the cap ${[0.5, 0.95, 1].map((p) => q(speed.plain, p).toFixed(1)).join(" / ")} (${speed.callsPlain.toFixed(1)} searches); with the cap ${[0.5, 0.95, 1].map((p) => q(speed.capped, p).toFixed(1)).join(" / ")} (${speed.callsCapped.toFixed(1)} searches)`);
 const list = (title, xs) => { if (!xs.length) return; console.log(`\n${title} (${xs.length}):`); for (const x of VERBOSE ? xs : xs.slice(0, 15)) console.log("  - " + x); if (!VERBOSE && xs.length > 15) console.log(`  … ${xs.length - 15} more (--verbose lists them all)`); };
 list("Notes", notes);
 list("Long detours (compared with the baseline by count)", longDetours);

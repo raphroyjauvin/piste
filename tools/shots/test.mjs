@@ -172,6 +172,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     rideText: document.querySelector("#ride-go") && document.querySelector("#ride-go").textContent,
     previewLink: !!document.querySelector("#ride-preview"),   // desktop: "Let's ride!" is the preview, so no separate link
     windNextToHills: document.querySelector("#hills").closest(".pref-checks") === document.querySelector("#avoid-wind").closest(".pref-checks"),
+    routedGone: !document.querySelector(".routed-in") && !/Routed on this device/.test(document.body.innerText),   // 2026-10-31: the timing line under the route cards is gone
   }));
   const noFloatingCopy = await page.evaluate(() => !document.querySelector("#ride-fab"));
   await page.click("#layers-btn");
@@ -181,7 +182,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
   const fromAfterTap = await page.evaluate(() => window.__app.state.to && window.__app.state.to.join(","));
   await page.click("#view-btn"); await page.waitForTimeout(1200);
   const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
-  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windNextToHills && noFloatingCopy
+  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windNextToHills && before.routedGone && noFloatingCopy
     && !before.tripChips && !before.exploreNote && before.avoidHills === "Avoid hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
     && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
   return { ok, ...before, noFloatingCopy, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
@@ -358,10 +359,10 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   await page.keyboard.press("Control+A"); await page.keyboard.type("marché jean"); await until(page, suggestShown);
   const list = await page.evaluate(() => { const l = document.querySelector("#suggest"), p = document.querySelector("#panel");
     return { shown: !l.hidden, aboveCard: l.getBoundingClientRect().bottom <= p.getBoundingClientRect().top + 1, n: l.children.length }; });
-  // the ✕ leaves without changing the destination
-  const before = await page.evaluate(() => window.__app.state.toLabel);
+  // the x (2026-10-31) clears the destination: field, point and route go, the search ends, and the keyboard is not opened
   await page.click('.clear[data-target="to"]'); await page.waitForTimeout(500);
-  const cancelled = await page.evaluate((b) => ({ searching: document.body.classList.contains("searching"), same: window.__app.state.toLabel === b && document.querySelector("#to").value === b }), before);
+  const cancelled = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), cleared: window.__app.state.to === null && document.querySelector("#to").value === "" && window.__app.state.routes.length === 0,
+    noKeyboard: !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName), startKept: !!window.__app.state.from && document.querySelectorAll(".end-pin").length === 1 }));
   // with no destination yet, the return key on a typed start moves straight on to the destination bar
   await page.evaluate(() => { const s = window.__app.state; s.to = null; s.toLabel = ""; document.querySelector("#to").value = ""; });
   const fr = await page.locator("#from").boundingBox();
@@ -376,7 +377,7 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   const done = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), routes: window.__app.state.routes.length, sheet: document.querySelector("#panel").dataset.sheet }));
   return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW
       && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.kbTop && docked.fieldBottom >= docked.kbTop - 30
-      && list.shown && list.aboveCard && !cancelled.searching && cancelled.same && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
+      && list.shown && list.aboveCard && !cancelled.searching && cancelled.cleared && cancelled.noKeyboard && cancelled.startKept && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
     half, full, peek, ...layout, docked, list, cancelled, moved, done };
 }, { width: 402, height: 874 });
 
@@ -560,7 +561,7 @@ await run("phone: GPS ride bar, preview link", `${APP}?trip=rachel&gps=replay&gp
 }), { width: 402, height: 874 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ welcome card, feedback and guided tour (2026-10-30; a-positron/tour.js)
-const MAIL_EN = "mailto:support@pistemtl.ca?subject=Piste%20feedback&body=" + encodeURIComponent("What happened:\n\n\nWhere (street or place):\n\n");
+const DEMO_MIN = 250;   // metres of each kind of bike path (protected, shared, none) the tour's demo route must have, so the colours step shows all three
 const welcomeUp = () => !!window.pisteTour && window.pisteTour.welcome === "shown" && !document.querySelector("#welcome").hidden;
 const welcomeGone = () => document.querySelector("#welcome").hidden;
 // In the page: the welcome card is on screen, inside the safe areas, needs no scrolling, and its buttons are 44 px or taller
@@ -651,9 +652,18 @@ await run("welcome: first visit", APP, async (page, ctx) => {
     const c = document.querySelector(".welcome-card");
     return { title: c.querySelector("h2").textContent, mark: !!c.querySelector(".mark"), beta: c.querySelector(".beta-pill").textContent, betaText: c.querySelector(".beta-note p").textContent,
       tour: document.querySelector("#welcome-tour").textContent, explore: document.querySelector("#welcome-skip").textContent,
-      href: document.querySelector("#welcome-feedback").getAttribute("href"), footHref: document.querySelector("#feedback-link").getAttribute("href"),
+      fbTags: ["#welcome-feedback", "#feedback-link"].map((x) => document.querySelector(x).tagName).join(), tourTime: document.querySelector("#welcome-tour small").textContent,
       dialog: c.getAttribute("role") === "dialog" && c.getAttribute("aria-modal") === "true", focusInside: c.contains(document.activeElement), flag: localStorage.getItem("piste-welcomed") };
   });
+  // "Send feedback" opens the dialog over the welcome card; Esc closes only the dialog and focus goes back to the link
+  await page.click("#welcome-feedback");
+  await until(page, () => !document.querySelector("#feedback").hidden);
+  const overWelcome = await page.evaluate(() => ({ dialog: !document.querySelector("#feedback").hidden, welcomeShown: !document.querySelector("#welcome").hidden, welcomeInert: document.querySelector("#welcome").inert,
+    focusInside: document.querySelector("#feedback-form").contains(document.activeElement), mail: document.querySelector("#fb-mail").getAttribute("href").startsWith("mailto:support@pistemtl.ca") }));
+  await page.keyboard.press("Escape");
+  await until(page, () => document.querySelector("#feedback").hidden);
+  const afterEsc = await page.evaluate(() => ({ dialog: !document.querySelector("#feedback").hidden, welcomeShown: !document.querySelector("#welcome").hidden && window.pisteTour.welcome === "shown",
+    focus: document.activeElement && document.activeElement.id }));
   await page.click("#welcome-skip");   // "Explore on my own"
   await until(page, welcomeGone);
   const closed = await page.evaluate(() => ({ hidden: document.querySelector("#welcome").hidden, flag: localStorage.getItem("piste-welcomed") }));
@@ -665,7 +675,7 @@ await run("welcome: first visit", APP, async (page, ctx) => {
   await page.goto(BASE + APP + "?lang=fr", { waitUntil: "load" });
   await until(page, welcomeUp, null, 90000);
   const fr = await page.evaluate(() => ({ title: document.querySelector("#welcome-title").textContent, beta: document.querySelector(".beta-pill").textContent,
-    tour: document.querySelector("#welcome-tour span").textContent, href: document.querySelector("#welcome-feedback").getAttribute("href") }));
+    tour: document.querySelector("#welcome-tour span").textContent, tourTime: document.querySelector("#welcome-tour small").textContent }));
   await page.keyboard.press("Escape");
   await until(page, welcomeGone);
   const frClosed = await page.evaluate(() => ({ hidden: document.querySelector("#welcome").hidden, flag: localStorage.getItem("piste-welcomed") }));
@@ -689,11 +699,13 @@ await run("welcome: first visit", APP, async (page, ctx) => {
   await p2.click("#welcome-skip"); await until(p2, welcomeGone);
   const blocked = { shown: blockedShown, closed: await p2.evaluate(() => document.querySelector("#welcome").hidden), errors: errs2 };
   await p2.close();
-  const ok = en.title === "Welcome to Piste" && en.mark && en.beta === "Beta" && /can be wrong/.test(en.betaText) && /follow the road/i.test(en.betaText) && /Take the tour/.test(en.tour) && en.explore === "Explore on my own"
-    && en.href === MAIL_EN && en.footHref === MAIL_EN && en.dialog && en.focusInside && en.flag === null && closed.hidden && closed.flag === "1" && reload.decided === "seen" && reload.hidden
-    && fr.title === "Bienvenue dans Piste" && fr.beta === "Bêta" && fr.tour === "Faire la visite" && fr.href.startsWith("mailto:support@pistemtl.ca?subject=Commentaires%20Piste&body=")
+  const ok = overWelcome.dialog && overWelcome.welcomeShown && overWelcome.welcomeInert && overWelcome.focusInside && overWelcome.mail
+    && !afterEsc.dialog && afterEsc.welcomeShown && afterEsc.focus === "welcome-feedback" && en.fbTags === "BUTTON,BUTTON" && en.tourTime === "1 min" && fr.tourTime === "1 min"
+    && en.title === "Welcome to Piste" && en.mark && en.beta === "Beta" && /can be wrong/.test(en.betaText) && /follow the road/i.test(en.betaText) && /Take the tour/.test(en.tour) && en.explore === "Explore on my own"
+    && en.dialog && en.focusInside && en.flag === null && closed.hidden && closed.flag === "1" && reload.decided === "seen" && reload.hidden
+    && fr.title === "Bienvenue dans Piste" && fr.beta === "Bêta" && fr.tour === "Faire la visite"
     && frClosed.hidden && frClosed.flag === "1" && phones.every((p) => p.ok) && blocked.shown && blocked.closed && !blocked.errors.length;
-  return { ok, en, closed, reload, fr, frClosed, phones, blocked };
+  return { ok, en, overWelcome, afterEsc, closed, reload, fr, frClosed, phones, blocked };
 }, { width: 1440, height: 900 }, { fresh: true });
 
 await run("tour: every step", APP, async (page) => {
@@ -705,7 +717,10 @@ await run("tour: every step", APP, async (page) => {
   await tourAt(page, 0); pass1.push(await page.evaluate(tourStepCheck));
   await page.keyboard.press("ArrowRight"); await tourAt(page, 1); pass1.push(await page.evaluate(tourStepCheck));
   await page.keyboard.press("Enter"); await tourAt(page, 2); pass1.push(await page.evaluate(tourStepCheck));
-  const demo = await page.evaluate(() => ({ demo: window.pisteTour.info().demo, routes: window.__app.state.routes.length, from: document.querySelector("#from").value }));
+  const demo = await page.evaluate(() => { const s = window.__app.state, bt = s.routes.length ? s.routes[s.sel].r.byTier.map(Math.round) : [0, 0, 0, 0, 0, 0];
+    return { demo: window.pisteTour.info().demo, routes: s.routes.length, from: document.querySelector("#from").value, to: document.querySelector("#to").value, km: s.routes.length ? +(s.routes[s.sel].r.length / 1000).toFixed(1) : 0,
+      protectedM: bt[0], sharedM: bt[2], noPathM: bt[3] + bt[4] }; });
+  const stepIds = await page.evaluate(() => window.pisteTour.steps.join());
   await page.keyboard.press("ArrowLeft"); await tourAt(page, 1);
   const leftKey = await page.evaluate(() => window.pisteTour.info().i);
   await page.keyboard.press("ArrowRight"); await tourAt(page, 2);
@@ -715,7 +730,7 @@ await run("tour: every step", APP, async (page) => {
   const afterEsc = await page.evaluate(appSnapshot);
   // second pass: replay from the panel's footer, every step with Back and Next, and finish with "Let's go"
   await page.click("#tour-again");
-  const pass2 = await tourWalk(page, 0, 7, true);
+  const pass2 = await tourWalk(page, 0, 9, true);
   const lastLabel = await page.evaluate(() => document.querySelector(".tour-next").textContent);
   await page.click(".tour-next");
   await tourClosed(page);
@@ -734,10 +749,16 @@ await run("tour: every step", APP, async (page) => {
   await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, own0);
   const own1 = await page.evaluate(appSnapshot);
   const riding = await page.evaluate(() => { const a = window.__app; a.startRide("topdown"); const r = { button: document.querySelector("#tour-again").getClientRects().length > 0, started: window.pisteTour.start(0) }; a.endRide(); return r; });
-  const ok = pass1.every((s) => s.ok) && pass2.length === 8 && pass2.every((s) => s.ok) && demo.demo && demo.routes > 0 && demo.from === "Parc La Fontaine" && leftKey === 1
+  // one step per map button, top to bottom: 3D, weather, winter, layers
+  const buttonSteps = pass2.slice(5, 9).map((st) => st.targets[0]);
+  const buttonsDown = buttonSteps.map((tg) => tg.spec).join() === "#view-btn,#wx-btn,#winter-btn,#layers-btn" && buttonSteps.every((tg, k) => k === 0 || tg.r[1] > buttonSteps[k - 1].r[1]);
+  // the colours step's demo route shows all three kinds: protected, shared and no bike path, DEMO_MIN metres or more of each, 2 to 5 km long
+  const threeKinds = demo.protectedM >= DEMO_MIN && demo.sharedM >= DEMO_MIN && demo.noPathM >= DEMO_MIN && demo.km >= 2 && demo.km <= 5;
+  const ok = stepIds === "search,style,colours,ride,suggest,view3d,weather,winter,layers,feedback" && buttonsDown && threeKinds
+    && pass1.every((s) => s.ok) && pass2.length === 10 && pass2.every((s) => s.ok) && demo.demo && demo.routes > 0 && demo.from === "Georges-Vanier metro" && leftKey === 1
     && sameState(before, afterEsc) && sameState(before, afterDone) && afterDone.drawn === 0 && afterDone.pins === 0 && lastLabel === "Let's go" && focusBack === "tour-again"
     && !own.demo && own.from === "Mont-Royal metro" && own.check.ok && sameState(own0, own1) && !riding.button && riding.started === false;
-  return { ok, pass1: brief(pass1), pass2: brief(pass2), demo, leftKey, before, afterEsc, afterDone, lastLabel, focusBack, own: { demo: own.demo, from: own.from, check: own.check.problems }, ownRestored: sameState(own0, own1) || [own0, own1], riding,
+  return { ok, stepIds, buttonsDown, threeKinds, pass1: brief(pass1), pass2: brief(pass2), demo, leftKey, before, afterEsc, afterDone, lastLabel, focusBack, own: { demo: own.demo, from: own.from, check: own.check.problems }, ownRestored: sameState(own0, own1) || [own0, own1], riding,
     detail: pass2.map((s) => ({ id: s.id, card: s.card, targets: s.targets })) };
 }, { width: 1440, height: 900 }, { fresh: true });
 
@@ -746,10 +767,10 @@ await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
   await until(page, welcomeUp, null, 30000);
   const before = await page.evaluate(appSnapshot);
   await page.click("#welcome-tour");
-  const big = await tourWalk(page, 0, 7, false);
-  await page.click(".tour-back"); await tourAt(page, 6);
+  const big = await tourWalk(page, 0, 9, false);
+  await page.click(".tour-back"); await tourAt(page, 8);
   const back = await page.evaluate(() => ({ i: window.pisteTour.info().i, sheet: document.querySelector("#panel").dataset.sheet }));
-  await page.click(".tour-next"); await tourAt(page, 7);
+  await page.click(".tour-next"); await tourAt(page, 9);
   await page.click(".tour-next");
   await tourClosed(page);
   await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before);
@@ -763,16 +784,299 @@ await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
     return ["#feedback-link", "#tour-again"].map((s) => { const b = document.querySelector(s).getBoundingClientRect(); return b.top >= r.top && b.bottom <= r.bottom && b.height >= 44; }); });
   const before2 = await page.evaluate(appSnapshot);
   await page.click("#tour-again");
-  const small = await tourWalk(page, 0, 7, false);
+  const small = await tourWalk(page, 0, 9, false);
   await page.click(".tour-next");
   await tourClosed(page);
   await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before2);
   const after2 = await page.evaluate(appSnapshot);
-  const ok = big.length === 8 && big.every((s) => s.ok) && back.i === 6 && sameState(before, after) && after.drawn === 0 && foot.every(Boolean)
-    && small.length === 8 && small.every((s) => s.ok) && sameState(before2, after2);
+  const ok = big.length === 10 && big.every((s) => s.ok) && back.i === 8 && sameState(before, after) && after.drawn === 0 && foot.every(Boolean)
+    && small.length === 10 && small.every((s) => s.ok) && sameState(before2, after2);
   return { ok, phone390: brief(big), sheets390: big.map((s) => s.sheet).join(","), back, restored390: sameState(before, after), foot, phone360: brief(small),
     sheets360: small.map((s) => s.sheet).join(","), restored360: sameState(before2, after2), before2, after2, detail390: big.map((s) => ({ id: s.id, card: s.card, targets: s.targets })) };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, fresh: true });
+
+// ------------------------------------------------------------------ search bars (2026-10-31): locator and pick buttons inside, pins outside, a clear x that drops the place
+const searchSnap = () => { const a = window.__app, s = a.state;
+  return a.map.getSource("route").getData().then((d) => ({ from: s.from && s.from.map((v) => +v.toFixed(4)), to: s.to && s.to.map((v) => +v.toFixed(4)), fromVal: document.querySelector("#from").value, toVal: document.querySelector("#to").value,
+    routes: s.routes.length, cards: document.querySelectorAll("#routes .route-card").length, pins: document.querySelectorAll(".end-pin").length, drawn: d.features.length })); };
+const setDest = () => { const a = window.__app, p = window.piste; p.setPoint("to", [-73.5745, 45.5163], "Test destination"); a.recompute(false); };   // Parc Jeanne-Mance-ish
+await run("search bars: layout, x clears a place and its route, deleting the text does too, Use my location", `${APP}?trip=montroyal`, async (page) => {
+  const layout = await page.evaluate(() => {
+    const out = {};
+    for (const which of ["from", "to"]) {
+      const input = document.querySelector("#" + which), field = input.closest(".field"), f = field.getBoundingClientRect(), i = input.getBoundingClientRect();
+      const pin = field.parentElement.querySelector(".pin"), pr = pin.getBoundingClientRect(), left = field.querySelector(which === "from" ? ".locate" : ".pick"), lr = left.getBoundingClientRect();
+      const cl = field.querySelector(".clear"), cr = cl.getBoundingClientRect();
+      out[which] = { pinOutside: !field.contains(pin) && pr.right <= f.left + 0.5, leftInside: lr.left >= f.left - 0.5 && lr.right <= i.left + 1, clearRight: getComputedStyle(cl).display !== "none" && cr.left >= i.right - 1 && cr.right <= f.right + 0.5,
+        tap: [lr.width, lr.height, cr.width, cr.height].every((v) => v >= 43.5), icon: left.innerHTML, leftTitle: left.title };
+    }
+    return out;
+  });
+  const icons = layout.from.icon !== layout.to.icon && layout.from.leftTitle === "Use my location" && layout.to.leftTitle === "Pick the destination on the map";
+  const start = await page.evaluate(searchSnap);
+  // x on the destination: its point, marker, route and route cards go; the start stays
+  await page.click('.clear[data-target="to"]');
+  const afterTo = await page.evaluate(searchSnap);
+  const clearHidden = await page.evaluate(() => getComputedStyle(document.querySelector('.clear[data-target="to"]')).display === "none");
+  // x on the start too: nothing left
+  await page.click('.clear[data-target="from"]');
+  const afterBoth = await page.evaluate(searchSnap);
+  // the x on a destination with a start only: the start stays, and putting the destination back routes again
+  await page.evaluate(() => window.piste.setPoint("from", [-73.5822, 45.5247], "Mont-Royal metro"));
+  await page.evaluate(setDest);
+  const back = await page.evaluate(searchSnap);
+  // emptying a field by typing does the same as the x
+  await page.fill("#to", "");
+  const typedTo = await page.evaluate(searchSnap);
+  await page.evaluate(setDest);
+  await page.fill("#from", "");
+  const typedFrom = await page.evaluate(searchSnap);
+  await page.fill("#to", "");
+  const typedBoth = await page.evaluate(searchSnap);
+  const free = await page.evaluate(() => ({ pick: window.__app.state.pick, tab: window.__app.state.tab }));
+  const ok = layout.from.pinOutside && layout.to.pinOutside && layout.from.leftInside && layout.to.leftInside && layout.from.clearRight && layout.to.clearRight && layout.from.tap && layout.to.tap && icons
+    && start.routes > 0 && start.pins === 2
+    && afterTo.to === null && afterTo.toVal === "" && afterTo.routes === 0 && afterTo.cards === 0 && afterTo.drawn === 0 && afterTo.pins === 1 && !!afterTo.from && afterTo.fromVal === "Mont-Royal metro" && clearHidden
+    && afterBoth.from === null && afterBoth.fromVal === "" && afterBoth.routes === 0 && afterBoth.cards === 0 && afterBoth.drawn === 0 && afterBoth.pins === 0
+    && back.routes > 0 && back.pins === 2
+    && typedTo.to === null && typedTo.routes === 0 && typedTo.cards === 0 && typedTo.drawn === 0 && typedTo.pins === 1 && !!typedTo.from
+    && typedFrom.from === null && typedFrom.routes === 0 && typedFrom.drawn === 0 && typedFrom.pins === 1 && !!typedFrom.to
+    && typedBoth.from === null && typedBoth.to === null && typedBoth.pins === 0 && typedBoth.drawn === 0 && free.pick === null;
+  return { ok, layout, icons, start, afterTo, clearHidden, afterBoth, back, typedTo, typedFrom, typedBoth };
+}, { width: 1440, height: 900 }, { geolocation: { latitude: 45.5232, longitude: -73.5865 }, permissions: ["geolocation"] });
+
+await run("search bars: Use my location (location allowed) sets the start, and routes if there is a destination", `${APP}?trip=montroyal`, async (page) => {
+  await page.click('.clear[data-target="from"]'); await page.click('.clear[data-target="to"]');
+  await page.evaluate(() => window.piste.setPoint("to", [-73.5745, 45.5163], "Test destination"));
+  await page.click("#locate");   // with a destination: routes at once
+  await until(page, () => window.__app.state.fromLabel === "My location" && window.__app.state.routes.length > 0);
+  const withDest = await page.evaluate(searchSnap);
+  const busyOff = await page.evaluate(() => !document.querySelector("#locate").hasAttribute("aria-busy"));
+  await page.click('.clear[data-target="from"]'); await page.click('.clear[data-target="to"]');
+  await page.click("#locate");   // no destination: the start is set and the map goes there
+  await until(page, () => window.__app.state.fromLabel === "My location");
+  await until(page, () => !window.__app.map.isMoving());
+  const alone = await page.evaluate(async () => { const s = window.__app.state, c = window.__app.map.getCenter(); return { from: s.from.map((v) => +v.toFixed(4)), routes: s.routes.length, pins: document.querySelectorAll(".end-pin").length,
+    centre: [+c.lng.toFixed(3), +c.lat.toFixed(3)], val: document.querySelector("#from").value }; });
+  await page.evaluate(() => window.__app.setLang("fr"));
+  const fr = await page.evaluate(() => ({ title: document.querySelector("#locate").title, my: window.BikeI18n.t("myLocation") }));
+  const near = (v, w) => Math.abs(v - w) < 1e-4;
+  const ok = near(withDest.from[0], -73.5865) && near(withDest.from[1], 45.5232) && withDest.fromVal === "My location" && withDest.routes > 0 && withDest.pins === 2 && busyOff
+    && near(alone.from[0], -73.5865) && near(alone.from[1], 45.5232) && alone.val === "My location" && alone.routes === 0 && alone.pins === 1
+    && Math.abs(alone.centre[0] + 73.5865) < 0.003 && Math.abs(alone.centre[1] - 45.5232) < 0.003 && fr.title === "Utiliser ma position" && fr.my === "Ma position";
+  return { ok, withDest, alone, fr, busyOff };
+}, { width: 1440, height: 900 }, { geolocation: { latitude: 45.5232, longitude: -73.5865 }, permissions: ["geolocation"] });
+
+await run("search bars: Use my location refused shows a calm message and changes nothing", `${APP}?trip=montroyal`, async (page) => {
+  const before = await page.evaluate(searchSnap);
+  await page.click("#locate");
+  await until(page, () => !document.querySelector("#toast").hidden);
+  const toast = await page.evaluate(() => ({ text: document.querySelector("#toast").textContent, shown: !document.querySelector("#toast").hidden, busy: document.querySelector("#locate").hasAttribute("aria-busy") }));
+  const after = await page.evaluate(searchSnap);
+  const ok = toast.shown && toast.text === "Piste can't use your location. You can allow it for this site in your browser or phone settings, or type a start instead." && !toast.busy
+    && JSON.stringify(after) === JSON.stringify(before);
+  return { ok, toast, before, after };
+}, { width: 1440, height: 900 }, { permissions: [] });
+
+await run("search bars (phone): x never opens the keyboard, bars keep their layout in a 390 px card", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
+  const fit = await page.evaluate(() => { const panel = document.querySelector("#panel").getBoundingClientRect();
+    return ["from", "to"].map((w) => { const f = document.querySelector("#" + w).closest(".field").getBoundingClientRect(), i = document.querySelector("#" + w).getBoundingClientRect();
+      return { insideCard: f.left >= panel.left && f.right <= panel.right, inputW: Math.round(i.width), font: parseFloat(getComputedStyle(document.querySelector("#" + w)).fontSize), h: Math.round(f.height) }; }); });
+  await page.tap('.clear[data-target="to"]'); await page.waitForTimeout(400);
+  const afterTo = await page.evaluate(searchSnap);
+  const kb = await page.evaluate(() => ({ active: document.activeElement.tagName, searching: document.body.classList.contains("searching") }));
+  await page.tap('.clear[data-target="from"]'); await page.waitForTimeout(400);
+  const afterBoth = await page.evaluate(searchSnap);
+  const ok = fit.every((f) => f.insideCard && f.inputW >= 150 && f.font >= 16 && f.h >= 44) && afterTo.to === null && afterTo.routes === 0 && afterTo.pins === 1 && !/^(INPUT|TEXTAREA)$/.test(kb.active) && !kb.searching
+    && afterBoth.from === null && afterBoth.pins === 0 && afterBoth.routes === 0;
+  return { ok, fit, afterTo, kb, afterBoth };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ------------------------------------------------------------------ the language button in the card's header (2026-10-31)
+await run("language button: top right of the card's header, visible at every sheet height, 44 px tap area, no sheet drag", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
+  const probe = () => { const b = document.querySelector("#lang-btn"), r = b.getBoundingClientRect(), br = document.querySelector("#brand").getBoundingClientRect(), pr = document.querySelector("#panel").getBoundingClientRect(),
+      g = document.querySelector("#grabber").getBoundingClientRect(), tb = document.querySelector(".tabs").getBoundingClientRect(), phone = matchMedia("(max-width: 760px)").matches;
+    const hit = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === b || b.contains(e)); };
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2, tap = !phone || [[-21, -21], [21, -21], [-21, 21], [21, 21]].every(([dx, dy]) => hit(cx + dx, cy + dy));
+    const overlap = (a, c) => a.width > 0 && c.width > 0 && Math.min(a.right, c.right) - Math.max(a.left, c.left) > 0.5 && Math.min(a.bottom, c.bottom) - Math.max(a.top, c.top) > 0.5;
+    return { inHeader: r.top >= br.top - 1 && r.bottom <= br.bottom + 1 && Math.abs(r.right - (pr.right - 16)) <= (phone ? 4 : 6), visible: hit(cx, cy) && r.top >= pr.top && r.bottom <= pr.bottom, tap,
+      clear: !overlap(r, g) && !overlap(r, tb), text: b.textContent, sheet: document.querySelector("#panel").dataset.sheet, size: [Math.round(r.width), Math.round(r.height)], rect: [r.left, r.top, r.right, r.bottom].map(Math.round) }; };
+  const out = {};
+  for (const sheet of ["peek", "half", "full"]) {
+    await page.evaluate((s) => window.__app.setSheet(s), sheet); await page.waitForTimeout(450);
+    out[sheet] = await settled(page, probe);
+  }
+  await page.evaluate(() => window.__app.setSheet("peek")); await page.waitForTimeout(450);
+  await page.click("#lang-btn"); await page.waitForTimeout(300);
+  const fr = await page.evaluate(() => ({ lang: document.documentElement.lang, text: document.querySelector("#lang-btn").textContent, title: document.querySelector("#lang-btn").title, sheet: document.querySelector("#panel").dataset.sheet, tab: document.querySelector("#tab-go").textContent }));
+  await page.click("#lang-btn"); await page.waitForTimeout(200);
+  const en = await page.evaluate(() => ({ lang: document.documentElement.lang, text: document.querySelector("#lang-btn").textContent, title: document.querySelector("#lang-btn").title }));
+  await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(500);
+  const desk = await settled(page, probe);
+  const inMapButtons = await page.evaluate(() => !document.querySelector(".map-controls #lang-btn"));
+  const ok = ["peek", "half", "full"].every((k) => out[k].inHeader && out[k].visible && out[k].tap && out[k].clear) && out.peek.sheet === "peek"
+    && fr.lang === "fr" && fr.text === "EN" && fr.title === "English" && fr.sheet === "peek" && fr.tab === "Itinéraire" && en.lang === "en" && en.text === "FR" && en.title === "Français"
+    && desk.inHeader && desk.visible && desk.clear && inMapButtons;
+  return { ok, out, fr, en, desk, inMapButtons };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ------------------------------------------------------------------ the data-sources "i" (2026-10-31): bottom right, opens leftwards, turns into an x
+const creditsProbe = () => { const q = (s) => document.querySelector(s), btn = q(".maplibregl-ctrl-attrib-button"), b = btn.getBoundingClientRect(), box = q(".maplibregl-ctrl-attrib").getBoundingClientRect(),
+    map = q("#map").getBoundingClientRect(), pr = q("#panel").getBoundingClientRect(), phone = matchMedia("(max-width: 760px)").matches, zoom = q(".maplibregl-ctrl-zoom-in"), cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+  const hit = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === btn || btn.contains(e) || e.closest(".maplibregl-ctrl-attrib-button") === btn); };
+  return { btn: [b.left, b.top, b.right, b.bottom].map((v) => Math.round(v * 10) / 10), box: [box.left, box.top, box.right, box.bottom].map(Math.round), size: [Math.round(b.width), Math.round(b.height)],
+    nearRight: map.right - b.right <= 24, nearBottom: map.bottom - b.bottom <= 24, aboveSheet: phone ? pr.top - b.bottom >= 0 && pr.top - b.bottom <= 30 : null, open: q(".maplibregl-ctrl-attrib").classList.contains("maplibregl-compact-show"),
+    icon: getComputedStyle(btn).backgroundImage, text: q(".maplibregl-ctrl-attrib-inner").textContent, zoomAbove: zoom && getComputedStyle(zoom).display !== "none" ? zoom.getBoundingClientRect().bottom <= b.top + 0.5 : null,
+    tap44: [[-21, -21], [21, -21], [-21, 21], [21, 21]].every(([dx, dy]) => hit(cx + dx, cy + dy)), shown: getComputedStyle(q(".maplibregl-ctrl-bottom-right")).display !== "none", panelTop: Math.round(pr.top) }; };
+const creditsText = (t) => /Ville de Montréal/.test(t) && /CC BY 4\.0/.test(t) && /OpenStreetMap/.test(t) && /OpenFreeMap/.test(t) && /© 2026 Raphaël Roy-Jauvin/.test(t) && /NRCan/.test(t) && /STM/.test(t) && /BIXI/.test(t) && /Open-Meteo/.test(t) && /ECCC/.test(t);
+await run("map credits: the i sits bottom right, opens leftwards, becomes an x (desktop)", `${APP}?trip=montroyal`, async (page) => {
+  const closed = await page.evaluate(creditsProbe);
+  await page.click(".maplibregl-ctrl-attrib-button"); await page.waitForTimeout(400);
+  const open = await page.evaluate(creditsProbe);
+  await page.click(".maplibregl-ctrl-attrib-button"); await page.waitForTimeout(400);
+  const again = await page.evaluate(creditsProbe);
+  const stays = Math.abs(open.btn[2] - closed.btn[2]) <= 1 && Math.abs(open.btn[3] - closed.btn[3]) <= 1;
+  const ok = closed.nearRight && closed.nearBottom && closed.size[0] <= 24 && closed.size[1] <= 24 && closed.zoomAbove === true && !closed.open
+    && open.open && stays && open.box[0] < closed.btn[0] - 150 && Math.abs(open.box[2] - closed.box[2]) <= 1 && open.icon !== closed.icon && creditsText(open.text)
+    && !again.open && again.icon === closed.icon && Math.abs(again.btn[0] - closed.btn[0]) <= 1;
+  return { ok, closed, open, again, stays };
+});
+await run("map credits (phone): the i rides just above the bottom sheet, 44 px tap area, hides with the sheet fully up", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
+  const at = {};
+  for (const sheet of ["half", "peek"]) { await page.evaluate((s) => window.__app.setSheet(s), sheet); await page.waitForTimeout(450); at[sheet] = await settled(page, creditsProbe); }
+  await page.evaluate(() => window.__app.setSheet("half")); await page.waitForTimeout(450);
+  await page.tap(".maplibregl-ctrl-attrib-button"); await page.waitForTimeout(400);
+  const open = await settled(page, creditsProbe);
+  await page.tap(".maplibregl-ctrl-attrib-button"); await page.waitForTimeout(300);
+  await page.evaluate(() => window.__app.setSheet("full")); await page.waitForTimeout(450);
+  const full = await settled(page, () => ({ shown: getComputedStyle(document.querySelector(".maplibregl-ctrl-bottom-right")).display !== "none" }));
+  await page.evaluate(() => window.__app.setSheet("half")); await page.waitForTimeout(450);
+  const searching = await page.evaluate(() => { document.body.classList.add("searching"); const d = getComputedStyle(document.querySelector(".maplibregl-ctrl-bottom-right")).display; document.body.classList.remove("searching"); return d; });
+  const ok = ["half", "peek"].every((k) => at[k].shown && at[k].aboveSheet && at[k].tap44 && at[k].size[0] <= 24) && at.peek.panelTop > at.half.panelTop + 100 && at.peek.btn[3] > at.half.btn[3] + 100
+    && open.open && Math.abs(open.btn[2] - at.half.btn[2]) <= 1 && Math.abs(open.btn[3] - at.half.btn[3]) <= 1 && open.box[0] < open.btn[0] - 100 && open.box[0] >= 0 && creditsText(open.text) && !full.shown && searching === "none";
+  return { ok, at, open, full, searching };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ------------------------------------------------------------------ the feedback dialog (2026-10-31): Web3Forms is stubbed, no real request is ever sent
+async function stubWeb3Forms(ctx, mode) {   // mode.current: "ok" answers like Web3Forms, "fail" answers 500; every POST body is kept
+  const calls = [];
+  await ctx.route("https://api.web3forms.com/**", (route) => {
+    const req = route.request();
+    if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: { ...CORS, "access-control-allow-headers": "*", "access-control-allow-methods": "POST, OPTIONS" } });
+    calls.push(JSON.parse(req.postData() || "{}"));
+    const good = mode.current === "ok";
+    return route.fulfill({ status: good ? 200 : 500, contentType: "application/json", headers: CORS, body: JSON.stringify(good ? { success: true, message: "Email sent successfully!" } : { success: false, message: "stub failure" }) });
+  });
+  return calls;
+}
+await run("feedback dialog: opens, stays inside the app, sends through Web3Forms (stubbed), falls back to the mail app", `${APP}?trip=montroyal`, async (page, ctx) => {
+  const mode = { current: "ok" }, calls = await stubWeb3Forms(ctx, mode);
+  await page.evaluate(() => {   // what the app counts, and which mailto links the dialog tries to open (cancelled here)
+    window.__events = []; window.umami = { track: (n, d) => window.__events.push([n, d || null]) };
+    window.__mails = [];
+    document.addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a[href^='mailto:']"); if (a) { window.__mails.push(a.getAttribute("href")); e.preventDefault(); } }, true);
+  });
+  const hidden = () => document.querySelector("#feedback").hidden;
+  const open = async () => { await page.click("#feedback-link"); await until(page, () => !document.querySelector("#feedback").hidden); };
+  const status = () => page.evaluate(() => ({ text: document.querySelector("#fb-status").textContent, kind: document.querySelector("#fb-status").dataset.kind, open: !document.querySelector("#feedback").hidden,
+    sendOn: !document.querySelector("#fb-send").disabled, invalid: [...document.querySelectorAll("[aria-invalid=true]")].map((e) => e.id) }));
+  await open();
+  const opened = await page.evaluate(() => { const L = (id) => document.querySelector(`label[for="${id}"]`).textContent, c = document.querySelector("#feedback-form");
+    return { role: c.getAttribute("role"), modal: c.getAttribute("aria-modal"), title: document.querySelector("#fb-title").textContent, labels: [L("fb-subject"), L("fb-message"), L("fb-email")],
+      buttons: [document.querySelector("#fb-cancel").textContent, document.querySelector("#fb-send").textContent], mailText: document.querySelector("#fb-mail").textContent, mailHref: document.querySelector("#fb-mail").getAttribute("href"),
+      alt: document.querySelector("#feedback .dialog-alt-line").textContent, focus: document.activeElement.id, emailType: document.querySelector("#fb-email").type, panelInert: document.querySelector("#panel").inert, events: window.__events }; });
+  // an empty message is not sent
+  await page.click("#fb-send"); const empty = await status();
+  // a wrong email is not sent
+  await page.fill("#fb-message", "x"); await page.fill("#fb-email", "nope"); await page.click("#fb-send"); const badEmail = await status();
+  // no key (the constant is empty): Send opens the mail app, with the subject and message filled in, and nothing is posted
+  await page.fill("#fb-subject", "Path question"); await page.fill("#fb-message", "Closed near Rosemont"); await page.fill("#fb-email", "");
+  await page.click("#fb-send"); const noKey = await status(); const noKeyMails = await page.evaluate(() => window.__mails.slice());
+  const noKeyCalls = calls.length;
+  // with a key: posted to Web3Forms as JSON, thanks, then it closes by itself and clears; counted as feedback-sent; focus returns
+  await page.evaluate(() => window.pisteTour.setFeedbackKey("TEST_KEY"));
+  await page.fill("#fb-email", "rider@example.com"); await page.click("#fb-send");
+  await until(page, () => /Thank you/.test(document.querySelector("#fb-status").textContent)); const thanks = await status();
+  await until(page, hidden, null, 8000);
+  const sent = await page.evaluate(() => ({ closed: document.querySelector("#feedback").hidden, focus: document.activeElement && document.activeElement.id, panelInert: document.querySelector("#panel").inert,
+    cleared: !document.querySelector("#fb-message").value && !document.querySelector("#fb-subject").value, events: window.__events.map((e) => e[0]) }));
+  const payload = calls[0] || {};
+  // the post fails: an error, the mail app opens instead, the dialog stays and Send works again
+  mode.current = "fail"; await open();
+  await page.fill("#fb-subject", "Second"); await page.fill("#fb-message", "Second message");
+  await page.click("#fb-send"); await until(page, () => /Couldn't send/.test(document.querySelector("#fb-status").textContent)); const failed = await status();
+  const failMails = await page.evaluate(() => window.__mails.slice());
+  const eventsAfterFail = await page.evaluate(() => window.__events.map((e) => e[0]));
+  // the hidden trap field (honeypot) ticked: no request
+  const callsBeforeBot = calls.length;
+  await page.evaluate(() => document.querySelector("#fb-botcheck").click()); await page.click("#fb-send");
+  await until(page, () => /Thank you/.test(document.querySelector("#fb-status").textContent)); await until(page, hidden, null, 8000);
+  const bot = { calls: calls.length - callsBeforeBot };
+  // Esc and Cancel close it, and focus returns to the link
+  await open(); await page.keyboard.press("Escape"); await until(page, hidden);
+  const esc = await page.evaluate(() => ({ closed: document.querySelector("#feedback").hidden, focus: document.activeElement && document.activeElement.id }));
+  await open(); await page.click("#fb-cancel"); await until(page, hidden);
+  const cancel = await page.evaluate(() => ({ closed: document.querySelector("#feedback").hidden, focus: document.activeElement && document.activeElement.id }));
+  // French
+  await page.evaluate(() => window.__app.setLang("fr")); await open();
+  const fr = await page.evaluate(() => ({ title: document.querySelector("#fb-title").textContent, email: document.querySelector('label[for="fb-email"]').textContent, send: document.querySelector("#fb-send").textContent,
+    cancel: document.querySelector("#fb-cancel").textContent, alt: document.querySelector("#feedback .dialog-alt-line").textContent }));
+  await page.keyboard.press("Escape"); await until(page, hidden);
+  // a phone: 16 px fields (no zoom on focus), 44 px buttons, the card inside the screen and following the visible area; no keyboard on open
+  await page.evaluate(() => window.__app.setLang("en"));
+  await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(400);
+  await open();
+  const phone = await settled(page, () => { const c = document.querySelector("#feedback-form").getBoundingClientRect(), L = document.querySelector("#feedback"), v = window.visualViewport;
+    const fonts = ["#fb-subject", "#fb-message", "#fb-email"].map((s) => parseFloat(getComputedStyle(document.querySelector(s)).fontSize));
+    const hits = ["#fb-send", "#fb-cancel", "#fb-mail"].map((s) => Math.round(document.querySelector(s).getBoundingClientRect().height));
+    return { inside: c.left >= 0 && c.right <= innerWidth && c.top >= 0 && c.bottom <= innerHeight, fonts, hits, vvh: L.style.getPropertyValue("--vv-h"), vv: v ? v.height + "px" : null, active: document.activeElement.tagName, noScroll: document.documentElement.scrollWidth <= innerWidth }; });
+  await page.keyboard.press("Escape"); await until(page, hidden);
+  const ok = opened.role === "dialog" && opened.modal === "true" && opened.title === "Send feedback" && opened.labels.join("|") === "Subject|Message|Your email (if you'd like a reply)" && opened.buttons.join("|") === "Cancel|Send"
+    && opened.mailText === "support@pistemtl.ca" && opened.mailHref.startsWith("mailto:support@pistemtl.ca") && opened.alt.startsWith("Or email us at") && opened.focus === "fb-subject" && opened.emailType === "email" && opened.panelInert
+    && opened.events.some((e) => e[0] === "feedback" && e[1] && e[1].from === "panel")
+    && empty.open && /write a message/.test(empty.text) && empty.invalid.join() === "fb-message" && badEmail.open && /email address/.test(badEmail.text) && badEmail.invalid.join() === "fb-email" && calls.length >= 0 && noKeyCalls === 0
+    && noKey.open && noKeyMails.length === 1 && noKeyMails[0] === "mailto:support@pistemtl.ca?subject=Path%20question&body=Closed%20near%20Rosemont" && /mail app/.test(noKey.text)
+    && thanks.kind === "ok" && /Thank you/.test(thanks.text) && sent.closed && sent.focus === "feedback-link" && !sent.panelInert && sent.cleared && sent.events.filter((e) => e === "feedback-sent").length === 1
+    && Object.keys(payload).sort().join() === "access_key,botcheck,email,from_name,message,subject" && payload.access_key === "TEST_KEY" && payload.subject === "Path question" && payload.message === "Closed near Rosemont" && payload.email === "rider@example.com" && payload.from_name === "Piste" && payload.botcheck === false
+    && failed.open && failed.kind === "error" && failed.sendOn && failMails.length === 2 && failMails[1] === "mailto:support@pistemtl.ca?subject=Second&body=Second%20message" && eventsAfterFail.filter((e) => e === "feedback-sent").length === 1
+    && bot.calls === 0 && esc.closed && esc.focus === "feedback-link" && cancel.closed && cancel.focus === "feedback-link"
+    && fr.title === "Envoyer un commentaire" && /courriel/.test(fr.email) && fr.send === "Envoyer" && fr.cancel === "Annuler" && /^Ou écrivez-nous à/.test(fr.alt)
+    && phone.inside && phone.fonts.every((f) => f >= 16) && phone.hits.every((h) => h >= 44) && phone.vvh === phone.vv && phone.active === "FORM" && phone.noScroll;
+  return { ok, opened, empty, badEmail, noKey, noKeyMails, thanks, sent, payload, failed, failMails, bot, esc, cancel, fr, phone, calls: calls.length };
+});
+
+// ------------------------------------------------------------------ About & terms and the (c) line (2026-10-31)
+await run("About & terms: the (c) line, a dialog with who, risk, privacy and credits, Esc, French", APP, async (page) => {
+  const foot = await page.evaluate(() => ({ copy: document.querySelector("#panel .copyright").textContent, link: document.querySelector("#about-link").textContent, h: Math.round(document.querySelector("#about-link").getBoundingClientRect().height),
+    sameRow: document.querySelector("#panel .copyright").parentElement === document.querySelector("#about-link").parentElement }));
+  await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
+  const dlg = await page.evaluate(() => { const c = document.querySelector("#about-card"); return { role: c.getAttribute("role"), modal: c.getAttribute("aria-modal"), text: c.innerText, focus: c.contains(document.activeElement), panelInert: document.querySelector("#panel").inert,
+    mail: !!c.querySelector('a[href="mailto:support@pistemtl.ca"]'), closeH: Math.round(document.querySelector("#about-close").getBoundingClientRect().height), items: c.querySelectorAll("li").length }; });
+  await page.keyboard.press("Escape"); await until(page, () => document.querySelector("#about").hidden);
+  const esc = await page.evaluate(() => ({ closed: document.querySelector("#about").hidden, focus: document.activeElement && document.activeElement.id, inert: document.querySelector("#panel").inert }));
+  await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
+  await page.mouse.click(1400, 450); await until(page, () => document.querySelector("#about").hidden);   // the dimmed area closes it too
+  const outside = await page.evaluate(() => document.querySelector("#about").hidden);
+  // a phone: the text scrolls inside the card, and Close stays in view at the bottom of it
+  await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(400);
+  await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
+  const phone = await settled(page, () => { const c = document.querySelector("#about-card"), cr = c.getBoundingClientRect(), b = document.querySelector("#about-close").getBoundingClientRect();
+    return { scrolls: c.scrollHeight > c.clientHeight + 20, closeInView: b.top >= cr.top && b.bottom <= cr.bottom + 1 && b.bottom <= innerHeight, inside: cr.left >= 0 && cr.right <= innerWidth && cr.top >= 0 && cr.bottom <= innerHeight }; });
+  await page.keyboard.press("Escape"); await until(page, () => document.querySelector("#about").hidden);
+  await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300);
+  await page.evaluate(() => window.__app.setLang("fr"));
+  const fr = await page.evaluate(() => ({ link: document.querySelector("#about-link").textContent }));
+  await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
+  const frDlg = await page.evaluate(() => ({ title: document.querySelector("#ab-title").textContent, text: document.querySelector("#about-card").innerText }));
+  await page.click("#about-close"); await until(page, () => document.querySelector("#about").hidden);
+  const T = dlg.text;
+  const ok = foot.copy === "© 2026 Raphaël Roy-Jauvin" && foot.link === "About & terms" && foot.h >= 44 && foot.sameRow
+    && dlg.role === "dialog" && dlg.modal === "true" && dlg.focus && dlg.panelInert && dlg.mail && dlg.closeH >= 44 && dlg.items === 6
+    && /Raphaël Roy-Jauvin in Montréal/.test(T) && /beta/i.test(T) && /own risk/.test(T) && /traffic laws/.test(T) && /address service/.test(T) && /Umami/.test(T) && /without cookies/.test(T) && /Do Not Track/.test(T) && /Web3Forms/.test(T)
+    && /not sent to us/.test(T) && /Ville de Montréal \(CC BY 4\.0\)/.test(T) && /OpenStreetMap contributors/.test(T) && /OpenFreeMap/.test(T) && /© 2026 Raphaël Roy-Jauvin/.test(T) && /support@pistemtl\.ca/.test(T)
+    && esc.closed && esc.focus === "about-link" && !esc.inert && outside && phone.scrolls && phone.closeInView && phone.inside && fr.link === "À propos et conditions" && frDlg.title === "À propos de Piste" && /Vie privée/i.test(frDlg.text) && /à vos propres risques/.test(frDlg.text);
+  return { ok, foot, dlg: { ...dlg, text: undefined }, esc, outside, phone, fr, frTitle: frDlg.title };
+}, { width: 1440, height: 900 });
 
 await browser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----

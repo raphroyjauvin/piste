@@ -35,12 +35,49 @@
     bikemax: { label: "Most bike paths", w: [1.0, 1.05, 1.12, 3.2, 7.0, Infinity], hill: 4 },
   };
 
+  // The shortest legal route: every bike-legal segment costs its length (closed ones stay closed).
+  const SHORTEST = { w: [1, 1, 1, 1, 1, Infinity], hill: 0 };
+  // A planned route may be at most max(1.5 x the shortest legal route, shortest + 300 m) long (Raph, 2026-10-31).
+  // The 300 m floor stops a very short trip being forced onto a busy street to save a few metres.
+  const DETOUR = { factor: 1.5, floor: 300 };
+
   function weightsFor(strictness, avoidHills) {
     // strictness 0 = direct, 1 = most bike lanes (linear blend on each multiplier)
     const s = Math.max(0, Math.min(1, strictness));
     const a = PROFILES.direct.w, b = PROFILES.bikemax.w;
     const w = a.map((v, i) => (i === 5 ? Infinity : v + (b[i] - v) * s));
     return { w, hill: avoidHills ? 12 : 3 * s };
+  }
+
+  // ---------- the kinds of route the app plans between two points ----------
+  // One place for what each kind means, so the app and tools/check_routes.js plan routes the same way.
+  //   kind      "yourRoute" (the strictness slider), "mostLanes" (Most bike paths) or "mostDirect" (Most direct)
+  //   settings  { strictness: 0..1 (yourRoute only), avoidHills: bool, wind: { windFwd, windBack } (optional, from windCost) }
+  // CAPPED_KINDS keep to the detour cap (see Router.planRoute); "mostDirect" is the shortest-ish route and has none.
+  const CAPPED_KINDS = ["yourRoute", "mostLanes"];
+
+  // Router options (w, hill, wind) for one kind of route.
+  function routeSettings(kind, { strictness = 0.8, avoidHills = false, wind = {} } = {}) {
+    if (kind === "mostLanes") return Object.assign({ w: PROFILES.bikemax.w, hill: avoidHills ? 12 : 4 }, wind);
+    if (kind === "mostDirect") return { w: PROFILES.direct.w, hill: avoidHills ? 12 : 0 };
+    return Object.assign({}, weightsFor(strictness, avoidHills), wind);
+  }
+
+  // The steps Router.routeCapped tries when a route is over the cap: relaxSteps(kind, settings)(i), i = 1, 2, ...
+  // Step i is the same kind of route with the strictness lowered by 0.15 * i (hill and wind settings kept; "mostLanes"
+  // counts as strictness 1). The step after the strictness reaches 0 is the "mostDirect" settings; then null (no more steps).
+  // Pure: the same input always gives the same steps.
+  function relaxSteps(kind, settings = {}) {
+    const s0 = kind === "mostLanes" ? 1 : settings.strictness ?? 0.8;
+    const { avoidHills = false, wind = {} } = settings;
+    const direct = routeSettings("mostDirect", settings);
+    return (i) => {
+      const s = Math.round((s0 - 0.15 * i) * 1000) / 1000;   // rounded so 0.85 - 6 x 0.15 is a clean -0.05
+      if (s <= 0) return s > -0.15 ? direct : null;
+      const o = weightsFor(s, avoidHills);
+      if (kind === "mostLanes") o.hill = avoidHills ? 12 : 4;
+      return Object.assign(o, wind);
+    };
   }
 
   const R = 6371008.8, D2R = Math.PI / 180;
@@ -344,6 +381,42 @@
       return this._summarize(legs, { cost: bestDst, visited, from: s, to: t, weights: w });
     }
 
+    // Longest length (m) a planned route between these two points may have (see DETOUR); Infinity if there is no route.
+    detourLimit(from, to) {
+      const s = this.route(from, to, SHORTEST);
+      return s ? Math.max(DETOUR.factor * s.length, s.length + DETOUR.floor) : Infinity;
+    }
+
+    // A route that is not too long a detour. Plans with `opts`; if that is over the limit, tries relaxFn(1), relaxFn(2), ...
+    // (each returns router options a little less strict than the one before, or null when there are no more steps) and
+    // keeps the first route that fits, i.e. the most bike-path-heavy one. If none fits, the route from the last step is
+    // returned (relaxSteps makes that last step the "most direct" settings). `limit` is optional: pass detourLimit() when
+    // planning several kinds of route between the same two points. The result gets `limit` and `steps` (relaxations used).
+    // Deterministic: no randomness, and the search breaks ties the same way every time.
+    routeCapped(from, to, opts, relaxFn, limit) {
+      let rt = this.route(from, to, opts);
+      if (!rt) return null;
+      if (limit === undefined) limit = this.detourLimit(from, to);
+      rt.limit = limit; rt.steps = 0;
+      for (let i = 1; rt.length > limit; i++) {
+        const o = relaxFn && relaxFn(i);
+        if (!o) break;
+        const next = this.route(from, to, o);
+        if (!next) continue;
+        next.limit = limit; next.steps = i; rt = next;
+      }
+      return rt;
+    }
+
+    // Plans one kind of route between two points (coordinates or snapped points), the way the app does: "yourRoute" and
+    // "mostLanes" with the detour cap, "mostDirect" without. `limit` is optional (see routeCapped): pass detourLimit()
+    // when planning several kinds between the same two points. A capped result has `limit` and `steps`.
+    planRoute(from, to, kind, settings = {}, limit) {
+      const opts = routeSettings(kind, settings);
+      if (!CAPPED_KINDS.includes(kind)) return this.route(from, to, opts);
+      return this.routeCapped(from, to, opts, relaxSteps(kind, settings), limit);
+    }
+
     // portion of edge geometry between fractions t0..t1 (in travel direction)
     _legCoords(leg) {
       const pts = this.edgeCoords(leg.e, true);
@@ -528,5 +601,5 @@
     };
   }
 
-  return { Router, TIERS, PROFILES, weightsFor, distM, bearing, buildCursor };
+  return { Router, TIERS, PROFILES, SHORTEST, DETOUR, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM, bearing, buildCursor };
 });

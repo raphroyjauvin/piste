@@ -21,7 +21,7 @@ body { font: 15px/1.45 var(--font-ui); color: var(--ink); background: var(--pape
 #map { position: absolute; inset: 0; }
 .wind-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
 button { font: inherit; color: inherit; cursor: pointer; }
-button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* ---------- panel ---------- */
 .panel {
@@ -34,6 +34,12 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .brand .mark { width: 34px; height: 34px; flex: none; }
 .brand h1 { font: 800 22px/1 var(--font-display); letter-spacing: .01em; margin: 0; }
 .brand p { margin: 2px 0 0; color: var(--ink-3); font-size: 13px; }
+.brand-text { flex: 1; min-width: 0; }
+/* language: a small quiet round button at the top right of the card's header (a 44 px tap area around the 34 px circle) */
+.lang-btn { position: relative; flex: none; width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%;
+  background: var(--paper-2); color: var(--ink-2); font: 800 12px/1 var(--font-display); letter-spacing: .04em; }
+.lang-btn::after { content: ""; position: absolute; inset: -6px; }
+.lang-btn:hover { background: #ecebe6; color: var(--ink); }
 
 /* tabs: "Go somewhere" / "Suggest a ride", and the classics / custom switch */
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--paper-2); border-radius: 12px; padding: 4px; }
@@ -87,27 +93,33 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .stop-chip.on { background: var(--blue); border-color: var(--blue); color: #fff; }
 .rc-note { color: var(--blue-deep); font-size: 13px; margin-top: -2px; }
 .finding { color: var(--ink-3); font-size: 14px; padding: 10px 2px; }
-.routed-in { font-size: 11px; color: var(--ink-3); }
+
 
 .search { position: relative; display: flex; flex-direction: column; gap: 8px; }
 .field-label { font-weight: 700; font-size: 14px; margin-bottom: -2px; }
-.field { display: flex; align-items: center; gap: 10px; background: var(--paper-2); border-radius: 12px; padding: 0 6px 0 10px; border: 1px solid transparent; }
+.field-row { display: flex; align-items: center; gap: 8px; }
+.field { flex: 1; min-width: 0; display: flex; align-items: center; min-height: 46px; background: var(--paper-2); border-radius: 12px; padding: 0 2px; border: 1px solid transparent;
+  transition: box-shadow .3s, border-color .3s; }
 .field:focus-within { border-color: var(--blue); background: var(--paper); }
-.field input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; padding: 11px 0; color: var(--ink); }
-.field input:focus { outline: none; }
+.field input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; padding: 11px 2px; color: var(--ink); }
+.field input:focus, .field input:focus-visible { outline: none; }
 .pin { width: 18px; height: 23px; flex: none; display: block; }
 .pin svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 1px 1.5px rgba(0, 40, 70, .25)); }
 .end-pin { width: 30px; height: 37px; cursor: grab; filter: drop-shadow(0 3px 4px rgba(0, 40, 70, .3)); }
 .end-pin svg { width: 100%; height: 100%; display: block; }
-.pick { border: 0; background: transparent; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--ink-3); }
-.pick:hover, .pick.on { background: var(--blue-soft); color: var(--blue-deep); }
-.pick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-/* small grey ✕ inside the bar you are typing in (phones): leaves without changing the place */
-.clear { display: none; border: 0; background: transparent; width: 32px; height: 32px; border-radius: 50%; place-items: center; color: #9aa3ab; padding: 0; }
-.clear svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
-body.searching .field:focus-within .clear { display: grid; }
-body.searching .field:focus-within .pick { display: none; }
-.field { transition: box-shadow .3s, border-color .3s; }
+/* the small buttons inside a bar: locator / pick on the left, a clear x on the right once there is text (each a 44 px tap area) */
+.field-btn { position: relative; flex: none; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; display: grid; place-items: center; color: var(--ink-3); }
+.field-btn::before { content: ""; position: absolute; width: 30px; height: 30px; border-radius: 50%; background: transparent; transition: background .15s; }
+.field-btn svg { position: relative; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.locate, .pick { color: var(--blue-deep); }
+.locate:hover::before, .pick:hover::before, .pick.on::before { background: var(--blue-soft); }
+.locate[aria-busy="true"] { color: var(--blue); }
+.locate[aria-busy="true"] svg { animation: locating 1s ease-in-out infinite; }
+@keyframes locating { 50% { opacity: .35; } }
+.clear svg { width: 16px; height: 16px; stroke-width: 2.2; }
+.clear:hover { color: var(--ink); }
+.clear:hover::before { background: #e8e7e2; }
+.field input:placeholder-shown ~ .clear { display: none; }
 .field.next { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }   /* "now the destination" */
 .suggest { position: absolute; left: 0; right: 0; top: 100px; margin: 0; padding: 6px; list-style: none; background: var(--paper);
   border-radius: 12px; box-shadow: var(--shadow); z-index: 10; max-height: 320px; overflow: auto; }
@@ -159,12 +171,15 @@ details.turns li { margin: 3px 0; }
 .credits p { margin: 0; }
 /* the panel's last row: feedback (mail) and a faint "Take the tour" */
 .foot-links { display: flex; align-items: center; gap: 4px 16px; flex-wrap: wrap; margin: 4px 0 -6px; }
-.feedback-link { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--ink-2); font-size: 13.5px; font-weight: 700; text-decoration: none; }
+.feedback-link { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13.5px; font-weight: 700; text-decoration: none; }
 .feedback-link svg { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .feedback-link:hover { color: var(--blue-deep); }
 .tour-again { border: 0; background: none; min-height: 44px; padding: 0 2px; font-size: 11.5px; color: var(--ink-3); opacity: .8; }
 .tour-again:hover { color: var(--blue-deep); opacity: 1; }
 body.riding .tour-again { visibility: hidden; }
+.legal { display: flex; align-items: center; flex-wrap: wrap; gap: 0 14px; margin: 0 0 -6px; font-size: 11.5px; color: var(--ink-2); }
+.about-link { min-height: 44px; padding: 0 2px; border: 0; background: none; color: var(--blue-deep); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.about-link:hover { color: var(--ink); }
 
 /* ---------- map controls ---------- */
 .map-controls { position: absolute; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 5; }
@@ -184,7 +199,7 @@ body.riding .tour-again { visibility: hidden; }
 #wx-btn .drop { fill: rgba(0, 149, 230, .18); }
 #wx-btn[aria-pressed="true"] .drop { fill: rgba(255, 255, 255, .25); }
 #winter-btn[aria-pressed="true"] { background: #2a6f9e; }
-.lang-btn { font: 800 15px/1 var(--font-display); letter-spacing: .04em; color: var(--ink); }
+
 .layers { background: var(--paper); border-radius: 14px; box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 7px; width: 280px; max-height: calc(100vh - 120px); overflow: auto; }
 .layers h3 { margin: 0 0 2px; font: 800 12px/1 var(--font-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
 .layers h3 + label { margin-top: 2px; }
@@ -303,7 +318,15 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .primary { border: 0; background: var(--blue); color: #fff; border-radius: 12px; padding: 11px 16px; font-weight: 700; }
 .toast { position: absolute; bottom: calc(24px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: #10324a; color: #fff; padding: 10px 16px; border-radius: 12px; z-index: 30; font-size: 14px; max-width: calc(100% - 32px); }
 
-.maplibregl-ctrl-attrib { font-size: 11px; }
+/* data sources: a small "i" in the map's bottom-right corner (under the zoom buttons). It opens leftwards while the button stays put,
+   and turns into a x; on phones it sits just above the bottom sheet (--sheet-h, set by app.js) */
+.maplibregl-ctrl-attrib.maplibregl-compact { margin: 4px 12px 10px 0; min-height: 22px; min-width: 22px; padding: 0; background: transparent; border-radius: 11px; font-size: 11px; line-height: 1.4; }
+.maplibregl-ctrl-attrib.maplibregl-compact-show { padding: 3px 30px 3px 10px; background: #fff; box-shadow: var(--shadow); max-width: min(640px, calc(100vw - 24px)); }
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib-button { top: auto; bottom: 0; right: 0; width: 22px; height: 22px; border-radius: 50%; background-size: 22px; background-color: rgba(255, 255, 255, .92); box-shadow: 0 1px 3px rgba(25, 30, 36, .28); }
+.maplibregl-ctrl-attrib-button::before { content: ""; position: absolute; inset: -11px; }   /* a 44 px tap area around the 22 px button */
+.maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-button { background-color: transparent; box-shadow: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'%3E%3Cpath d='M7 7l8 8m0-8-8 8' fill='none' stroke='%231c2228' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E"); }
+.maplibregl-ctrl-attrib a { color: var(--ink-2); }
 /* while riding: no zoom buttons or scale bar under the ride controls */
 body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display: none; }
 
@@ -361,6 +384,42 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
 .tour-next:hover { background: var(--blue-deep); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+/* ---------- dialogs: feedback form and About & terms (tour.js). --vv-top / --vv-h follow the visible area, so the card stays above a phone keyboard ---------- */
+.dialog-layer { position: fixed; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--vv-h, 100%); z-index: 60; display: grid; place-items: center; overflow: hidden;
+  background: rgba(9, 24, 36, .4); padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom)); }
+.dialog-card { width: min(408px, 100%); max-height: 100%; overflow: auto; overscroll-behavior: contain; background: var(--paper); border-radius: 22px;
+  box-shadow: 0 2px 6px rgba(10, 22, 32, .12), 0 22px 56px rgba(10, 22, 32, .3); padding: 20px 20px 10px; display: flex; flex-direction: column; gap: 12px; }
+.dialog-card:focus { outline: none; }
+.dialog-title { margin: 0; font: 800 21px/1.15 var(--font-display); letter-spacing: .005em; }
+.dialog-field { display: flex; flex-direction: column; gap: 5px; }
+.dialog-field label { font-size: 13.5px; font-weight: 700; color: var(--ink-2); }
+.dialog-field input, .dialog-field textarea { width: 100%; min-height: 46px; padding: 11px 12px; font: inherit; font-size: 16px; color: var(--ink);   /* 16 px: no zoom on focus in iPhone Safari */
+  background: var(--paper-2); border: 1px solid transparent; border-radius: 12px; }
+.dialog-field textarea { min-height: 96px; line-height: 1.4; resize: vertical; }
+.dialog-field input:focus, .dialog-field textarea:focus { background: var(--paper); border-color: var(--blue); }
+.dialog-field [aria-invalid="true"] { border-color: var(--gap); }
+.fb-status { margin: 0; font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+.fb-status:empty { display: none; }
+.fb-status[data-kind="error"] { padding: 8px 10px; border-radius: 10px; background: var(--gap-soft); color: var(--gap-ink); }
+.fb-status[data-kind="ok"] { color: var(--green-ink); font-weight: 700; }
+.dialog-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+.dialog-go, .dialog-alt { min-height: 48px; padding: 0 20px; border-radius: 13px; font-size: 16px; font-weight: 700; }
+.dialog-go { background: var(--blue-deep); }   /* white on the deeper blue passes AA */
+.dialog-go:hover { background: #005a8e; }
+.dialog-go:disabled { opacity: .6; cursor: default; }
+.dialog-alt { border: 0; background: var(--paper-2); color: var(--ink); }
+.dialog-alt:hover { background: #ecebe6; }
+.dialog-alt-line { margin: 0; text-align: center; font-size: 13.5px; color: var(--ink-2); }
+.dialog-alt-line a { display: inline-block; padding: 13px 2px; color: var(--blue-deep); font-weight: 700; }   /* a 44 px tap area */
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.about-card section { display: flex; flex-direction: column; gap: 4px; }
+.about-card .dialog-buttons { position: sticky; bottom: -10px; margin: 0 -20px -10px; padding: 10px 20px; background: var(--paper); border-top: 1px solid var(--line); }   /* Close stays in view while the text scrolls */
+.about-card h3 { margin: 0; font: 800 12px/1.2 var(--font-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+.about-card p, .about-card li { margin: 0; font-size: 14.5px; line-height: 1.45; color: var(--ink-2); }
+.about-card ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.copyright { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.about-card .copyright { text-align: center; }
+
 /* ---------- phones: the panel is a bottom sheet you drag up (full) or down (map) ---------- */
 @media (max-width: 760px) {
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: none; height: 50%; border-radius: 20px 20px 0 0;
@@ -368,12 +427,13 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .panel.dragging { transition: none; }
   .grabber { display: flex; flex: none; justify-content: center; align-items: center; height: 34px; margin: 0 -16px -8px; cursor: grab; touch-action: none; position: sticky; top: 0; background: var(--paper); z-index: 2; }
   .grabber i { width: 44px; height: 5px; border-radius: 3px; background: #c4cad0; }
-  /* the bottom sheet covers the bottom-right corner: no zoom buttons or scale bar (pinch instead),
-     and the map credits (ⓘ) move to the top left, where they stay visible */
+  /* the bottom sheet covers the bottom-right corner: no zoom buttons or scale bar (pinch instead), and the map credits ("i")
+     ride just above the sheet, following its height; they hide while typing a place, during a ride and with the sheet fully up */
   .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group, .maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale { display: none; }
-  .maplibregl-ctrl-bottom-right { top: var(--safe-top); bottom: auto; right: auto; left: 0; }
-  .maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 8px 0 0 10px; }
-  body.riding .maplibregl-ctrl-bottom-right { display: none; }   /* the turn card covers the top left during a ride */
+  .maplibregl-ctrl-bottom-right { bottom: var(--sheet-h, 50%); }
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib.maplibregl-compact { margin: 0 12px 12px 0; }   /* room for the whole 44 px tap area above the sheet */
+  body.riding .maplibregl-ctrl-bottom-right, body.searching .maplibregl-ctrl-bottom-right, body.sheet-tall .maplibregl-ctrl-bottom-right { display: none; }
+  body.sheet-tall .map-controls { display: none; }   /* the sheet is up over the whole map: its buttons would float over the card's header */
   .field input { font-size: 16px; }   /* 16 px stops iPhone Safari from zooming in when you tap a search bar */
   /* typing a place: only the search bars show, sitting on the keyboard; suggestions float over the map above */
   body.searching #panel > :not(.grabber):not(.search) { display: none !important; }
@@ -400,10 +460,13 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .recenter { bottom: calc(132px + var(--safe-bottom)); }
   .ride-hud.hill-on .recenter { bottom: calc(206px + var(--safe-bottom)); }
   .notice { top: calc(12px + var(--safe-top)); left: 12px; right: 12px; width: auto; }
+  .dialog-layer { place-items: end center; padding: 12px 12px calc(12px + var(--safe-bottom)); }
+  .dialog-card { padding: 18px 18px 8px; gap: 10px; }
+  .about-card .dialog-buttons { bottom: -8px; margin: 0 -18px -8px; padding: 10px 18px; }
   /* the welcome card sits low, over the sheet, where the thumb is */
   .welcome { place-items: end center; padding: calc(12px + var(--safe-top)) 12px calc(12px + var(--safe-bottom)); }
   .welcome-card { padding: 20px 18px 6px; gap: 11px; }
   .welcome-head h2 { font-size: 22px; }
   .tour-card { width: min(440px, calc(100vw - 24px)); }   /* full width: the callout doesn't shift sideways between steps */
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
