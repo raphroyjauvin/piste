@@ -1070,12 +1070,18 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
   const frDlg = await page.evaluate(() => ({ title: document.querySelector("#ab-title").textContent, text: document.querySelector("#about-card").innerText }));
   await page.click("#about-close"); await until(page, () => document.querySelector("#about").hidden);
   const T = dlg.text;
-  const ok = foot.copy === "© 2026 Raphaël Roy-Jauvin" && foot.link === "About & terms" && foot.h >= 44 && foot.sameRow
-    && dlg.role === "dialog" && dlg.modal === "true" && dlg.focus && dlg.panelInert && dlg.mail && dlg.closeH >= 44 && dlg.items === 6
-    && /Raphaël Roy-Jauvin in Montréal/.test(T) && /beta/i.test(T) && /own risk/.test(T) && /traffic laws/.test(T) && /address service/.test(T) && /Umami/.test(T) && /without cookies/.test(T) && /Do Not Track/.test(T) && /Web3Forms/.test(T)
-    && /not sent to us/.test(T) && /Ville de Montréal \(CC BY 4\.0\)/.test(T) && /OpenStreetMap contributors/.test(T) && /OpenFreeMap/.test(T) && /© 2026 Raphaël Roy-Jauvin/.test(T) && /support@pistemtl\.ca/.test(T)
-    && esc.closed && esc.focus === "about-link" && !esc.inert && outside && phone.scrolls && phone.closeInView && phone.inside && fr.link === "À propos et conditions" && frDlg.title === "À propos de Piste" && /Vie privée/i.test(frDlg.text) && /à vos propres risques/.test(frDlg.text);
-  return { ok, foot, dlg: { ...dlg, text: undefined }, esc, outside, phone, fr, frTitle: frDlg.title };
+  // named checks, so a failure says which one (whether the text scrolls depends on the fonts, so only Close in view counts)
+  const checks = {
+    copyLine: foot.copy === "© 2026 Raphaël Roy-Jauvin", link: foot.link === "About & terms", linkTap44: foot.h >= 44, sameRow: foot.sameRow,
+    dialog: dlg.role === "dialog" && dlg.modal === "true", focusIn: dlg.focus, panelInert: dlg.panelInert, mail: dlg.mail, close44: dlg.closeH >= 44, sixItems: dlg.items === 6,
+    who: /Raphaël Roy-Jauvin in Montréal/.test(T) && /beta/i.test(T), risk: /own risk/.test(T) && /traffic laws/.test(T),
+    privacy: /address service/.test(T) && /Umami/.test(T) && /without cookies/.test(T) && /Do Not Track/.test(T) && /Web3Forms/.test(T) && /not sent to us/.test(T),
+    credits: /Ville de Montréal \(CC BY 4\.0\)/.test(T) && /OpenStreetMap contributors/.test(T) && /OpenFreeMap/.test(T), copyInDialog: /© 2026 Raphaël Roy-Jauvin/.test(T), address: /support@pistemtl\.ca/.test(T),
+    escCloses: esc.closed && esc.focus === "about-link" && !esc.inert, outsideCloses: outside, phoneCloseInView: phone.closeInView, phoneInside: phone.inside,
+    french: fr.link === "À propos et conditions" && frDlg.title === "À propos de Piste" && /Vie privée/i.test(frDlg.text) && /à vos propres risques/.test(frDlg.text),
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), foot, dlg: { ...dlg, text: undefined }, esc, outside, phone, fr, frTitle: frDlg.title };
 }, { width: 1440, height: 900 });
 
 await browser.close();
