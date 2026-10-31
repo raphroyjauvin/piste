@@ -699,13 +699,17 @@ await run("welcome: first visit", APP, async (page, ctx) => {
   await p2.click("#welcome-skip"); await until(p2, welcomeGone);
   const blocked = { shown: blockedShown, closed: await p2.evaluate(() => document.querySelector("#welcome").hidden), errors: errs2 };
   await p2.close();
-  const ok = overWelcome.dialog && overWelcome.welcomeShown && overWelcome.welcomeInert && overWelcome.focusInside && overWelcome.mail
-    && !afterEsc.dialog && afterEsc.welcomeShown && afterEsc.focus === "welcome-feedback" && en.fbTags === "BUTTON,BUTTON" && en.tourTime === "1 min" && fr.tourTime === "1 min"
-    && en.title === "Welcome to Piste" && en.mark && en.beta === "Beta" && /can be wrong/.test(en.betaText) && /follow the road/i.test(en.betaText) && /Take the tour/.test(en.tour) && en.explore === "Explore on my own"
-    && en.dialog && en.focusInside && en.flag === null && closed.hidden && closed.flag === "1" && reload.decided === "seen" && reload.hidden
-    && fr.title === "Bienvenue dans Piste" && fr.beta === "Bêta" && fr.tour === "Faire la visite"
-    && frClosed.hidden && frClosed.flag === "1" && phones.every((p) => p.ok) && blocked.shown && blocked.closed && !blocked.errors.length;
-  return { ok, en, overWelcome, afterEsc, closed, reload, fr, frClosed, phones, blocked };
+  const checks = {   // named, so a failure says which one
+    feedbackOverWelcome: overWelcome.dialog && overWelcome.welcomeShown && overWelcome.welcomeInert && overWelcome.focusInside && overWelcome.mail,
+    escBackToWelcome: !afterEsc.dialog && afterEsc.welcomeShown && afterEsc.focus === "welcome-feedback",
+    feedbackButtons: en.fbTags === "BUTTON,BUTTON", tourTime: en.tourTime === "1 min" && fr.tourTime === "1 min",
+    english: en.title === "Welcome to Piste" && en.mark && en.beta === "Beta" && /can be wrong/.test(en.betaText) && /follow the road/i.test(en.betaText) && /Take the tour/.test(en.tour) && en.explore === "Explore on my own",
+    firstVisit: en.dialog && en.focusInside && en.flag === null, closes: closed.hidden && closed.flag === "1", notAfterReload: reload.decided === "seen" && reload.hidden,
+    french: fr.title === "Bienvenue dans Piste" && fr.beta === "Bêta" && fr.tour === "Faire la visite" && frClosed.hidden && frClosed.flag === "1",
+    ...Object.fromEntries(phones.map((p, i) => [`phone${i + 1}Fits`, p.ok])), storageBlocked: blocked.shown && blocked.closed && !blocked.errors.length,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), en, overWelcome, afterEsc, closed, reload, fr, frClosed, phones, blocked };
 }, { width: 1440, height: 900 }, { fresh: true });
 
 await run("tour: every step", APP, async (page) => {
