@@ -1128,7 +1128,7 @@
       const play = () => {
         [660, 880].forEach((f, i) => {
           const o = audio.createOscillator(), g = audio.createGain(); o.type = "sine"; o.frequency.value = f;
-          const t2 = audio.currentTime + i * 0.16; g.gain.setValueAtTime(0, t2); g.gain.linearRampToValueAtTime(0.09, t2 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t2 + 0.3);
+          const t2 = audio.currentTime + i * 0.16; g.gain.setValueAtTime(0, t2); g.gain.linearRampToValueAtTime(0.4, t2 + 0.02);   // 0.4: audible over music in headphones (0.09 was lost, 2026-11-01 ride) g.gain.exponentialRampToValueAtTime(0.001, t2 + 0.3);
           o.connect(g).connect(audio.destination); o.start(t2); o.stop(t2 + 0.32);
         });
         clearTimeout(audioIdleT); audioIdleT = setTimeout(releaseAudio, 800);   // the two tones last half a second
