@@ -24,7 +24,7 @@
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.resolve(__dirname, "..");
-const { Router, PROFILES, SHORTEST, DETOUR, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM } = require(path.join(ROOT, "prototypes/shared/router.js"));
+const { Router, PROFILES, SHORTEST, DETOUR, U_TURN, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM, bearing } = require(path.join(ROOT, "prototypes/shared/router.js"));
 const BASELINE = path.join(__dirname, "route_baseline.json");
 const UPDATE = process.argv.includes("--update"), VERBOSE = process.argv.includes("--verbose");
 
@@ -293,6 +293,51 @@ for (const t of RANDOM) planTrip(t, false);
   // a limit passed in or not gives the same route
   const [, , ca, cb] = COMMUTES[5];
   expect(JSON.stringify(r.planRoute(ca, cb, "mostLanes", {}).legs) === JSON.stringify(r.planRoute(ca, cb, "mostLanes", {}, r.detourLimit(ca, cb)).legs), "planRoute differs with and without the limit passed");
+}
+
+// ---------------------------------------------------------------- 2b2. heading-aware start (2026-11-01)
+// Router.route opts.heading: a GPS reroute that knows which way the rider faces. Starting by turning back costs U_TURN.metres
+// (200 m) of riding extra. The scenario is found in the graph: a straight two-way street, the start at its middle (a point, not a
+// snapped edge), and destinations whose shortest route starts toward end a. Facing b, the route must start toward b when that is under
+// 200 m longer, and still start toward a when turning round saves more. Facing a, or with no heading, nothing changes.
+// A router that ignores the heading fails the first expectation.
+{
+  const expect = (ok, msg) => { if (!ok) fail(`Router heading: ${msg}`); };
+  const straight = (e) => !(r.egeom && r.egeom[e] && r.egeom[e].length);
+  const legsOf = (rt) => JSON.stringify(rt.legs.map((l) => [l.e, l.fwd, l.t0, l.t1]));
+  const towardB = (rt) => rt.legs[0].fwd === 1;   // the first leg rides the start street toward its end b (else toward a)
+  let close = null, far = null;
+  for (let e = 0; e < r.m && !(close && far); e++) {
+    if (r.edir[e] !== 0 || r.etier[e] > 3 || !straight(e) || r.elen[e] < 200 || r.elen[e] > 500) continue;
+    const a = [r.lon[r.ea[e]], r.lat[r.ea[e]]], b = [r.lon[r.eb[e]], r.lat[r.eb[e]]], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    if (r.snapCandidates(mid[0], mid[1]).length !== 1) continue;   // only this street near the start, so the start is unambiguous
+    const toA = bearing(b[0], b[1], a[0], a[1]), toB = bearing(a[0], a[1], b[0], b[1]);
+    const dests = [];
+    for (let n = 0; n < r.n; n++) { const d = distM(mid[0], mid[1], r.lon[n], r.lat[n]); if (d >= 150 && d <= 600) dests.push([r.lon[n], r.lat[n]]); }
+    const step = Math.max(1, Math.ceil(dests.length / 40));
+    for (let i = 0; i < dests.length && !(close && far); i += step) {
+      const dest = dests[i], none = r.route(mid, dest, SHORTEST);
+      if (!none || towardB(none)) continue;
+      const facingB = r.route(mid, dest, Object.assign({ heading: toB }, SHORTEST));
+      if (!facingB) continue;
+      if (towardB(facingB)) { if (!close && facingB.length > none.length + 1) close = { mid, dest, toA, toB, none, facingB }; }
+      else if (!far) far = { mid, dest, toA, toB, none, facingB };
+    }
+  }
+  expect(close && far, `no test case found in the graph (${close ? "" : "start where turning round costs under 200 m"}${close || far ? "" : "; "}${far ? "" : "start where turning round is clearly shorter"})`);
+  if (close) {
+    const { mid, dest, toA, toB, none, facingB } = close;
+    expect(facingB.length < none.length + U_TURN.metres, `facing b the route is ${Math.round(facingB.length - none.length)} m longer, over the ${U_TURN.metres} m a U-turn is worth`);
+    expect(legsOf(r.route(mid, dest, Object.assign({ heading: toA }, SHORTEST))) === legsOf(none), "facing the way of the shortest route changed that route");
+    expect(legsOf(r.route(mid, dest, Object.assign({ heading: undefined }, SHORTEST))) === legsOf(none), "no heading changed the route");
+    expect(legsOf(r.route(mid, dest, Object.assign({ heading: NaN }, SHORTEST))) === legsOf(none), "a heading of NaN changed the route");
+    const snapped = r.snapCandidates(mid[0], mid[1])[0];
+    expect(legsOf(r.route(snapped, dest, Object.assign({ heading: toB }, SHORTEST))) === legsOf(r.route(snapped, dest, SHORTEST)), "a start that is already snapped should ignore the heading");
+    // the app's way in: planRoute with settings.heading; the detour cap is then worked out from the shortest route that does not turn back
+    const planned = r.planRoute(mid, dest, "yourRoute", { strictness: STRICT, heading: toB });
+    expect(planned && Math.abs(planned.limit - r.detourLimit(mid, dest, toB)) < 1e-6, "planRoute with a heading did not use the heading-aware detour limit");
+  }
+  if (far) expect(!towardB(far.facingB), "facing b, the route still starts toward a when turning round saves over 200 m");
 }
 
 // ---------------------------------------------------------------- 2c. places that were fixed: they must stay fixed

@@ -531,10 +531,33 @@
     TAU_S: 0.25,        // s: the rider glides toward where you are with this time constant
     BACK_M: 30,         // m: this far behind, three fixes in a row, is a real U-turn (less is jitter and is ignored)
     STALE_MS: 8000,     // ms with no good fix: "Waiting for GPS…" again
+    HEAD_M: 20,         // m: the heading is the bearing over the last 20-40 m of movement (less is noise)…
+    HEAD_MAX_M: 40,
+    HEAD_V: 2,          // …and only while moving faster than this (m/s); standing still or walking gives no heading
+    HEAD_KEEP: 15,      // good fixes kept to work out the heading
   };
   const fin = (v) => (v != null && Number.isFinite(v) && v >= 0 ? v : null);
+  // The rider's direction of travel, 0-360 degrees (0 = north), from the recent good fixes [{lon, lat, t (ms), v (m/s or null)}],
+  // newest last: the bearing from the oldest fix that is still within GPS.HEAD_MAX_M of the newest one (and at least GPS.HEAD_M away,
+  // so a few metres of noise cannot turn it) to the newest. null when the rider has not moved that far in the kept fixes or is slower
+  // than GPS.HEAD_V (the speed is the phone's own, else worked out from the fixes).
+  function headingFromFixes(fixes) {
+    const last = fixes[fixes.length - 1];
+    let base = null;
+    for (let i = fixes.length - 2; last && i >= 0; i--) {
+      const f = fixes[i], d = distM(f.lon, f.lat, last.lon, last.lat);
+      if (d < GPS.HEAD_M) continue;
+      if (d > GPS.HEAD_MAX_M && base) break;
+      base = { f, d };
+      if (d > GPS.HEAD_MAX_M) break;   // fixes far apart: the first one past HEAD_M is all there is
+    }
+    if (!base) return null;
+    const v = last.v ?? (last.t > base.f.t ? base.d / ((last.t - base.f.t) / 1000) : 0);
+    return v > GPS.HEAD_V ? window.BikeRouter.bearing(base.f.lon, base.f.lat, last.lon, last.lat) : null;
+  }
   // opts: route, pois, geo (navigator.geolocation or a ReplayGeo), onFrame, onEvent, onStatus({state: wait|ok|off, acc, kmh}),
-  //       onOffRoute({lon, lat, acc}) -> true when the app rerouted (it calls setRoute), onError({code})
+  //       onOffRoute({lon, lat, acc, heading}) -> true when the app rerouted (it calls setRoute); heading = the direction you are
+  //       riding in degrees, or null when unclear (headingFromFixes), so the new route does not start by turning you round; onError({code})
   class RideGPS extends RideCore {
     constructor(route, opts = {}) {
       super(route, opts);
@@ -546,6 +569,7 @@
       this.lastReroute = -Infinity; this.jump = false; this.resync = false; this.busyUntil = 0; this.arrived = false;
       this.status = null; this.stats = { fixes: 0, ignored: 0, reroutes: 0 };
       this.trail = [];   // every good fix, for the end-of-ride summary; stays in memory only (see rideSummary)
+      this.recent = [];  // the last few good fixes, for the heading
       this._watch = null; this._raf = 0; this._last = 0;
     }
     setRoute(route, pois = []) {
@@ -619,6 +643,9 @@
       this.raw = { prev: prev || [lon, lat], cur: [lon, lat] };
       if (prev && distM(prev[0], prev[1], lon, lat) >= 3) this.rawHeading = window.BikeRouter.bearing(prev[0], prev[1], lon, lat);
       this.fix = { lon, lat, acc, t, wall, along: s.along, off: offAll, kmh: (gpsV ?? this.v) * 3.6 };
+      if (fresh) this.recent.length = 0;   // first fix, or back after a pause: the older fixes say nothing about where you are heading now
+      this.recent.push({ lon, lat, t, v: gpsV });
+      if (this.recent.length > GPS.HEAD_KEEP) this.recent.shift();
       const strictM = Math.max(GPS.OFF_M, acc + 10);
       const onRoute = offAll <= (this.joined ? strictM : Math.max(GPS.START_M, acc + 25));
       if (offAll <= strictM) this.joined = true;
@@ -645,7 +672,7 @@
         if (this.offSince == null) this.offSince = t;
         if (t - this.offSince >= GPS.OFF_MS && wall - this.lastReroute >= GPS.REROUTE_MS) {
           this.lastReroute = wall; this.stats.reroutes++;
-          if (this.onOffRoute({ lon, lat, acc })) {   // the app found a new route and called setRoute(): carry on along it
+          if (this.onOffRoute({ lon, lat, acc, heading: headingFromFixes(this.recent) })) {   // the app found a new route and called setRoute(): carry on along it
             this.raw = { prev: [lon, lat], cur: [lon, lat] }; this.blend = 0;
             this._status("ok", { acc, kmh: this.fix.kmh }); this.kick();
             return;
@@ -756,7 +783,10 @@
       this.getRoute = opts.getRoute || (() => null);
       this.v = (opts.kmh || 18) / 3.6; this.k = Math.max(0.25, opts.speedup || 1);
       this.noise = opts.noise ?? 2.5; this.startAt = opts.startAt || 0;
-      this.detourAt = opts.detourAt ?? null; this.detour = { out: 60, along: 150 };
+      // straight: at detourAt the rider turns off the route at a right angle and rides straight on for good, ignoring any new route
+      // (a rider who left the route on purpose); the detour is then one very long leg out
+      this.straight = !!opts.straight;
+      this.detourAt = opts.detourAt ?? null; this.detour = this.straight ? { out: 1e5, along: 0 } : { out: 60, along: 150 };
       this.deny = !!opts.deny; this.warmup = opts.warmup ?? 2;
       let seed = opts.seed || 7;   // repeatable noise
       this.rand = () => { seed = (seed + 0x6D2B79F5) | 0; let x = Math.imul(seed ^ (seed >>> 15), 1 | seed); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
@@ -785,8 +815,9 @@
       const now = performance.now(), dt = this._t ? Math.min(3, (now - this._t) / 1000) : 0; this._t = now;
       const ds = this.v * this.k * dt; this.simMs += dt * this.k * 1000;
       if (r !== this.route) {
-        if (this.route && this.pos) { this.d = makeTrack(r).locate(this.pos[0], this.pos[1]).along; this.phase = "route"; this.detourAt = null; }   // rerouted
-        else this.d = this.startAt;
+        if (this.route && this.pos) {   // rerouted: carry on along the new route (unless riding straight on)
+          if (!(this.straight && this.phase === "detour")) { this.d = makeTrack(r).locate(this.pos[0], this.pos[1]).along; this.phase = "route"; this.detourAt = null; }
+        } else this.d = this.startAt;
         this.route = r; this.cur = buildCursor(r);
       } else if (this.phase === "detour") this.s += ds;
       else this.d = Math.min(this.cur.total, this.d + ds);
@@ -896,6 +927,6 @@
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
-    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, makeTrack, tailRoute, joinRoutes, voice, audioSession, gapSentence, buildCursor, distM,
+    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, tailRoute, joinRoutes, voice, audioSession, gapSentence, buildCursor, distM,
     cleanTrail, rideSummary, SUMMARY };
 })();

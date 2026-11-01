@@ -1,5 +1,12 @@
 # Routing: how it works and how it compares (2026-10-25)
 
+## Update 2026-11-01: a reroute knows which way you are riding
+- **Why:** on a ride in the Olympic Park he left the route on purpose and kept riding on a park path; each GPS reroute started at him and went back the way he came (an instant U-turn), and the distance to the next turn grew as he rode away.
+- **Heading** (`headingFromFixes` in `shared/common.js`): the bearing over the last 20-40 m of good fixes, only when he is moving faster than 2 m/s (the phone's speed, else worked out from the fixes); otherwise none. `RideGPS` hands it to `onOffRoute`, and `newRouteFrom` in `app.js` passes it as `heading` (`planRoute` takes it in `settings.heading`).
+- **Router** (`opts.heading`, degrees, in `Router.route`): for a start that is a point, each way out of a start candidate (toward a, toward b) more than 100 degrees from the heading is a U-turn and costs `U_TURN.metres` (200 m x the cheapest tier weight) extra. A rider more than 15 m off the street also pays it, on both ways out, when the street point is behind him (more than 100 degrees from his heading). So the route carries on ahead and turns back at a later turn unless turning round is clearly shorter. No heading, or a start that is already a snapped edge: identical to before. The detour cap is kept: the limit is worked out from the shortest route that does not turn back (`detourLimit(from, to, heading)`), and the heading is kept through the relaxing steps.
+- **Loop:** no new cooldown needed. `RideGPS` already allows one reroute per 10 s (`GPS.REROUTE_MS`) after 5 s off route, and the new route starts where he is, so he is on it at once. The new test checks the gap.
+- **Tests:** `node tools/check_routes.js` (section "heading-aware start": facing b the route starts toward b when that costs under 200 m more, still toward a when turning round saves more, facing a or no heading unchanged; fails if the heading is ignored). Browser: `heading comes from` (the heading function) and `riding straight on after leaving the route` (replay option `&straight`: at `detour=<m>` the rider turns off the route at a right angle and keeps going, ignoring new routes). The distance to the next turn is only listed there, not judged: it depends on the streets under the straight line.
+
 ## Update 2026-10-31: detour cap, and a graph bug that cut off Sainte-Anne-de-Bellevue (and about 190 other junctions)
 
 ### Detour cap (Raph, 2026-10-31; internal, nothing is shown in the app)

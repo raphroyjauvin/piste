@@ -37,6 +37,10 @@
 
   // The shortest legal route: every bike-legal segment costs its length (closed ones stay closed).
   const SHORTEST = { w: [1, 1, 1, 1, 1, Infinity], hill: 0 };
+  // Heading-aware start (2026-11-01, see Router.route opts.heading): a start way out that points more than `angle` degrees away from
+  // the rider's heading is a U-turn and costs `metres` of riding extra (x the cheapest tier weight); `offGraphM` is how far from the
+  // street the rider must be before "the street point is behind me" counts too.
+  const U_TURN = { angle: 100, metres: 200, offGraphM: 15 };
   // A planned route may be at most max(1.5 x the shortest legal route, shortest + 300 m) long (Raph, 2026-10-31).
   // The 300 m floor stops a very short trip being forced onto a busy street to save a few metres.
   const DETOUR = { factor: 1.5, floor: 300 };
@@ -91,6 +95,8 @@
     const x = Math.cos(lat1 * D2R) * Math.sin(lat2 * D2R) - Math.sin(lat1 * D2R) * Math.cos(lat2 * D2R) * Math.cos((lon2 - lon1) * D2R);
     return (Math.atan2(y, x) / D2R + 360) % 360;
   }
+  // smallest angle between two bearings, 0..180 degrees
+  function angleDiff(a, b) { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; }
 
   // ---------- binary heap keyed by float priority ----------
   class Heap {
@@ -265,7 +271,7 @@
     _projectOnEdge(e, lon, lat) {
       const pts = this.edgeCoords(e, true);
       const kx = Math.cos(lat * D2R) * R * D2R, ky = R * D2R;
-      let best = { dist: Infinity }, acc = 0;
+      let best = { dist: Infinity }, acc = 0, bi = 1;
       const total = this.elen[e] || 1;
       let geomLen = 0; const segL = [];
       for (let i = 1; i < pts.length; i++) { const L = distM(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]); segL.push(L); geomLen += L; }
@@ -275,15 +281,34 @@
         const vx = bx - ax, vy = by - ay; const L2 = vx * vx + vy * vy;
         let t = L2 ? ((px - ax) * vx + (py - ay) * vy) / L2 : 0; t = Math.max(0, Math.min(1, t));
         const qx = ax + vx * t, qy = ay + vy * t; const d = Math.hypot(px - qx, py - qy);
-        if (d < best.dist) best = { e, dist: d, lon: qx / kx, lat: qy / ky, along: acc + segL[i - 1] * t };
+        if (d < best.dist) { best = { e, dist: d, lon: qx / kx, lat: qy / ky, along: acc + segL[i - 1] * t }; bi = i; }
         acc += segL[i - 1];
       }
+      // direction of the edge (a to b) at the snap point, for the heading-aware start (NaN on a zero-length piece)
+      best.fwdBearing = segL[bi - 1] > 0 ? bearing(pts[bi - 1][0], pts[bi - 1][1], pts[bi][0], pts[bi][1]) : NaN;
       best.t = geomLen ? best.along / geomLen : 0;
       best.alongM = best.t * total;
       return best;
     }
 
+    // Cost added to the two ways out (toward b: fwd, toward a: back) of one start candidate `s`, given the rider's heading.
+    // A way out more than U_TURN.angle degrees from the heading is a U-turn. A rider well off the street (more than
+    // U_TURN.offGraphM) who is heading away from the street point (more than U_TURN.angle between the heading and the
+    // direction rider -> street point) would also have to turn around to reach it, so both ways out pay for that.
+    _startPenalties(from, s, heading, unit) {
+      const behind = s.dist > U_TURN.offGraphM && angleDiff(heading, bearing(from[0], from[1], s.lon, s.lat)) > U_TURN.angle ? unit : 0;
+      const known = Number.isFinite(s.fwdBearing);
+      return {
+        fwd: behind + (known && angleDiff(heading, s.fwdBearing) > U_TURN.angle ? unit : 0),
+        back: behind + (known && angleDiff(heading, (s.fwdBearing + 180) % 360) > U_TURN.angle ? unit : 0),
+      };
+    }
+
     // ---------- A* between two snapped points ----------
+    // opts.heading (degrees, 0 = north, optional): the direction the rider is travelling, for a start that is a point (a GPS
+    // reroute). Starting by turning back costs U_TURN.metres of riding extra (see _startPenalties), so the route prefers
+    // carrying on ahead and turning back toward the destination at a later turn, unless turning around is clearly shorter.
+    // Without it (or with a start that is already a snapped point) nothing changes.
     route(from, to, opts = {}) {
       const { w, hill } = opts.w ? opts : weightsFor(opts.strictness ?? 0.8, opts.avoidHills);
       const APPROACH = 1.6; // cost per metre between the clicked point and where the ride starts/ends
@@ -308,15 +333,19 @@
         return L * w[this.etier[e]] * (pen ? pen[e] : 1) * (wpen ? wpen[e] : 1) * (wf ? (fwd ? wf[e] : wb[e]) : 1) + climb * hill;
       };
       const usable = (c) => this.edir[c.e] !== 3 && this.etier[c.e] !== 5;
+      // the rider's heading (only for a start point, not a fixed edge): U-turn penalties on the start candidates
+      const hd = from.e === undefined && Number.isFinite(opts.heading) ? ((opts.heading % 360) + 360) % 360 : null;
+      const NO_PEN = { fwd: 0, back: 0 }, uTurn = U_TURN.metres * wmin;
+      const startPen = (s) => (hd === null ? NO_PEN : this._startPenalties(from, s, hd, uTurn));
       // virtual arcs from the start point to both ends of every candidate edge (respecting one-ways)
       const heap = new Heap(1024);
       const virtPrev = new Map(); // node -> {s, fwd}
       for (const s of sc) {
         if (!usable(s)) continue;
-        const ds = this.edir[s.e], ap = s.dist * APPROACH;
+        const ds = this.edir[s.e], ap = s.dist * APPROACH, pn = startPen(s);
         const opts2 = [];
-        if (ds === 0 || ds === 1) opts2.push([this.eb[s.e], ap + cost(s.e, 1, 1 - s.t), 1]);
-        if (ds === 0 || ds === 2) opts2.push([this.ea[s.e], ap + cost(s.e, 0, s.t), 0]);
+        if (ds === 0 || ds === 1) opts2.push([this.eb[s.e], ap + cost(s.e, 1, 1 - s.t) + pn.fwd, 1]);
+        if (ds === 0 || ds === 2) opts2.push([this.ea[s.e], ap + cost(s.e, 0, s.t) + pn.back, 0]);
         for (const [node, c, fwd] of opts2) {
           if (c < gS[node]) { gS[node] = c; prev[node] = -2; virtPrev.set(node, { s, fwd }); heap.push(c + h(node), node); }
         }
@@ -334,9 +363,9 @@
       let direct = null;
       for (const s of sc) for (const t of tc) {
         if (s.e !== t.e || !usable(s)) continue;
-        const d = this.edir[s.e], ap = (s.dist + t.dist) * APPROACH;
-        if ((d === 0 || d === 1) && t.t >= s.t) { const c = ap + cost(s.e, 1, t.t - s.t); if (!direct || c < direct.cost) direct = { cost: c, fwd: 1, s, t }; }
-        if ((d === 0 || d === 2) && t.t <= s.t) { const c = ap + cost(s.e, 0, s.t - t.t); if (!direct || c < direct.cost) direct = { cost: c, fwd: 0, s, t }; }
+        const d = this.edir[s.e], ap = (s.dist + t.dist) * APPROACH, pn = startPen(s);
+        if ((d === 0 || d === 1) && t.t >= s.t) { const c = ap + cost(s.e, 1, t.t - s.t) + pn.fwd; if (!direct || c < direct.cost) direct = { cost: c, fwd: 1, s, t }; }
+        if ((d === 0 || d === 2) && t.t <= s.t) { const c = ap + cost(s.e, 0, s.t - t.t) + pn.back; if (!direct || c < direct.cost) direct = { cost: c, fwd: 0, s, t }; }
       }
       let bestDst = direct ? direct.cost : Infinity, bestLast = direct ? -3 : -1, visited = 0;
       while (heap.n) {
@@ -382,8 +411,9 @@
     }
 
     // Longest length (m) a planned route between these two points may have (see DETOUR); Infinity if there is no route.
-    detourLimit(from, to) {
-      const s = this.route(from, to, SHORTEST);
+    // `heading` is optional (see route): the shortest route is then the shortest one that does not start by turning back.
+    detourLimit(from, to, heading) {
+      const s = this.route(from, to, Number.isFinite(heading) ? Object.assign({ heading }, SHORTEST) : SHORTEST);
       return s ? Math.max(DETOUR.factor * s.length, s.length + DETOUR.floor) : Infinity;
     }
 
@@ -396,12 +426,13 @@
     routeCapped(from, to, opts, relaxFn, limit) {
       let rt = this.route(from, to, opts);
       if (!rt) return null;
-      if (limit === undefined) limit = this.detourLimit(from, to);
+      const hd = Number.isFinite(opts.heading) ? { heading: opts.heading } : null;   // opts.heading is kept through the steps
+      if (limit === undefined) limit = this.detourLimit(from, to, opts.heading);
       rt.limit = limit; rt.steps = 0;
       for (let i = 1; rt.length > limit; i++) {
         const o = relaxFn && relaxFn(i);
         if (!o) break;
-        const next = this.route(from, to, o);
+        const next = this.route(from, to, hd ? Object.assign({}, o, hd) : o);
         if (!next) continue;
         next.limit = limit; next.steps = i; rt = next;
       }
@@ -411,8 +442,10 @@
     // Plans one kind of route between two points (coordinates or snapped points), the way the app does: "yourRoute" and
     // "mostLanes" with the detour cap, "mostDirect" without. `limit` is optional (see routeCapped): pass detourLimit()
     // when planning several kinds between the same two points. A capped result has `limit` and `steps`.
+    // settings.heading (optional): the rider's direction of travel in degrees, see route().
     planRoute(from, to, kind, settings = {}, limit) {
       const opts = routeSettings(kind, settings);
+      if (Number.isFinite(settings.heading)) opts.heading = settings.heading;
       if (!CAPPED_KINDS.includes(kind)) return this.route(from, to, opts);
       return this.routeCapped(from, to, opts, relaxSteps(kind, settings), limit);
     }
@@ -601,5 +634,5 @@
     };
   }
 
-  return { Router, TIERS, PROFILES, SHORTEST, DETOUR, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM, bearing, buildCursor };
+  return { Router, TIERS, PROFILES, SHORTEST, DETOUR, U_TURN, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM, bearing, buildCursor };
 });

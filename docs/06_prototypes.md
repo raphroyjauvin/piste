@@ -25,7 +25,7 @@ The app is at https://www.pistemtl.ca/ once Raph sets up the DNS and the custom 
 - `?ride=bird|top`: start the simulated preview ride; add `&at=<metres>` to jump along it and `&paused` to hold still (used for screenshots and tests).
 - `?ride=gps`: start a GPS ride (it needs a trip or classic ride in the link, and location allowed, or `?gps=replay`).
 - `?gps=1` makes "Let's ride!" a GPS ride, even on a desktop; `?gps=0` makes it the preview, even on a phone. Without it, a phone or tablet gets GPS and a desktop gets the preview.
-- `?gps=replay&gpsx=<speed-up>&gpsat=<metres>&detour=<metres>`: a pretend GPS for tests and screenshots (see Ride below). `gpsx` speeds it up (default 1), `gpsat` starts that far along the route, `detour` makes it leave the route at that distance. Add `&gpsdeny` for a pretend "location refused".
+- `?gps=replay&gpsx=<speed-up>&gpsat=<metres>&detour=<metres>`: a pretend GPS for tests and screenshots (see Ride below). `gpsx` speeds it up (default 1), `gpsat` starts that far along the route, `detour` makes it leave the route at that distance. Add `&straight` to `detour` and the rider leaves the route at a right angle and keeps riding straight on, ignoring every new route (2026-11-01, for the reroute heading test). Add `&gpsdeny` for a pretend "location refused".
 - `?classic=<id>`: open "Suggest a ride" → "Classic rides" on one ride: `oldport`, `plateau`, `montroyal`, `jeantalon`, `olympic`, `jeandrapeau`, `visitation`, `verdun`, `lachine` or `pointeclaire`.
 - `?suggest=loop|oneway&km=10&stop=cafe`: open "Suggest a ride" → "Make your own". `km` is 1–100. Stops: `cafe`, `food`, `bakery`, `icecream`, `bar`, `toilets`, `park`, `culture`, `bikeshop`.
 - `?winter=1`: start in winter mode.

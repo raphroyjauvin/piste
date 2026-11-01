@@ -1217,11 +1217,12 @@
 
   // ------------------------------------------------------------------ GPS ride
   // The phone's location moves you along the route (common.js RideGPS); the cards, voice and roadside places work as in the preview.
-  // opts.replay: a pretend GPS ride ({ speedup, startAt, detourAt }) for tests; ?gps=replay&gpsx=&gpsat=&detour= does the same.
+  // opts.replay: a pretend GPS ride ({ speedup, startAt, detourAt, straight }) for tests; ?gps=replay&gpsx=&gpsat=&detour=[&straight] does the same
+  // (straight: at `detour` the rider leaves the route and keeps riding straight on, whatever the app does).
   function startGpsRide(opts = {}) {
     let geo = navigator.geolocation || null;
     const rp = opts.replay || (gpsParam === "replay" ? { speedup: +params.get("gpsx") || 1, startAt: +params.get("gpsat") || 0,
-      detourAt: params.has("detour") ? +params.get("detour") : null, deny: params.has("gpsdeny") } : null);
+      detourAt: params.has("detour") ? +params.get("detour") : null, straight: params.has("straight"), deny: params.has("gpsdeny") } : null);
     if (rp) geo = new C.ReplayGeo(Object.assign({ getRoute: () => state.ride && state.ride.route }, rp));
     if (!geo) { showNotice("gpsUnavailable"); return; }
     const sel = prepareRide("birdseye", true); if (!sel) return;
@@ -1257,25 +1258,31 @@
   $("#notice-preview").onclick = () => { hideNotice(); rideTap(false); };
 
   // off route for a while: a new route from where you are, with the same settings, then carry on along it
-  function newRouteFrom(from, ride, ro) {
+  // `heading`: the direction you are riding in degrees (null when unclear). The new route does not start by turning you round
+  // unless that is clearly shorter (router.js, opts.heading). A reroute is never planned twice in a row: RideGPS waits
+  // GPS.REROUTE_MS between two, and the new route starts where you are, so you are on it at once.
+  const withHeading = (opts, heading) => (Number.isFinite(heading) ? Object.assign({}, opts, { heading }) : opts);
+  function newRouteFrom(from, ride, ro, heading) {
     const cur = ride.route;
     if (ro.rejoin) {
-      const D = ride.d + 250;
+      const w = withHeading(ro.w, heading), D = ride.d + 250;
       if (D < cur.length - 100) {
-        const p = ride.cursor.at(D), a = router.route(from, [p.lon, p.lat], ro.w);
+        const p = ride.cursor.at(D), a = router.route(from, [p.lon, p.lat], w);
         if (a) return C.joinRoutes(a, C.tailRoute(cur, D));
       }
-      return router.route(from, cur.coords[cur.coords.length - 1], ro.w);
+      return router.route(from, cur.coords[cur.coords.length - 1], w);
     }
     const to = ro.dest || cur.coords[cur.coords.length - 1];
-    return ro.plan ? router.planRoute(from, to, ro.plan.kind, ro.plan.settings) : router.route(from, to, ro.w);
+    return ro.plan ? router.planRoute(from, to, ro.plan.kind, withHeading(ro.plan.settings, heading)) : router.route(from, to, withHeading(ro.w, heading));
   }
   function rerouteFrom(p) {
     const ride = state.ride, ro = state.rideOpts; if (!ride || !ro) return false;
     const t1 = performance.now();
     let nr = null;
-    try { nr = newRouteFrom([p.lon, p.lat], ride, ro); } catch (e) { console.warn("reroute failed", e); }
-    state.rerouteLog.push({ at: [p.lon, p.lat], d: ride.d, ok: !!nr, ms: +(performance.now() - t1).toFixed(1), start: nr && nr.coords[0], length: nr && Math.round(nr.length) });
+    try { nr = newRouteFrom([p.lon, p.lat], ride, ro, p.heading); } catch (e) { console.warn("reroute failed", e); }
+    const turn = nr && nr.maneuvers.find((m) => m.at > 3);   // what the card will show first: the next instruction, in metres
+    state.rerouteLog.push({ at: [p.lon, p.lat], d: ride.d, ok: !!nr, ms: +(performance.now() - t1).toFixed(1), wall: Math.round(t1), heading: Number.isFinite(p.heading) ? Math.round(p.heading) : null,
+      start: nr && nr.coords[0], length: nr && Math.round(nr.length), nextTurnM: turn ? Math.round(turn.at) : null, turnAt: turn ? [turn.lon, turn.lat] : null, coords: nr ? nr.coords.slice(0, 60) : null });
     if (!nr || nr.length < 1) {   // keep the old route, and say so (once a minute at most)
       if (performance.now() - state.rerouteFailAt > 60000) { toast(t("rerouteFailed")); chime(); C.voice.say(t("rerouteFailedVoice")); }
       state.rerouteFailAt = performance.now();

@@ -488,6 +488,55 @@ await run("GPS ride (replayed track): a detour triggers exactly one reroute", `$
   return out;
 }));
 
+await run("GPS ride: the heading comes from the last 20-40 m of fixes, and only when moving", `${APP}`, async (page) => page.evaluate(() => {
+  const C = BikeCommon, lat0 = 45.5, kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 110540;
+  // n fixes, step metres apart (east, north), one second apart; v = the phone's speed (m/s) or null
+  const track = (n, east, north, v) => Array.from({ length: n }, (_, i) => ({ lon: -73.6 + (i * east) / kx, lat: lat0 + (i * north) / ky, t: 1e6 + i * 1000, v }));
+  const angle = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+  const h = C.headingFromFixes, r = {
+    north: h(track(8, 0, 5, 5)), east: h(track(8, 5, 0, 5)), southwest: h(track(8, -3.5, -3.5, 5)),
+    tooShort: h(track(3, 0, 5, 5)), slow: h(track(30, 0, 1.5, 1.5)), standing: h(track(10, 0, 0, 0)), empty: h([]), single: h(track(1, 0, 5, 5)),
+    noPhoneSpeedFast: h(track(8, 5, 0, null)), noPhoneSpeedSlow: h(track(30, 1, 0, null)), sparse: h(track(2, 0, 60, 10)),
+  };
+  r.ok = angle(r.north, 0) < 1 && angle(r.east, 90) < 1 && angle(r.southwest, 225) < 1 && r.tooShort === null && r.slow === null && r.standing === null && r.empty === null && r.single === null
+    && angle(r.noPhoneSpeedFast, 90) < 1 && r.noPhoneSpeedSlow === null && angle(r.sparse, 0) < 1;
+  return r;
+}));
+
+// The rider leaves the route on purpose (a right-angle turn at 400 m) and keeps riding straight on, ignoring every new route (video of
+// 2026-11-01: each reroute went back the way he came, the next turn kept getting farther away, and it rerouted again). The app must
+// work out his heading from the GPS fixes and hand it to the router on every reroute, the new route must not start by turning back
+// (the router's own limit: under 100 degrees from his heading), and reroutes must not come back to back.
+// Where the straight line crosses the streets decides how far the next turn is, so that distance is only listed, not judged.
+// No fixed timing: it waits for the reroutes, and only the gap between two reroutes (at least half the 10 s cooldown) is judged.
+await run("GPS ride (replayed track): riding straight on after leaving the route, each reroute keeps going ahead", `${APP}?trip=montroyal&gps=replay&gpsx=3&gpsat=300&detour=400&straight`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, s = app.state, C = BikeCommon, B = BikeRouter;
+  const headings = [], route = B.Router.prototype.route;   // what the router is asked during the ride
+  B.Router.prototype.route = function (from, to, opts) { headings.push(opts && opts.heading); return route.call(this, from, to, opts); };
+  document.querySelector("#ride-go").click(); window.__flatRide();
+  const ride = s.ride, geo = ride.geo, t0 = performance.now();
+  while (s.reroutes < 3 && performance.now() - t0 < 120000) await sleep(200);
+  B.Router.prototype.route = route;
+  const riding = (geo.det.h + 90 * geo.det.side + 360) % 360;   // the rider's true heading: a right angle off the route
+  const angle = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+  const first30 = (coords) => {   // the bearing of the new route over its first 30 m
+    let acc = 0;
+    for (let i = 1; i < coords.length; i++) { acc += C.distM(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1]); if (acc >= 30) return B.bearing(coords[0][0], coords[0][1], coords[i][0], coords[i][1]); }
+    return null;
+  };
+  const log = s.rerouteLog.filter((l) => l.ok);
+  const rows = log.map((l, i) => ({ headingErr: l.heading == null ? null : Math.round(angle(l.heading, riding)), firstLegErr: l.coords && first30(l.coords) != null ? Math.round(angle(first30(l.coords), riding)) : null,
+    nextTurnM: l.nextTurnM, lengthM: l.length, gapS: i ? +((l.wall - log[i - 1].wall) / 1000).toFixed(1) : null }));
+  const asked = headings.filter(Number.isFinite).length;
+  const out = { reroutes: s.reroutes, attempts: ride.stats.reroutes, riding: Math.round(riding), routerCalls: headings.length, askedWithHeading: asked, rows };
+  app.endRide();
+  out.ok = out.reroutes >= 2 && rows.length === out.reroutes && asked >= out.reroutes
+    && rows.every((r) => r.headingErr !== null && r.headingErr < 30 && r.firstLegErr !== null && r.firstLegErr < 100)
+    && rows.every((r, i) => !i || r.gapS >= 5);
+  return out;
+}));
+
 await run("GPS ride (replayed track): on a classic ride, a reroute rejoins the ride ahead", `${APP}?classic=oldport&gps=replay&gpsx=4&gpsat=1500&detour=1600`, async (page) => page.evaluate(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const app = window.__app, s = app.state;
