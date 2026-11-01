@@ -276,6 +276,12 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .ride-progress { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ride-progress .progress { flex: 1; height: 8px; background: var(--paper-2); border-radius: 4px; overflow: hidden; min-width: 30px; }
 .ride-progress .progress i { display: block; height: 100%; width: 0; background: var(--blue); }
+/* wind during a ride: a still badge instead of the moving streaks. The arrow shows where the wind blows relative to the way you ride (up = the way you go) */
+.wind-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px 3px 6px; border-radius: 12px; background: var(--blue-soft); }
+.wind-badge svg { width: 22px; height: 22px; flex: none; fill: none; stroke: var(--blue-deep); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.wind-badge b { display: block; font: 800 14px/1.1 var(--font-display); color: var(--ink); white-space: nowrap; }
+.wind-badge small { display: block; font-size: 12px; line-height: 1.2; color: var(--ink-2); white-space: nowrap; }
+.wind-badge small:empty { display: none; }
 .ride-buttons { display: flex; gap: 8px; align-items: center; }
 #ride-remaining { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ride-bar .ctl-btn { box-shadow: none; background: var(--paper-2); }
@@ -412,6 +418,16 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
 .dialog-alt:hover { background: #ecebe6; }
 .dialog-alt-line { margin: 0; text-align: center; font-size: 13.5px; color: var(--ink-2); }
 .dialog-alt-line a { display: inline-block; padding: 13px 2px; color: var(--blue-deep); font-weight: 700; }   /* a 44 px tap area */
+/* end-of-ride summary: the dialog look, but over the map and without dimming it (the ridden path has to stay in view). Top left on a computer, low on a phone */
+.ride-summary { position: absolute; z-index: 30; top: 16px; left: 16px; width: min(380px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; overscroll-behavior: contain;
+  background: var(--paper); border-radius: 22px; box-shadow: 0 2px 6px rgba(10, 22, 32, .12), 0 22px 56px rgba(10, 22, 32, .3); padding: 18px 18px 10px; display: flex; flex-direction: column; gap: 12px; }
+.ride-summary:focus { outline: none; }
+.rs-stats { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.rs-stats > div { background: var(--paper-2); border-radius: 12px; padding: 8px 12px; min-width: 0; }
+.rs-stats dt { font-size: 12.5px; font-weight: 700; line-height: 1.25; color: var(--ink-2); }
+.rs-stats dd { margin: 2px 0 0; font: 800 20px/1.15 var(--font-display); color: var(--ink); overflow-wrap: anywhere; }
+.rs-privacy { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink-2); }
+.ride-summary .dialog-buttons { padding-bottom: 8px; }
 .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 .about-card section { display: flex; flex-direction: column; gap: 4px; }
 .about-card .dialog-buttons { position: sticky; bottom: -10px; margin: 0 -20px -10px; padding: 10px 20px; background: var(--paper); border-top: 1px solid var(--line); }   /* Close stays in view while the text scrolls */
@@ -461,6 +477,9 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .recenter { bottom: calc(132px + var(--safe-bottom)); }
   .ride-hud.hill-on .recenter { bottom: calc(206px + var(--safe-bottom)); }
   .notice { top: calc(12px + var(--safe-top)); left: 12px; right: 12px; width: auto; }
+  .ride-summary { top: auto; left: 12px; right: 12px; bottom: calc(12px + var(--safe-bottom)); width: auto; max-height: calc(100% - 24px - var(--safe-bottom)); padding: 14px 14px 6px; gap: 10px; }
+  .rs-stats dd { font-size: 19px; }
+  .rs-stats > div { padding: 6px 10px; }
   .dialog-layer { place-items: end center; padding: 12px 12px calc(12px + var(--safe-bottom)); }
   .dialog-card { padding: 18px 18px 8px; gap: 10px; }
   .about-card .dialog-buttons { bottom: -8px; margin: 0 -18px -8px; padding: 10px 18px; }

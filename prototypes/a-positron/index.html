@@ -160,7 +160,7 @@
     <div class="hill-text"><b id="hill-title"></b><span id="hill-sub"></span></div>
   </div>
   <div class="ride-bar">
-    <div class="ride-progress"><div class="progress"><i id="progress"></i></div><span id="ride-remaining">—</span></div>
+    <div class="ride-progress"><div class="progress"><i id="progress"></i></div><span id="wind-badge" class="wind-badge" hidden><svg id="wind-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V5M6 11l6-6 6 6"/></svg><span><b id="wind-speed"></b><small id="wind-kind"></small></span></span><span id="ride-remaining">—</span></div>
     <div class="ride-buttons">
       <button type="button" id="ride-sound" class="ctl-btn icon-btn" title="Sound"></button>
       <button type="button" id="ride-view" class="view-btn small" aria-label="Switch view"><svg viewBox="0 0 32 32" aria-hidden="true"><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g></svg></button>
@@ -172,6 +172,21 @@
   </div>
   <button type="button" id="ride-recenter" class="recenter" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 20l-7-3.6L5 20z"/></svg><span data-i18n="recenter"></span></button>
 </div>
+
+<!-- end of a GPS ride (app.js showSummary): what you rode, in the dialog style but over the map, so the ridden path stays in view -->
+<section id="ride-summary" class="ride-summary" role="dialog" aria-labelledby="rs-title" tabindex="-1" hidden>
+  <h2 id="rs-title" class="dialog-title" data-i18n="rsTitle"></h2>
+  <dl class="rs-stats">
+    <div><dt data-i18n="rsDistance"></dt><dd id="rs-distance"></dd></div>
+    <div><dt data-i18n="rsTime"></dt><dd id="rs-time"></dd></div>
+    <div><dt data-i18n="rsSpeed"></dt><dd id="rs-speed"></dd></div>
+    <div id="rs-paths-row"><dt data-i18n="rsPaths"></dt><dd id="rs-paths"></dd></div>
+    <div id="rs-climb-row"><dt data-i18n="rsClimb"></dt><dd id="rs-climb"></dd></div>
+    <div id="rs-descent-row"><dt data-i18n="rsDescent"></dt><dd id="rs-descent"></dd></div>
+  </dl>
+  <p class="rs-privacy" data-i18n="rsPrivacy"></p>
+  <div class="dialog-buttons"><button type="button" id="rs-share" class="dialog-alt" data-i18n="rsShare" hidden></button><button type="button" id="rs-done" class="primary dialog-go" data-i18n="rsDone"></button></div>
+</section>
 
 <div id="notice" class="notice" role="alertdialog" aria-labelledby="notice-text" hidden>
   <p id="notice-text"></p>

@@ -25,7 +25,7 @@
   // ------------------------------------------------------------------ palette (STM metro colours, softened gap orange)
   const COL = {
     a: "#0095E6", b: "#6cc3f2", c: "#0095E6", gap: "#ef8f45", gapQuiet: "#f2a865", closed: "#d7263d",
-    rev: "#00a62a", netA: "#2fb350", netB: "#5cc471", netC: "#8fd49d", planned: "#d9b400", alt: "#9aa5ae", notCleared: "#aebbc6",
+    rev: "#00a62a", ridden: "#4b3f8f", netA: "#2fb350", netB: "#5cc471", netC: "#8fd49d", planned: "#d9b400", alt: "#9aa5ae", notCleared: "#aebbc6",
   };
   const TIER_BAR = ["#0095E6", "#6cc3f2", "#a6d9f6", "#f6bf8f", "#ef8f45", "#d7263d"];
   const CLIMB = { fill: "#dcc3a3", ink: "#5b3d22", spark: "#c99b6d" };
@@ -94,14 +94,17 @@
     pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
     tab: "go", smode: "classics", classic: 0, sugg: { loop: true, km: 10, stop: "" }, avoidWind: false,
     winter: false, wx: false, wxData: null, bixi: null, sound: store.get("sound", "chime"), rideEnd: "",
-    follow: true, holding: false, reroutes: 0, rerouteLog: [], rideOpts: null, gpsState: null, wake: "off" };
+    follow: true, holding: false, reroutes: 0, rerouteLog: [], rideOpts: null, gpsState: null, wake: "off", summary: null };
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
   let style;
   try {
     style = await (await fetch("https://tiles.openfreemap.org/styles/positron")).json();
     style.layers = style.layers.filter((l) => l.id !== "building");
+    // a bike app has no use for provincial route numbers (the "125", "138" shields repeated along every highway): hide them; street names stay
+    const isRoadRef = (l) => l.type === "symbol" && (/shield/.test(l.id) || JSON.stringify((l.layout || {})["text-field"] || "").includes('"ref"'));
     for (const l of style.layers) {
+      if (isRoadRef(l)) l.layout = { ...l.layout, visibility: "none" };
       if (l.id === "water") l.paint["fill-color"] = "#c9dde9";
       if (l.id === "park") { l.paint["fill-color"] = "#d3e8cc"; l.paint["fill-opacity"] = 0.9; }
     }
@@ -170,7 +173,7 @@
   map.addSource("terrain", { type: "raster-dem", tiles: ["piste-dem://{z}/{x}/{y}"], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
   map.addSource("radar", { type: "raster", tiles: [WX.radarTiles(false)], tileSize: 256, maxzoom: 10,
     attribution: "Radar © Environment and Climate Change Canada" });
-  for (const id of ["route", "route-alts", "gaps", "ends", "works-near", "stops", "bixi-live"]) map.addSource(id, { type: "geojson", data: empty });
+  for (const id of ["route", "route-alts", "gaps", "ends", "works-near", "stops", "bixi-live", "ridden"]) map.addSource(id, { type: "geojson", data: empty });
 
   // ------------------------------------------------------------------ layers (bottom to top)
   // elevation: a soft colour tint over land and parks (not water), then LiDAR hill shading and contours under the streets
@@ -226,6 +229,11 @@
     paint: { "line-color": COL.c, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 9], "line-dasharray": [1.1, 0.8] } });
   add({ id: "route-quiet", type: "line", source: "route", filter: ["==", ["get", "tier"], 3],
     paint: { "line-color": COL.gapQuiet, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 9], "line-dasharray": [1, 0.6] } });
+  // the path actually ridden (end-of-ride summary): a calm indigo line over the planned route
+  add({ id: "ridden-casing", type: "line", source: "ridden", layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 5, 17, 11] } });
+  add({ id: "ridden-line", type: "line", source: "ridden", layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": COL.ridden, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 17, 6] } });
   // a ring under the stop's or sight's POI icon
   add({ id: "stops", type: "circle", source: "stops",
     paint: { "circle-radius": 7.5, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 2.5, "circle-pitch-alignment": "map" } });
@@ -316,6 +324,7 @@
       wind.set(state.wxData);
     } catch (e) { state.wxData = null; console.warn(e); }
     renderWxCard(); if (state.routes.length) renderRoutes();
+    if (state.mode === "ride") updateWindBadge(true);   // new weather mid-ride
     return state.wxData;
   }
   function setWeather(on) {
@@ -346,7 +355,7 @@
   }
   function renderWxCard() {
     const card = $("#wx-card");
-    if ((!state.wx && !state.winter) || state.mode === "ride") { card.hidden = true; return; }
+    if ((!state.wx && !state.winter) || state.mode === "ride" || state.summary) { card.hidden = true; return; }
     const wx = state.wxData, rows = [];
     if (!wx) rows.push(`<div class="wx-row">${t(state.wx ? "wxLoading" : "winterOn")}</div>`);
     if (state.wx && wx) {
@@ -784,7 +793,7 @@
     const stops = (r && r.stops) || [];
     return { type: "FeatureCollection", features: stops.map((s, i) => ({ type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { label: s.label, sight: s.sight ? 1 : 0 } })) };
   }
-  function fitRoute(r) {
+  function fitRoute(r, camera = {}) {
     const xs = r.coords.map((c) => c[0]), ys = r.coords.map((c) => c[1]);
     let padding;
     if (isPhone()) {
@@ -792,7 +801,7 @@
       const top = 60 + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0);
       padding = { top, bottom: sheetHeight(sheet.state) + 24, left: 24, right: 70 };
     } else padding = { top: 80, bottom: 80, left: 420, right: 90 };
-    map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], { padding, maxZoom: 16, duration: 700 });
+    map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], { padding, maxZoom: 16, duration: 700, ...camera });
   }
   function drawRoutes() {
     const sel = state.routes[state.sel];
@@ -970,6 +979,8 @@
     // while riding, roadside pop-ups replace the map's POI icons (only metro stations stay)
     const liveBixi = !!state.bixi;
     POI_LAYERS.forEach((p) => vis(p.id, riding ? p.kind === "metro" && toggles.metro : poiOn(p) && !(p.kind === "bixi" && liveBixi)));
+    // 2026-11-01: no place names on the map while riding (they showed up behind the turn card); the icons stay, a tap on one still names it
+    POI_LAYERS.forEach((p) => { if (map.getLayer(p.id)) map.setPaintProperty(p.id, "text-opacity", riding ? 0 : 1); });
     vis("bixi-live", liveBixi && toggles["pois-bike"] && !riding); vis("bixi-count", liveBixi && toggles["pois-bike"] && !riding);
     document.body.classList.toggle("riding", riding);
     vis("tint", toggles.tint); vis("relief", toggles.relief);
@@ -1028,7 +1039,7 @@
     classicCache.clear(); classicsRouted = false;   // sight names are part of the route
     if (state.tab === "suggest" && state.smode === "classics") showClassic(state.classic, false); else renderClassicCards();
     if (state.from) fromEl.value = state.fromLabel; if (state.to) toEl.value = state.toLabel;
-    setMapTexts(); renderRoutes(); renderWxCard(); renderSound(); buildElevationLegend();
+    setMapTexts(); renderRoutes(); renderWxCard(); renderSound(); buildElevationLegend(); renderSummary(); if (state.mode === "ride") updateWindBadge(true);
     if (!state.ride) $("#ride-pause").textContent = t("pause");
     if (state.gpsState) gpsStatus(state.gpsState);
     document.dispatchEvent(new Event("piste:lang"));   // tour.js redraws its text
@@ -1089,25 +1100,42 @@
   }
 
   // ------------------------------------------------------------------ ride (simulation)
-  let audio = null;
+  // Audio and the rider's music (2026-11-01): the chime and the voice are short sounds, so each runs inside an audio session marked
+  // "transient" (C.audioSession) and the Web Audio context is suspended as soon as the chime is over. Nothing loops or stays open
+  // for the whole ride; the screen wake lock (keepAwake) is separate and has no sound. If chimes ever stop on the iPhone after the
+  // first one, set SUSPEND_IDLE_AUDIO to false (the context then stays open between sounds).
+  const SUSPEND_IDLE_AUDIO = true;
+  let audio = null, audioSid = 0, audioIdleT = 0;
+  function releaseAudio() {   // the sound is over: give the audio session back, and stop the context so it holds nothing
+    clearTimeout(audioIdleT); C.audioSession.end(audioSid);
+    if (SUSPEND_IDLE_AUDIO && audio && audio.state === "running") audio.suspend().catch((e) => console.warn("audio suspend", e));
+  }
   // iPhone Safari keeps sound and speech silent unless they start from a tap: unlock both inside "Let's ride!" (and the sound button)
   function unlockAudio() {
     try {
       audio = audio || new AudioContext();
-      if (audio.state === "suspended") audio.resume();
+      audioSid = C.audioSession.begin(1500);
+      if (audio.state === "suspended") audio.resume().catch((e) => console.warn("audio resume", e));
       const s = audio.createBufferSource(); s.buffer = audio.createBuffer(1, 1, 22050); s.connect(audio.destination); s.start(0);
-    } catch (e) { /* no audio */ }
+      clearTimeout(audioIdleT); audioIdleT = setTimeout(releaseAudio, 250);
+    } catch (e) { console.warn("audio unlock", e); }
   }
   function chime() {
     if (state.sound === "off") return;
     try {
       audio = audio || new AudioContext();
-      [660, 880].forEach((f, i) => {
-        const o = audio.createOscillator(), g = audio.createGain(); o.type = "sine"; o.frequency.value = f;
-        const t2 = audio.currentTime + i * 0.16; g.gain.setValueAtTime(0, t2); g.gain.linearRampToValueAtTime(0.09, t2 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t2 + 0.3);
-        o.connect(g).connect(audio.destination); o.start(t2); o.stop(t2 + 0.32);
-      });
-    } catch (e) { /* no audio */ }
+      const sid = audioSid = C.audioSession.begin(2500);
+      const play = () => {
+        [660, 880].forEach((f, i) => {
+          const o = audio.createOscillator(), g = audio.createGain(); o.type = "sine"; o.frequency.value = f;
+          const t2 = audio.currentTime + i * 0.16; g.gain.setValueAtTime(0, t2); g.gain.linearRampToValueAtTime(0.09, t2 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t2 + 0.3);
+          o.connect(g).connect(audio.destination); o.start(t2); o.stop(t2 + 0.32);
+        });
+        clearTimeout(audioIdleT); audioIdleT = setTimeout(releaseAudio, 800);   // the two tones last half a second
+      };
+      if (audio.state === "running") play();
+      else audio.resume().then(play, (e) => { console.warn("chime: audio could not start", e); C.audioSession.end(sid); });
+    } catch (e) { console.warn("chime", e); }
   }
   const SOUND_ICON = {
     chime: '<svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0"/></svg>',
@@ -1162,7 +1190,7 @@
   function prepareRide(view, gps) {
     const sel = state.routes[state.sel]; if (!sel) return null;
     const r = sel.r;
-    hideNotice();
+    hideNotice(); hideSummary(); windBadge.at = -1e9; $("#wind-badge").hidden = true;
     state.rideEnd = placeText(sel.end) || state.toLabel || t("destination");
     state.rideView = view;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
@@ -1359,6 +1387,7 @@
     const L = f.look;
     if (L.next) { $("#turn-dist").textContent = C.fmtKm(L.nextDist); $("#turn-text").textContent = I.maneuver(L.next); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`; }
     else { $("#turn-dist").textContent = C.fmtKm(f.total - f.d); $("#turn-text").textContent = t("arrive", { name: state.rideEnd }); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`; }
+    rideHeading = f.pos.heading; updateWindBadge();
     // gap card: calm, specific (only stretches of 50 m or more)
     const card = $("#gap-card");
     const on = (g) => (g.names[0] ? (I.lang === "fr" ? " sur " : " on ") + C.esc(I.place(g.names[0])) : "");
@@ -1404,6 +1433,29 @@
     // on its own frame, sometimes one frame later, and the icons would shake against the map.
     // This replaces that scheduled draw, so it still costs one draw per frame.
     map.redraw();
+  }
+
+  // Wind during a ride (2026-11-01). The rain radar layer stays on if "wind & rain" was on, but the moving streaks (the #wind canvas, redrawn
+  // every frame) are off for the whole ride: they cost battery and make the 3D camera choppy. A still badge in the ride bar says what the
+  // wind does instead: an arrow for where it blows relative to the way you ride (up = the way you go), its speed, and head / tail / cross.
+  // It is redrawn every 10 s, within 2 s of a corner, and when new weather arrives (never every frame).
+  const windBadge = { at: -1e9, h: 0 };
+  let rideHeading = 0;
+  function windRelative(heading, from) {   // from: the direction the wind comes from (deg)
+    const ang = Math.abs(((from - heading + 540) % 360) - 180);   // 0 = wind from dead ahead, 180 = from behind (the same cut-offs as WX.windOnRoute)
+    return { rot: (from + 180 - heading + 720) % 360, kind: ang < 60 ? "head" : ang > 120 ? "tail" : "cross" };
+  }
+  function updateWindBadge(force = false) {
+    const el = $("#wind-badge"), wx = state.wxData;
+    if (!state.wx || !wx) { el.hidden = true; windBadge.at = -1e9; return; }
+    const now = performance.now(), turned = Math.abs(((rideHeading - windBadge.h + 540) % 360) - 180) > 35;
+    if (!force && now - windBadge.at < (turned ? 2000 : 10000)) return;
+    windBadge.at = now; windBadge.h = rideHeading;
+    const calm = wx.now.wind < 3, w = windRelative(rideHeading, wx.now.dir);
+    $("#wind-arrow").style.transform = `rotate(${Math.round(w.rot)}deg)`; $("#wind-arrow").style.display = calm ? "none" : "";
+    $("#wind-speed").textContent = calm ? t("calm") : t("kmh", { v: Math.round(wx.now.wind) });
+    $("#wind-kind").textContent = calm ? "" : t("windKind_" + w.kind);
+    el.hidden = false;
   }
 
   // hill card: the next ~800 m of elevation, with the climb shaded and you as the blue dot
@@ -1455,7 +1507,11 @@
     if (ev.type === "gap") { chime(); C.voice.say(C.gapSentence(ev.gap, ev.dist)); }
     if (ev.type === "turn") C.voice.say(I.maneuver(ev.m));
     if (ev.type === "hill") C.voice.say(t("climbVoice", { m: Math.round(ev.hill.rise) }));
-    if (ev.type === "arrived") { C.voice.say(t("arrivedVoice")); toast(t("arrived")); setTimeout(endRide, 2500); }
+    if (ev.type === "arrived") {
+      C.voice.say(t("arrivedVoice")); toast(t("arrived"));
+      const ride = state.ride;   // 2.5 s later the ride ends (with its summary), unless the rider already ended it or started another
+      setTimeout(() => { if (state.ride === ride) endRide({ summary: true }); }, 2500);
+    }
   }
   function pauseRide(p) { if (!state.ride) return; if (p) { state.ride.pause(); $("#ride-pause").textContent = t("resume"); } else { state.ride.start(); $("#ride-pause").textContent = t("pause"); } }
   $("#ride-pause").onclick = () => pauseRide(state.ride && state.ride.running);
@@ -1466,21 +1522,73 @@
     if (state.ride && state.ride.gps) state.ride.kick();   // draw the new view even while standing still
     else if (state.ride && !state.ride.running) { state.snap = true; state.ride.seek(state.ride.d); }
   };
-  $("#ride-exit").onclick = endRide;
-  function endRide() {
+  $("#ride-exit").onclick = () => endRide({ summary: true });
+  // opts.summary: a GPS ride that ends by arriving or by "End" shows what was ridden (the preview and errors don't)
+  function endRide({ summary = false } = {}) {
     const wasGps = !!(state.ride && state.ride.gps), rerouted = state.reroutes > 0;
+    const sum = summary && wasGps ? C.rideSummary(state.ride.trail) : null;
+    const showSum = !!sum && sum.distanceM >= C.SUMMARY.MIN_SHOW_M;   // a few metres is not a ride
     if (state.ride) state.ride.pause(); state.ride = null;
     if (wasGps) keepAwake(false);
     if (map.terrain) map.terrain.exaggeration = CAM.terrain;
     state.hillK = 0; state.follow = true; glide = null; showRider(true);
     riderMarker.remove(); badgeMarker.remove(); for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
-    $("#ride-hud").hidden = true; $("#hill-card").hidden = true; $("#ride-recenter").hidden = true; $("#panel").hidden = false; $("#legend").hidden = false; document.querySelector(".map-controls").hidden = false;
+    $("#ride-hud").hidden = true; $("#wind-badge").hidden = true; $("#hill-card").hidden = true; $("#ride-recenter").hidden = true;
+    $("#panel").hidden = $("#legend").hidden = document.querySelector(".map-controls").hidden = showSum;   // the summary card takes their place until "Done"
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+    hideSummary();
     setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapId = null;
     if (rerouted) drawRoutes();   // the planned routes again, not the reroute
+    if (showSum) state.summary = sum;
     refreshSections(); wind.show(state.wx); renderWxCard();
-    if (state.routes.length) fitRoute(state.routes[state.sel].r);
+    if (showSum) showSummary();
+    else if (state.routes.length) fitRoute(state.routes[state.sel].r);
   }
+
+  // ------------------------------------------------------------------ end-of-ride summary (GPS rides)
+  // The path you rode (the fixes C.RideGPS kept, tidied by C.rideSummary) is drawn over the planned route, with a small card.
+  // It lives in memory only: it is never sent anywhere or stored, and "Done" drops it.
+  const SITE_URL = "https://www.pistemtl.ca/";
+  const calmMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function renderSummary() {
+    const s = state.summary; if (!s) return;
+    $("#rs-distance").textContent = C.fmtKm(s.distanceM);
+    $("#rs-time").textContent = I.duration(s.elapsedS / 60);
+    $("#rs-speed").textContent = t("kmh", { v: I.num(s.avgKmh, 1) });
+    $("#rs-paths-row").hidden = s.pathShare == null; if (s.pathShare != null) $("#rs-paths").textContent = I.pct(s.pathShare);
+    $("#rs-climb-row").hidden = $("#rs-descent-row").hidden = !s.hasElev;
+    const metres = (v, sign) => (Math.round(v) === 0 ? "0 m" : `${sign}${Math.round(v)} m`);   // never "+0 m" or "−0 m"
+    $("#rs-climb").textContent = metres(s.gainM, "+"); $("#rs-descent").textContent = metres(s.lossM, "−");
+    $("#rs-share").hidden = !navigator.share;
+  }
+  function showSummary() {
+    const s = state.summary, card = $("#ride-summary");
+    set3d(false, false);   // flat, so the whole path can be seen
+    map.getSource("ridden").setData({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: s.line } });
+    renderSummary(); card.hidden = false; card.focus({ preventScroll: true });
+    const xs = s.line.map((c) => c[0]), ys = s.line.map((c) => c[1]);
+    const safe = (k) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(k)) || 0;
+    const padding = isPhone() ? { top: 40 + safe("--safe-top"), bottom: card.offsetHeight + 36 + safe("--safe-bottom"), left: 24, right: 24 }
+      : { top: 80, bottom: 80, left: 440, right: 80 };
+    map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], { padding, maxZoom: 17, pitch: 0, bearing: 0, duration: calmMotion() ? 0 : 700 });
+  }
+  function hideSummary() {
+    state.summary = null; $("#ride-summary").hidden = true;
+    const src = map.getSource("ridden"); if (src) src.setData(empty);
+  }
+  function closeSummary() {   // "Done": the path is gone, and the normal view is back
+    hideSummary();
+    $("#panel").hidden = $("#legend").hidden = document.querySelector(".map-controls").hidden = false;
+    renderWxCard();
+    if (state.routes.length) fitRoute(state.routes[state.sel].r, { pitch: 0, bearing: 0, duration: calmMotion() ? 0 : 700 });
+  }
+  $("#rs-done").onclick = closeSummary;
+  $("#ride-summary").addEventListener("keydown", (e) => { if (e.key === "Escape") closeSummary(); });
+  $("#rs-share").onclick = async () => {
+    const s = state.summary; if (!s || !navigator.share) return;
+    try { await navigator.share({ text: t("rsShareText", { d: C.fmtKm(s.distanceM), t: I.duration(s.elapsedS / 60) }), url: SITE_URL }); }
+    catch (e) { if (e.name !== "AbortError") console.warn("share failed", e); }   // AbortError: the rider closed the share sheet
+  };
 
   // ------------------------------------------------------------------ helpers
   function pillImage(fill, stroke) {

@@ -545,6 +545,7 @@
       this.offSince = null; this.offCount = 0; this.blend = 0; this.raw = null; this.rawHeading = 0;
       this.lastReroute = -Infinity; this.jump = false; this.resync = false; this.busyUntil = 0; this.arrived = false;
       this.status = null; this.stats = { fixes: 0, ignored: 0, reroutes: 0 };
+      this.trail = [];   // every good fix, for the end-of-ride summary; stays in memory only (see rideSummary)
       this._watch = null; this._raf = 0; this._last = 0;
     }
     setRoute(route, pois = []) {
@@ -621,6 +622,7 @@
       const strictM = Math.max(GPS.OFF_M, acc + 10);
       const onRoute = offAll <= (this.joined ? strictM : Math.max(GPS.START_M, acc + 25));
       if (offAll <= strictM) this.joined = true;
+      this._record(p, c, lon, lat, s.along, onRoute);
       if (onRoute) {
         this.offSince = null; this.offCount = 0;
         const pred = this.est == null ? s.along : this.est + this.v * Math.min(3, gap);
@@ -662,6 +664,16 @@
       this._status(this.offCount >= 2 ? "off" : "ok", { acc, kmh: this.fix.kmh });
       this.kick();
     }
+    // one point of the ridden path: where, when, the height there (from the route's elevation profile, which comes from the LiDAR terrain),
+    // how far along the route, and whether that stretch has no bike path (null when off the route, where we can't tell)
+    _record(p, c, lon, lat, along, onRoute) {
+      if (this.trail.length >= SUMMARY.MAX_FIXES) return;   // about 8 hours at one fix a second
+      const last = this.trail[this.trail.length - 1], pr = this.route.profile;
+      const z = onRoute && pr && pr.length ? elevAt(this.route, along) : (last ? last.z : null);
+      const gap = onRoute ? this.extras.gaps.some((g) => along >= g.start && along < g.start + g.length) : null;
+      // a pretend GPS (ReplayGeo) runs faster than the clock and says what time it is meant to be
+      this.trail.push({ lon, lat, t: p.simTimestamp ?? p.timestamp ?? Date.now(), acc: c.accuracy, v: fin(c.speed), z, d: along, gap });
+    }
     _tick(now) {
       if (!this.running) return;
       this._raf = requestAnimationFrame((tt) => this._tick(tt));   // first, as in RideSim: camera, icons and map in the same frame
@@ -688,6 +700,52 @@
     }
   }
 
+  // ---------------------------------------------------------------- what you rode: the end-of-ride summary
+  // The fixes are noisy (a few metres each), and added up as they are they make the ride look 10-25 % longer. So: a light average
+  // over three fixes, then only points at least a few metres apart count (not the jitter while standing at a light).
+  // Height: gains and losses under 1 m are ignored, the way climbs() ignores small bumps.
+  const SUMMARY = { MIN_STEP_M: 10, MAX_STEP_M: 25, STILL_MS: 0.5, MOVING_MS: 1, ELEV_MIN_M: 1, MAX_FIXES: 30000, MIN_SHOW_M: 50 };
+  function cleanTrail(raw) {
+    const n = raw.length; if (n < 2) return raw.map((p) => ({ ...p }));
+    const sm = raw.map((p, i) => {
+      if (i === 0 || i === n - 1) return { ...p };
+      const a = raw[i - 1], b = raw[i + 1];
+      return { ...p, lon: (a.lon + 2 * p.lon + b.lon) / 4, lat: (a.lat + 2 * p.lat + b.lat) / 4 };
+    });
+    const out = [sm[0]];
+    for (let i = 1; i < n; i++) {
+      const p = sm[i], last = out[out.length - 1];
+      if (p.v != null && p.v < SUMMARY.STILL_MS) continue;   // the phone says it isn't moving
+      const step = Math.min(SUMMARY.MAX_STEP_M, Math.max(SUMMARY.MIN_STEP_M, p.acc || 0));
+      if (distM(last.lon, last.lat, p.lon, p.lat) >= step) out.push(p);
+    }
+    const end = sm[n - 1], l = out[out.length - 1];
+    if (l !== end && distM(l.lon, l.lat, end.lon, end.lat) >= 3) out.push(end);   // the line reaches where the ride ended
+    return out;
+  }
+  // raw: the RideGPS trail. Returns null when there is nothing to show.
+  function rideSummary(raw) {
+    const pts = cleanTrail(raw); if (pts.length < 2) return null;
+    let dist = 0, movingDist = 0, movingS = 0, onM = 0, noPathM = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], seg = distM(a.lon, a.lat, b.lon, b.lat), dt = (b.t - a.t) / 1000;
+      dist += seg;
+      if (dt > 0 && seg / dt >= SUMMARY.MOVING_MS) { movingDist += seg; movingS += dt; }
+      if (a.gap !== null && b.gap !== null) { onM += seg; if (b.gap) noPathM += seg; }
+    }
+    let gain = 0, loss = 0, ref = null, hasElev = false;
+    for (const p of pts) {
+      if (p.z == null) continue;
+      hasElev = true;
+      if (ref === null) ref = p.z;
+      else if (p.z - ref >= SUMMARY.ELEV_MIN_M) { gain += p.z - ref; ref = p.z; }
+      else if (ref - p.z >= SUMMARY.ELEV_MIN_M) { loss += ref - p.z; ref = p.z; }
+    }
+    return { distanceM: dist, elapsedS: Math.max(0, (raw[raw.length - 1].t - raw[0].t) / 1000), movingS,
+      avgKmh: movingS > 0 ? (movingDist / movingS) * 3.6 : 0, gainM: gain, lossM: loss, hasElev,
+      pathShare: onM >= 100 ? 1 - noPathM / onM : null, line: pts.map((p) => [p.lon, p.lat]) };
+  }
+
   // ---------------------------------------------------------------- a pretend GPS for tests and screenshots (?gps=replay)
   // Works like navigator.geolocation (watchPosition / clearWatch), so the ride runs through exactly the same code as real GPS.
   // A synthetic ride along the ride's current route: one fix a second (faster with `speedup`), a few metres of noise,
@@ -703,6 +761,7 @@
       let seed = opts.seed || 7;   // repeatable noise
       this.rand = () => { seed = (seed + 0x6D2B79F5) | 0; let x = Math.imul(seed ^ (seed >>> 15), 1 | seed); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
       this.timers = new Map(); this.seq = 0; this.n = 0; this.route = null; this.phase = "route"; this.log = [];
+      this.t0 = Date.now(); this.simMs = 0;   // the clock a real ride would show (this one runs `speedup` times faster); sent as simTimestamp
     }
     watchPosition(ok, err) {
       const id = ++this.seq;
@@ -724,7 +783,7 @@
     _step(ok) {
       const r = this.getRoute(); if (!r) return;
       const now = performance.now(), dt = this._t ? Math.min(3, (now - this._t) / 1000) : 0; this._t = now;
-      const ds = this.v * this.k * dt;
+      const ds = this.v * this.k * dt; this.simMs += dt * this.k * 1000;
       if (r !== this.route) {
         if (this.route && this.pos) { this.d = makeTrack(r).locate(this.pos[0], this.pos[1]).along; this.phase = "route"; this.detourAt = null; }   // rerouted
         else this.d = this.startAt;
@@ -761,9 +820,32 @@
         heading: speed > 0.5 ? (heading + this._gauss() * 8 + 360) % 360 : NaN, altitude: null, altitudeAccuracy: null };
       this.log.push({ t: now, lon, lat, d: this.d, phase: this.phase, bad, fix: [fix.longitude, fix.latitude] });
       if (this.log.length > 2000) this.log.shift();
-      ok({ coords: fix, timestamp: Date.now() });
+      ok({ coords: fix, timestamp: Date.now(), simTimestamp: this.t0 + this.simMs });
     }
   }
+
+  // ---------------------------------------------------------------- audio session (Safari 16.4+, iPhone: navigator.audioSession)
+  // A spoken prompt or a chime is a short sound. Marked "transient", iOS lowers or pauses the rider's music for it and lets it
+  // carry on afterwards; left on "auto", the music can stay paused. Every sound the app makes goes through begin() / end():
+  // end() runs when the sound is over, and a timer ends it anyway (speech sometimes never reports its end).
+  // The app keeps no looping or silent audio running. Browsers without the API just skip all of this.
+  const audioSession = {
+    _id: 0, _timer: 0,
+    supported: () => !!navigator.audioSession,
+    begin(maxMs = 15000) {
+      const s = navigator.audioSession; if (!s) return 0;
+      const id = ++this._id; clearTimeout(this._timer);
+      try { s.type = "transient"; } catch (e) { console.warn("audioSession transient", e); return 0; }
+      this._timer = setTimeout(() => this.end(id), maxMs);
+      return id;
+    },
+    end(id) {
+      if (!id || id !== this._id) return;   // already ended, or a newer sound has taken over
+      clearTimeout(this._timer);
+      const s = navigator.audioSession; if (!s) return;
+      try { s.type = "auto"; } catch (e) { console.warn("audioSession auto", e); }
+    },
+  };
 
   // ---------------------------------------------------------------- voice (prompts via speaker; commands where supported)
   const voice = {
@@ -775,12 +857,20 @@
       const v = vs.find((x) => new RegExp(`^${L}-CA`, "i").test(x.lang)) || vs.find((x) => new RegExp(`^${L}`, "i").test(x.lang));
       u.lang = L === "fr" ? "fr-CA" : "en-CA";
       if (v) u.voice = v;
-      u.rate = 1.02; speechSynthesis.cancel(); speechSynthesis.speak(u);
+      u.rate = 1.02;
+      const sid = audioSession.begin(4000 + text.length * 90);   // about the length of the sentence, with room to spare
+      u.onend = u.onerror = () => audioSession.end(sid);
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
     },
     // iPhone Safari only speaks once speech has started from a tap: a silent line, said inside the tap, unlocks it
     prime() {
       if (!window.speechSynthesis) return;
-      try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; u.lang = lang() === "fr" ? "fr-CA" : "en-CA"; speechSynthesis.speak(u); } catch (e) { /* no speech */ }
+      try {
+        const u = new SpeechSynthesisUtterance(" "); u.volume = 0; u.lang = lang() === "fr" ? "fr-CA" : "en-CA";
+        const sid = audioSession.begin(3000);
+        u.onend = u.onerror = () => audioSession.end(sid);
+        speechSynthesis.speak(u);
+      } catch (e) { console.warn("voice prime", e); }
     },
     commandsSupported: !!(window.SpeechRecognition || window.webkitSpeechRecognition),
     listen(handlers) {
@@ -806,5 +896,6 @@
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
-    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, makeTrack, tailRoute, joinRoutes, voice, gapSentence, buildCursor, distM };
+    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, makeTrack, tailRoute, joinRoutes, voice, audioSession, gapSentence, buildCursor, distM,
+    cleanTrail, rideSummary, SUMMARY };
 })();

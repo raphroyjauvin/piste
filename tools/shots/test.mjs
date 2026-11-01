@@ -17,6 +17,7 @@
 //                                                    Default: yes when WebGL is software (SwiftShader), because the 3D view then draws about 1 to 2
 //                                                    frames a second and the smoothness checks mean nothing; no on a PC with a GPU.
 //   PISTE_CPU_SLOWDOWN=4                             slow each page's CPU 4x (Chrome DevTools throttling) to try a slow machine
+//   PISTE_SHOT_DIR=<folder>                          the phone ride-summary group also saves a 390x844 screenshot there
 //   PISTE_NET_REPORT=1                               print, per group, which outside hosts the page called (to spot a new live dependency)
 import { chromium } from "playwright-core";
 import { readFileSync } from "node:fs";
@@ -443,7 +444,7 @@ await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-
     const secs = +((performance.now() - t0) / 1000).toFixed(1);
     toast = document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent;
     await sleep(3000);
-    return { arrived: ride.arrived, secs, toast, endedAfter: s.ride === null && !document.querySelector("#panel").hidden, wakeAfter: s.wake };
+    return { arrived: ride.arrived, secs, toast, endedAfter: s.ride === null && !document.querySelector("#ride-summary").hidden && document.querySelector("#panel").hidden, wakeAfter: s.wake };   // 2026-11-01: arriving shows the ride summary
   });
   const f = follow;
   // The rider is drawn once per frame, so on a slow machine the picture is up to one frame behind: a position error may be as large as
@@ -559,6 +560,175 @@ await run("phone: GPS ride bar, preview link", `${APP}?trip=rachel&gps=replay&gp
   return { ok: link.coarse && link.preview && link.below && link.text === "Preview the ride" && ui.gps && ui.shown === "ride-sound,ride-view,ride-gps,ride-exit" && /km\/h/.test(ui.status)
       && ui.fits && ui.scrollW <= ui.innerW && preview.sim && preview.speedShown && preview.gpsHidden, link, ui, preview };
 }), { width: 402, height: 874 }, { hasTouch: true, isMobile: true });
+
+// ------------------------------------------------------------------ first test ride fixes (2026-11-01): music after prompts, shields, place names, wind, ride summary
+// The audio session is stubbed here: Chromium has no navigator.audioSession, so this checks what the app asks for, not what an iPhone does with it.
+await run("audio session: transient while a prompt or chime plays, auto after (stubbed)", `${APP}?trip=montroyal&gps=replay&gpsx=3`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const C = BikeCommon, app = window.__app, log = [];
+  const as = { t: "auto", get type() { return this.t; }, set type(v) { this.t = v; log.push(v); } };
+  Object.defineProperty(navigator, "audioSession", { value: as, configurable: true });
+  const spoken = [];
+  Object.defineProperty(window, "speechSynthesis", { value: { getVoices: () => [], cancel() {}, speak: (u) => spoken.push(u) }, configurable: true });
+  const r = {};
+  C.voice.enabled = true;
+  C.voice.say("Turn left"); r.during = as.type; spoken[0].onend(); r.afterEnd = as.type;
+  C.voice.say("Turn right"); r.duringErr = as.type; spoken[1].onerror({}); r.afterErr = as.type;
+  C.voice.say("A"); C.voice.say("B"); spoken[2].onend(); r.overlapMid = as.type; spoken[3].onend(); r.overlapEnd = as.type;   // an old prompt ending must not drop a newer one
+  C.audioSession.begin(60); r.duringTimer = as.type; await sleep(250); r.afterTimer = as.type;                           // the timeout safety net
+  C.voice.enabled = false;
+  document.querySelector("#ride-go").click(); r.rideTap = as.type;   // "Let's ride!" unlocks the chime inside the tap
+  await sleep(300); app.endRide(); await sleep(3200); r.afterRide = as.type;   // nothing is left holding the session once the sounds are over
+  Object.defineProperty(navigator, "audioSession", { value: undefined, configurable: true });   // an older Safari or another browser: no API, no error
+  let threw = false; C.voice.enabled = true; try { C.voice.say("x"); C.voice.prime(); } catch (e) { threw = true; }
+  const ok = r.during === "transient" && r.afterEnd === "auto" && r.duringErr === "transient" && r.afterErr === "auto" && r.overlapMid === "transient" && r.overlapEnd === "auto"
+    && r.duringTimer === "transient" && r.afterTimer === "auto" && r.rideTap === "transient" && r.afterRide === "auto" && !threw;
+  return { ok, ...r, threw, log: log.join(",") };
+}));
+
+await run("basemap: road-number shields hidden; place names off the map while riding, back after", `${APP}?trip=montroyal&gps=replay&gpsx=3`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, map = app.map, layers = map.getStyle().layers;
+  const refs = layers.filter((l) => l.type === "symbol" && (/shield/.test(l.id) || JSON.stringify((l.layout || {})["text-field"] || "").includes('"ref"')));
+  const visibleRefs = refs.filter((l) => map.getLayoutProperty(l.id, "visibility") !== "none");
+  const streetNames = layers.filter((l) => /^highway-name/.test(l.id) && map.getLayoutProperty(l.id, "visibility") !== "none").length;
+  const poiIds = layers.filter((l) => /^poi-/.test(l.id)).map((l) => l.id);
+  const op = () => poiIds.map((id) => map.getPaintProperty(id, "text-opacity"));
+  const before = op();
+  document.querySelector("#ride-go").click(); window.__flatRide(); await sleep(600);
+  const riding = op(), metroOn = document.querySelector('#layers input[data-layer="metro"]').checked;
+  const metroIcon = map.getLayoutProperty("poi-metro", "visibility");   // icons stay (metro stations are the ones kept during a ride)
+  app.endRide(); await sleep(300);
+  const after = op();
+  const ok = visibleRefs.length === 0 && poiIds.length > 0 && before.every((v) => v === 1) && riding.every((v) => v === 0) && after.every((v) => v === 1)
+    && metroIcon === (metroOn ? "visible" : "none") && (refs.length === 0 || streetNames > 0);
+  return { ok, shieldLayers: refs.map((l) => l.id), visibleShields: visibleRefs.map((l) => l.id), streetNameLayers: streetNames, poiLayers: poiIds.length, before, riding, after, metroIcon };
+}));
+
+await run("wind & rain during a ride: radar stays, streaks stop, a still wind badge shows, all restored after", `${APP}?trip=montroyal&wx=1&gps=replay&gpsx=3`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, s = app.state, map = app.map, vis = (id) => map.getLayoutProperty(id, "visibility");
+  for (const t0 = performance.now(); !s.wxData && performance.now() - t0 < 20000;) await sleep(100);
+  const before = { radar: vis("radar"), streaks: !document.querySelector("#wind").hidden, badge: !document.querySelector("#wind-badge").hidden };
+  document.querySelector("#ride-go").click(); window.__flatRide();
+  await sleep(1500);
+  const badge = document.querySelector("#wind-badge"), txt = () => `${document.querySelector("#wind-speed").textContent} | ${document.querySelector("#wind-kind").textContent}`;
+  const during = { radar: vis("radar"), streaks: !document.querySelector("#wind").hidden, badge: !badge.hidden, text: txt(), arrow: document.querySelector("#wind-arrow").style.transform };
+  // the badge changes every 10 s or after a corner, never every frame
+  let changes = 0; const mo = new MutationObserver((l) => (changes += l.length)); mo.observe(badge, { subtree: true, childList: true, characterData: true, attributes: true });
+  await sleep(3000); mo.disconnect();
+  app.setLang("fr"); const fr = txt(); app.setLang("en");
+  app.endRide(); await sleep(400);
+  const after = { radar: vis("radar"), streaks: !document.querySelector("#wind").hidden, badge: !document.querySelector("#wind-badge").hidden };
+  const calmOk = s.wxData.now.wind < 3, kindsEn = /(Headwind|Tailwind|Crosswind)$/, kindsFr = /(Vent de face|Vent de dos|Vent de côté)$/;
+  const textOk = calmOk ? /Calm/.test(during.text) : new RegExp(`^${Math.round(s.wxData.now.wind)} km/h \\| `).test(during.text) && kindsEn.test(during.text);
+  const ok = !!s.wxData && before.radar === "visible" && before.streaks && !before.badge && during.radar === "visible" && !during.streaks && during.badge && textOk
+    && (calmOk || kindsFr.test(fr)) && changes <= 12 && after.radar === "visible" && after.streaks && !after.badge;
+  return { ok, before, during, fr, changes, after, wind: s.wxData && s.wxData.now };
+}));
+
+// ---- the end-of-ride summary ----
+await run("ride summary: numbers, ridden path, Done clears it; End shows it; the preview doesn't", `${APP}?trip=montroyal&gps=replay&gpsx=4`, async (page) => {
+  const posts = []; page.on("request", (rq) => { if (rq.method() !== "GET" && rq.method() !== "OPTIONS") posts.push(rq.method() + " " + rq.url()); });   // the track must never be sent anywhere
+  // the arithmetic on made-up fixes: a 1 km ride at 18 km/h with a few metres of noise, a 20 m climb, a stretch with no bike path, and a stop at a light
+  const unit = await page.evaluate(() => {
+    const C = BikeCommon; let seed = 3; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 2, lat0 = 45.5, lon0 = -73.6, k = 111320 * Math.cos((lat0 * Math.PI) / 180);
+    const ride = Array.from({ length: 201 }, (_, i) => ({ lon: lon0 + (rnd() * 2.5) / k, lat: lat0 + (i * 5 + rnd() * 2.5) / 110540, t: 1e12 + i * 1000, acc: 6, v: 5, z: 30 + i * 0.1 + rnd() * 0.3, d: i * 5, gap: i > 100 && i < 140 }));
+    const A = C.rideSummary(ride);
+    const still = Array.from({ length: 120 }, (_, i) => ({ lon: lon0 + (rnd() * 3) / k, lat: lat0 + (rnd() * 3) / 110540, t: 1e12 + i * 1000, acc: 6, v: 0, z: 30 + rnd() * 0.3, d: 0, gap: false }));
+    const B = C.rideSummary(still);
+    return { A: A && { dist: Math.round(A.distanceM), elapsed: A.elapsedS, kmh: +A.avgKmh.toFixed(1), gain: +A.gainM.toFixed(1), loss: +A.lossM.toFixed(1), share: +A.pathShare.toFixed(2) },
+      B: B && { dist: Math.round(B.distanceM), gain: B.gainM, loss: B.lossM }, one: C.rideSummary([ride[0]]) };
+  });
+  const unitOk = !!unit.A && Math.abs(unit.A.dist - 1000) <= 100 && unit.A.elapsed === 200 && Math.abs(unit.A.kmh - 18) <= 2 && Math.abs(unit.A.gain - 20) <= 2 && unit.A.loss < 2
+    && Math.abs(unit.A.share - 0.8) <= 0.06 && (!unit.B || (unit.B.dist < 20 && unit.B.gain === 0 && unit.B.loss === 0)) && unit.one === null;
+  // a replayed GPS ride to the end: 420 m from the end of the route, so it arrives
+  const ride = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const app = window.__app, s = app.state, total = s.routes[s.sel].r.length;
+    window.__store0 = Object.keys(localStorage).sort().join();
+    app.startGpsRide({ replay: { speedup: 4, startAt: Math.max(0, total - 420) } }); window.__flatRide();
+    const r = s.ride, geo = r.geo, t0 = performance.now();
+    while (!r.arrived && performance.now() - t0 < 90000) await sleep(200);
+    window.__trail = r.trail.slice(); window.__log = geo.log.slice();
+    return { arrived: r.arrived, fixes: r.trail.length, hiddenBefore: document.querySelector("#ride-summary").hidden };
+  });
+  await until(page, () => !document.querySelector("#ride-summary").hidden, null, 12000);
+  await until(page, () => !window.__app.map.isMoving(), null, 20000);
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  const shown = await page.evaluate(async () => {
+    const app = window.__app, s = app.state, map = app.map, C = BikeCommon, sum = s.summary, el = (id) => document.querySelector(id);
+    const trail = window.__trail, log = window.__log, last = trail[trail.length - 1], first = trail[0];
+    const i0 = log.findIndex((e) => e.fix[0] === first.lon && e.fix[1] === first.lat), i1 = log.findIndex((e) => e.fix[0] === last.lon && e.fix[1] === last.lat);
+    let truth = 0; for (let i = Math.max(1, i0 + 1); i <= i1; i++) truth += C.distM(log[i - 1].lon, log[i - 1].lat, log[i].lon, log[i].lat);   // the pretend rider's true path, before the noise
+    const b = map.getBounds(), line = sum && sum.line, inView = !!line && line.every((c) => c[0] >= b.getWest() && c[0] <= b.getEast() && c[1] >= b.getSouth() && c[1] <= b.getNorth());
+    const rect = el("#ride-summary").getBoundingClientRect();
+    return { visible: !el("#ride-summary").hidden, panelHidden: el("#panel").hidden, hudHidden: el("#ride-hud").hidden, ended: s.ride === null,
+      distanceM: sum && Math.round(sum.distanceM), truthM: Math.round(truth), ratio: sum && +(sum.distanceM / truth).toFixed(3), elapsedS: sum && Math.round(sum.elapsedS), kmh: sum && +sum.avgKmh.toFixed(1),
+      gain: sum && +sum.gainM.toFixed(1), loss: sum && +sum.lossM.toFixed(1), share: sum && sum.pathShare, hasElev: sum && sum.hasElev,
+      texts: ["#rs-distance", "#rs-time", "#rs-speed", "#rs-climb", "#rs-descent", "#rs-paths"].map((id) => el(id).textContent), inView,
+      layer: !!map.getLayer("ridden-line"), layerShown: map.getLayoutProperty("ridden-line", "visibility") !== "none", features: map.querySourceFeatures("ridden").length,
+      focused: document.activeElement === el("#ride-summary"), pitch: Math.round(map.getPitch()), cardInside: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+      done44: el("#rs-done").getBoundingClientRect().height >= 44, store: Object.keys(localStorage).sort().join() === window.__store0 };
+  });
+  // "Done": the summary and the ridden path are gone and the normal view is back
+  await page.click("#rs-done");
+  await until(page, () => window.__app.map.querySourceFeatures("ridden").length === 0, null, 8000);
+  const done = await page.evaluate(() => { const a = window.__app, el = (id) => document.querySelector(id);
+    return { summaryHidden: el("#ride-summary").hidden, stateCleared: a.state.summary === null, features: a.map.querySourceFeatures("ridden").length,
+      panel: !el("#panel").hidden, controls: !el(".map-controls").hidden }; });
+  // "End" part-way shows it too (after about 130 m); the preview ride shows none
+  const end = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const app = window.__app, s = app.state, total = s.routes[s.sel].r.length;
+    app.startGpsRide({ replay: { speedup: 4, startAt: Math.max(0, total - 900) } }); window.__flatRide();
+    for (const t0 = performance.now(); s.ride.trail.length < 40 && performance.now() - t0 < 60000;) await sleep(200);
+    document.querySelector("#ride-exit").click(); await sleep(300);
+    const gps = { visible: !document.querySelector("#ride-summary").hidden, distanceM: s.summary && Math.round(s.summary.distanceM) };
+    document.querySelector("#rs-done").click(); await sleep(300);
+    app.startRide(); await sleep(800); document.querySelector("#ride-exit").click(); await sleep(300);
+    return { gps, preview: { visible: !document.querySelector("#ride-summary").hidden, panel: !document.querySelector("#panel").hidden } };
+  });
+  const f = shown;
+  const ok = unitOk && ride.arrived && ride.hiddenBefore && f.visible && f.panelHidden && f.hudHidden && f.ended && f.ratio >= 0.9 && f.ratio <= 1.1 && f.elapsedS > 0 && f.kmh > 10 && f.kmh < 30
+    && f.gain >= 0 && f.loss >= 0 && f.hasElev && f.texts.slice(0, 3).every((x) => x.length > 0) && f.inView && f.layer && f.layerShown && f.features > 0 && f.focused && f.pitch === 0 && f.cardInside && f.done44 && f.store
+    && done.summaryHidden && done.stateCleared && done.features === 0 && done.panel && done.controls
+    && end.gps.visible && end.gps.distanceM >= 50 && !end.preview.visible && end.preview.panel && posts.length === 0;
+  return { ok, unit, ride, shown, done, end, posts };
+});
+
+await run("phone: ride summary fits 390x844 and 360x640 (screen reader name, 44 px buttons, nothing under the ride bar)", `${APP}?trip=rachel&gps=replay&gpsx=2&safe=47,34`, async (page) => {
+  // a ridden path made up from the route itself: this group is about the layout, the summary test above is about the numbers
+  await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const app = window.__app, s = app.state, C = BikeCommon;
+    document.querySelector("#ride-go").click(); window.__flatRide();
+    for (const t0 = performance.now(); !s.ride && performance.now() - t0 < 5000;) await sleep(50);
+    const ride = s.ride, r = ride.route; ride.trail.length = 0;
+    for (let d = 0; d < Math.min(r.length, 3200); d += 6) { const p = ride.cursor.at(d); ride.trail.push({ lon: p.lon, lat: p.lat, t: 1e12 + (d / 5) * 1000, acc: 5, v: 5, z: C.elevAt(r, d), d, gap: d > 900 && d < 1100 }); }
+    await sleep(300); app.endRide({ summary: true });
+  });
+  await until(page, () => !document.querySelector("#ride-summary").hidden && !window.__app.map.isMoving(), null, 20000);
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  const measure = () => settled(page, () => {
+    const el = (id) => document.querySelector(id), card = el("#ride-summary"), c = card.getBoundingClientRect(), vv = window.visualViewport;
+    const probe = document.createElement("div"); probe.style.cssText = "position:fixed;visibility:hidden;padding:var(--safe-top) 0 var(--safe-bottom)"; document.body.appendChild(probe);
+    const cs = getComputedStyle(probe), top = parseFloat(cs.paddingTop) || 0, bottom = parseFloat(cs.paddingBottom) || 0; probe.remove();
+    const btns = [...card.querySelectorAll("button")].filter((b) => !b.hidden).map((b) => Math.round(b.getBoundingClientRect().height));
+    const hud = [".ride-hud", ".turn-card", ".ride-bar", ".hill-card", ".gap-card"].every((q) => el(q).getClientRects().length === 0);   // none of the ride's cards is still on screen under it
+    return { w: Math.round(vv.width), h: Math.round(vv.height), left: Math.round(c.left), right: Math.round(c.right), top: Math.round(c.top), bottom: Math.round(c.bottom), safeBottom: bottom, safeTop: top,
+      noScroll: card.scrollHeight <= card.clientHeight + 1, buttons: btns, hud, label: card.getAttribute("aria-labelledby") && el("#" + card.getAttribute("aria-labelledby")).textContent,
+      scrollW: document.documentElement.scrollWidth, innerW: innerWidth };
+  });
+  const fits = (m) => m.left >= 0 && m.right <= m.w && m.top >= m.safeTop && m.bottom <= m.h - m.safeBottom + 0.5 && m.noScroll && m.buttons.length > 0 && m.buttons.every((h) => h >= 44) && m.hud && m.scrollW <= m.innerW;
+  const a = await measure();
+  if (process.env.PISTE_SHOT_DIR) await page.screenshot({ path: `${process.env.PISTE_SHOT_DIR}/ride-summary-390x844.png` });   // for looking at it by hand
+  await page.setViewportSize({ width: 360, height: 640 }); await page.waitForTimeout(400);
+  const b = await measure();
+  const fr = await page.evaluate(() => { window.__app.setLang("fr"); return document.querySelector("#rs-title").textContent + " | " + document.querySelector("#rs-done").textContent + " | " + document.querySelector("#rs-climb").textContent; });
+  const c = await measure();
+  return { ok: a.w === 390 && fits(a) && b.w === 360 && fits(b) && fits(c) && /Résumé du trajet \| Terminé \| (\+\d+|0) m/.test(fr) && a.label === "Ride summary", a, b, c, fr };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ welcome card, feedback and guided tour (2026-10-30; a-positron/tour.js)
 const DEMO_MIN = 250;   // metres of each kind of bike path (protected, shared, none) the tour's demo route must have, so the colours step shows all three

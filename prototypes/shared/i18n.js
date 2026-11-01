@@ -72,6 +72,11 @@
       bixiStation: "BIXI station", bixiBikes: "{n} bikes", bixiEbikes: "{n} electric", bixiDocks: "{n} free docks", bixiUpdated: "updated {n} min ago",
       bixiClosed: "Not renting right now", bixiLive: "live",
       previewRide: "Preview the ride", gpsWaiting: "Waiting for GPS…", gpsAcc: "±{m} m", kmh: "{v} km/h", gpsStatus: "GPS",
+      windKind_head: "Headwind", windKind_tail: "Tailwind", windKind_cross: "Crosswind",   // the wind badge in the ride bar
+      // end-of-ride summary (GPS rides)
+      rsTitle: "Ride summary", rsDistance: "Distance", rsTime: "Time", rsSpeed: "Avg. speed, moving", rsClimb: "Climbed", rsDescent: "Descended",
+      rsPaths: "On bike paths", rsDone: "Done", rsShare: "Share", rsPrivacy: "Your path stays on this device. It is not saved or sent anywhere.",
+      rsShareText: "I rode {d} in {t} with Piste, a Montréal bike-route app.",
       offRoute: "Off route", rerouting: "Rerouting", rerouted: "New route from here", recenter: "Re-center", ok: "OK",
       rerouteFailed: "No new route found from here. Keeping the planned route.", rerouteFailedVoice: "No new route found. Keeping the planned route.",
       gpsDenied: "Piste can't use your location, so the ride can't follow you. You can allow location for this site in your phone's settings, or preview the ride instead.",
@@ -178,6 +183,11 @@
       bixiStation: "Station BIXI", bixiBikes: "{n} vélos", bixiEbikes: "{n} électriques", bixiDocks: "{n} points d'ancrage libres", bixiUpdated: "mis à jour il y a {n} min",
       bixiClosed: "Location suspendue pour l'instant", bixiLive: "en direct",
       previewRide: "Aperçu du trajet", gpsWaiting: "En attente du GPS…", gpsAcc: "±{m} m", kmh: "{v} km/h", gpsStatus: "GPS",
+      windKind_head: "Vent de face", windKind_tail: "Vent de dos", windKind_cross: "Vent de côté",
+      // résumé de fin de trajet (trajets GPS)
+      rsTitle: "Résumé du trajet", rsDistance: "Distance", rsTime: "Durée", rsSpeed: "Vitesse moy. en roulant", rsClimb: "Montée", rsDescent: "Descente",
+      rsPaths: "Sur pistes cyclables", rsDone: "Terminé", rsShare: "Partager", rsPrivacy: "Votre parcours reste sur cet appareil. Il n'est ni enregistré ni envoyé.",
+      rsShareText: "J'ai roulé {d} en {t} avec Piste, une appli d'itinéraires à vélo à Montréal.",
       offRoute: "Hors itinéraire", rerouting: "Nouvel itinéraire", rerouted: "Nouvel itinéraire à partir d'ici", recenter: "Recentrer", ok: "OK",
       rerouteFailed: "Aucun nouvel itinéraire trouvé d'ici. On garde l'itinéraire prévu.", rerouteFailedVoice: "Aucun nouvel itinéraire trouvé. On garde l'itinéraire prévu.",
       gpsDenied: "Piste n'a pas accès à votre position, alors le trajet ne peut pas vous suivre. Vous pouvez autoriser la localisation pour ce site dans les réglages du téléphone, ou voir un aperçu du trajet.",
