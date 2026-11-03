@@ -1606,7 +1606,11 @@ await run("feedback dialog: opens, stays inside the app, sends through Web3Forms
     document.addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a[href^='mailto:']"); if (a) { window.__mails.push(a.getAttribute("href")); e.preventDefault(); } }, true);
   });
   const hidden = () => document.querySelector("#feedback").hidden;
-  const open = async () => { await page.click("#feedback-link"); await until(page, () => !document.querySelector("#feedback").hidden); };
+  const open = async () => {
+    await page.click("#feedback-link"); await until(page, () => !document.querySelector("#feedback").hidden);
+    // the card slides in: a slow machine is still mid-slide here, so wait for it before measuring anything
+    await page.evaluate(() => Promise.all(document.querySelector("#feedback").getAnimations({ subtree: true }).filter((a) => a.effect.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {}))));
+  };
   const status = () => page.evaluate(() => ({ text: document.querySelector("#fb-status").textContent, kind: document.querySelector("#fb-status").dataset.kind, open: !document.querySelector("#feedback").hidden,
     sendOn: !document.querySelector("#fb-send").disabled, invalid: [...document.querySelectorAll("[aria-invalid=true]")].map((e) => e.id) }));
   await open();
