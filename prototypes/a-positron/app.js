@@ -218,7 +218,10 @@
     layout: { visibility: "none", "icon-image": "tree-summer-0", "icon-anchor": "bottom", "icon-pitch-alignment": "viewport", "icon-rotation-alignment": "viewport",
       "icon-allow-overlap": true, "icon-ignore-placement": true, "symbol-z-order": "viewport-y",
       "icon-size": ["interpolate", ["exponential", 2], ["zoom"], 15.5, ["*", 0.0094, TREE_PX], 19, ["*", 0.106, TREE_PX]] },
-    paint: { "icon-opacity": ["interpolate", ["linear"], ["zoom"], 15.5, 0, 16.3, 1] } });
+    paint: { "icon-opacity": ["interpolate", ["linear"], ["zoom"], 15.5, 0, 16.3, 0.85] } });   // 0.85: buildings read through a little
+  // 2026-11-03: the trees are drawn with WebGL instead ("tree pictures" below), so buildings hide the ones behind them; the symbol layer above
+  // stays as the fallback. The map fetches a source's tiles only for a visible layer: this one loads the tree tiles for WebGL and draws nothing.
+  add({ id: "trees-src", type: "circle", source: "trees", "source-layer": "trees", minzoom: 15.5, filter: false, layout: { visibility: "none" } });
   add({ id: "radar", type: "raster", source: "radar", layout: { visibility: "none" }, paint: { "raster-opacity": 0.5, "raster-fade-duration": 300 } });
   // bike network (winter: 4-season lanes stay green, the rest turns grey and dashed)
   add({ id: "net-casing", type: "line", source: "network", layout: { "line-cap": "round", "line-join": "round" },
@@ -395,11 +398,36 @@
     return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="192" viewBox="0 0 72 96">${out.join("")}</svg>`;
   }
   // Picture by season and night: summer (3), fall (20 Sep to 15 Nov, by date; 4) or winter mode (bare, 2); the tree's seed picks one of them.
-  await Promise.all(Object.entries(TREE_SET).flatMap(([kind, set]) => set.flatMap((_, i) => [false, true].map(async (night) =>
-    map.addImage(`tree-${kind}-${i}${night ? "-n" : ""}`, await C.svgToImage(treeSVG(kind, i, night)), { pixelRatio: 2 })))));
+  const treePics = {};
+  await Promise.all(Object.entries(TREE_SET).flatMap(([kind, set]) => set.flatMap((_, i) => [false, true].map(async (night) => {
+    const name = `tree-${kind}-${i}${night ? "-n" : ""}`;
+    treePics[name] = await C.svgToImage(treeSVG(kind, i, night));
+    map.addImage(name, treePics[name], { pixelRatio: 2 });
+  }))));
+  // The same pictures drawn with WebGL (shared/trees3d.js, 2026-11-03): upright in 3D, sized in metres, hidden by the buildings and hills in
+  // front of them, at 0.85 opacity. One texture holds them all: a column per picture (summer, fall, winter), a day row and a night row.
+  // If WebGL can't draw them (no instancing, a shader error, the graphics context lost), the symbol layer "trees" takes over.
+  const TREE_COLS = {};
+  Object.entries(TREE_SET).reduce((col, [kind, set]) => { TREE_COLS[kind] = [col, set.length]; return col + set.length; }, 0);
+  const treeImages = ["", "-n"].map((n) => Object.entries(TREE_SET).flatMap(([kind, set]) => set.map((_, i) => treePics[`tree-${kind}-${i}${n}`])));
+  state.treesGL = !!window.BikeTrees3D;
+  const treeLayer = state.treesGL ? BikeTrees3D.create(map, { id: "trees-gl", source: "trees", sourceLayer: "trees", images: treeImages, demZoom: 14, opacity: 0.85, onFail: treesFallback }) : null;
+  function treesFallback(reason) {
+    if (!state.treesGL) return;
+    console.warn(`3D trees: WebGL drawing stopped (${reason}); showing the flat tree pictures instead`);
+    state.treesGL = false;
+    if (!map.style) return;   // the graphics context is lost: the map is rebuilt when it comes back (below)
+    if (map.getLayer("trees-gl")) map.removeLayer("trees-gl");
+    applyLayers();
+  }
+  // A lost graphics context (a phone taking its graphics memory back) drops the map's WebGL layers, ours included. When the context comes
+  // back the map reloads its style as it was at that moment, so the layers are set again once it has: the flat tree pictures from then on.
+  // (Not on "webglcontextrestored": MapLibre 5.24 can throw before firing it.)
+  map.on("webglcontextlost", () => { treesFallback("WebGL context lost"); map.once("style.load", applyLayers); });
   function paintTrees(date) {
     const kind = treeSeason(date);
     map.setLayoutProperty("trees", "icon-image", ["concat", `tree-${kind}-`, ["%", ["get", "s"], TREE_SET[kind].length], state.night ? "-n" : ""]);
+    if (treeLayer) treeLayer.setPictures(TREE_COLS[kind], state.night);
   }
 
   // ------------------------------------------------------------------ night map (2026-11-02)
@@ -1381,12 +1409,23 @@
     if (map.getCanvas().contains(e.target)) { layersJustClosed = true; setTimeout(() => (layersJustClosed = false), 500); }
   }, true);
   const toggles = {};
+  // "Trees in 3D" (2026-11-03): on unless the rider turned it off, kept in localStorage "piste-trees"
+  const treesBox = document.querySelector('#layers input[data-layer="trees"]');
+  treesBox.checked = store.get("trees", "1") !== "0";
+  treesBox.addEventListener("change", () => store.set("trees", treesBox.checked ? "1" : "0"));
   document.querySelectorAll("#layers input[data-layer]").forEach((cb) => { toggles[cb.dataset.layer] = cb.checked; cb.addEventListener("change", () => { toggles[cb.dataset.layer] = cb.checked; applyLayers(); }); });
   function vis(id, on) { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none"); }
   function setTerrain(on) {
     if (on === state.terrainOn) return;   // re-creating terrain is costly: only on a real change
     state.terrainOn = on;
     map.setTerrain(on ? { source: "terrain", exaggeration: CAM.terrain } : null);
+  }
+  // 3D trees: the WebGL layer (added the first time it is needed, under the radar and the bike paths), or the flat pictures as the fallback
+  function showTrees(on) {
+    if (on && state.treesGL && !map.getLayer("trees-gl")) {
+      try { map.addLayer(treeLayer, "radar"); } catch (e) { treesFallback(e.message); }
+    }
+    vis("trees-gl", on && state.treesGL); vis("trees-src", on && state.treesGL); vis("trees", on && !state.treesGL);
   }
   function poiOn(p) {   // parks and viewpoints are always on
     if (p.group === "outdoors" && p.kind !== "culture") return true;
@@ -1414,7 +1453,7 @@
     vis("tint", toggles.tint); vis("relief", toggles.relief);
     ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
     vis("bld-flat", toggles.buildings && !state.is3d); vis("bld-3d", toggles.buildings && state.is3d);
-    vis("trees", state.is3d);
+    showTrees(toggles.trees && state.is3d);
     vis("radar", state.wx);
     setTerrain(toggles.terrain && state.is3d);
     // with a route on screen, keep only the POIs and works along it (plus metro and REM stations) to cut clutter
@@ -2149,7 +2188,7 @@
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
-    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup };
+    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup, trees: treeLayer, treesFallback };
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
     computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };
