@@ -96,7 +96,7 @@
     pick: null, ride: null, rideView: "birdseye", lastMs: 0, terrainOn: false, hillK: 0, snap: false,
     tab: "go", smode: "classics", classic: 0, sugg: { loop: true, km: 10, stop: "" }, avoidWind: false,
     winter: false, wx: false, wxData: null, bixi: null, sound: store.get("sound", "chime"), rideEnd: "",
-    follow: true, holding: false, reroutes: 0, rerouteLog: [], rideOpts: null, gpsState: null, wake: "off", summary: null };
+    follow: true, holding: false, reroutes: 0, rerouteLog: [], rideOpts: null, gpsState: null, wake: "off", summary: null, join: null };
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
   let style;
@@ -247,12 +247,17 @@
     paint: { "line-color": COL.alt, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 4, 17, 9], "line-opacity": 0.55 } });
   add({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 7, 17, 16] } });
-  add({ id: "route-solid", type: "line", source: "route", filter: ["in", ["get", "tier"], ["literal", [0, 1, 4]]], layout: { "line-cap": "round", "line-join": "round" },
+  // a classic ride's lead-in (pieces with lead = 1, see rideRouteData): the same colours, in dots, so the loop itself stands out
+  const notLead = ["!=", ["get", "lead"], 1];
+  add({ id: "route-solid", type: "line", source: "route", filter: ["all", ["in", ["get", "tier"], ["literal", [0, 1, 4]]], notLead], layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["match", ["get", "tier"], 0, COL.a, 1, COL.b, COL.gap], "line-width": ["interpolate", ["linear"], ["zoom"], 12, 4, 17, 10] } });
-  add({ id: "route-shared", type: "line", source: "route", filter: ["==", ["get", "tier"], 2],
+  add({ id: "route-shared", type: "line", source: "route", filter: ["all", ["==", ["get", "tier"], 2], notLead],
     paint: { "line-color": COL.c, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 9], "line-dasharray": [1.1, 0.8] } });
-  add({ id: "route-quiet", type: "line", source: "route", filter: ["==", ["get", "tier"], 3],
+  add({ id: "route-quiet", type: "line", source: "route", filter: ["all", ["==", ["get", "tier"], 3], notLead],
     paint: { "line-color": COL.gapQuiet, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 9], "line-dasharray": [1, 0.6] } });
+  add({ id: "route-lead", type: "line", source: "route", filter: ["==", ["get", "lead"], 1], layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": ["match", ["get", "tier"], 0, COL.a, 1, COL.b, 2, COL.c, 3, COL.gapQuiet, COL.gap], "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 17, 8],
+      "line-dasharray": [0, 1.7] } });
   // the path actually ridden (end-of-ride summary): a calm indigo line over the planned route
   add({ id: "ridden-casing", type: "line", source: "ridden", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 5, 17, 11] } });
@@ -1083,6 +1088,7 @@
     }
     const labels = c.pts.slice(1, -1).map((_, k) => (c.sights && c.sights[k + 1] ? { label: c.sights[k + 1][I.lang] || c.sights[k + 1].en, sight: true } : null));
     const r = parts.length === 1 ? parts[0] : router.join(parts, labels);
+    let at = 0; r.wayAt = [0, ...parts.map((p) => (at += p.length))];   // where each point of c.pts is along the ride (an out-and-back turns at the middle one)
     classicCache.set(key, r);
     return r;
   }
@@ -1126,6 +1132,7 @@
   track.addEventListener("scroll", () => {
     clearTimeout(scrollT);
     scrollT = setTimeout(() => {
+      if (state.mode === "ride" || !track.clientWidth) return;   // the panel hid (a ride started) before the scroll settled: keep the chosen ride
       const mid = track.scrollLeft + track.clientWidth / 2;
       let best = 0, bd = Infinity;
       track.querySelectorAll(".classic-card").forEach((el, i) => { const d = Math.abs(el.offsetLeft + el.offsetWidth / 2 - mid); if (d < bd) { bd = d; best = i; } });
@@ -1474,7 +1481,7 @@
     // the preview has a speed and a pause button; a GPS ride shows your speed and the GPS instead
     $("#ride-speed").hidden = gps; $("#ride-pause").hidden = gps; $("#ride-gps").hidden = !gps;
     state.follow = true; state.holding = false; glide = null; $("#ride-recenter").hidden = true; showRider(true);
-    state.reroutes = 0; state.rerouteLog = []; state.rerouteFailAt = -1e9;
+    state.reroutes = 0; state.rerouteLog = []; state.rerouteFailAt = -1e9; state.join = null;
     return sel;
   }
   function startRide(view = "birdseye") {   // the preview: a simulated ride at 4× speed
@@ -1488,12 +1495,13 @@
 
   // ------------------------------------------------------------------ GPS ride
   // The phone's location moves you along the route (common.js RideGPS); the cards, voice and roadside places work as in the preview.
-  // opts.replay: a pretend GPS ride ({ speedup, startAt, detourAt, straight }) for tests; ?gps=replay&gpsx=&gpsat=&detour=[&straight] does the same
-  // (straight: at `detour` the rider leaves the route and keeps riding straight on, whatever the app does).
+  // opts.replay: a pretend GPS ride ({ speedup, startAt, detourAt, straight, from }) for tests; ?gps=replay&gpsx=&gpsat=&detour=[&straight]
+  // [&gpsfrom=lon,lat] does the same (straight: at `detour` the rider leaves the route and keeps riding straight on, whatever the app does;
+  // gpsfrom: the rider starts there, away from the route, as for a classic ride's lead-in).
   function startGpsRide(opts = {}) {
     let geo = navigator.geolocation || null;
     const rp = opts.replay || (gpsParam === "replay" ? { speedup: +params.get("gpsx") || 1, startAt: +params.get("gpsat") || 0,
-      detourAt: params.has("detour") ? +params.get("detour") : null, straight: params.has("straight"), deny: params.has("gpsdeny") } : null);
+      detourAt: params.has("detour") ? +params.get("detour") : null, straight: params.has("straight"), deny: params.has("gpsdeny"), from: lonlat(params.get("gpsfrom")) } : null);
     if (rp) geo = new C.ReplayGeo(Object.assign({ getRoute: () => state.ride && state.ride.route }, rp));
     if (!geo) { showNotice("gpsUnavailable"); return; }
     const sel = prepareRide("birdseye", true); if (!sel) return;
@@ -1505,9 +1513,62 @@
     state.rideOpts = { w: selWeights(sel), dest: state.tab === "go" && state.to ? state.to : null, rejoin: state.tab !== "go", plan };
     gpsStatus({ state: "wait" });
     state.ride = new C.RideGPS(r, { geo, pois: C.routePOIs(r, window.POIS, 70), onFrame: rideFrame, onEvent: rideEvent,
-      onStatus: gpsStatus, onOffRoute: rerouteFrom, onError: gpsError });
+      onStatus: gpsStatus, onOffRoute: rerouteFrom, onError: gpsError, onFirstFix: sel.classic ? (fix) => joinClassic(sel, fix) : null });
     keepAwake(true);
     state.ride.start();
+  }
+
+  // A classic ride starts where you are (2026-11-03; C.planJoin has the rules and the numbers): at the first good fix, on the loop it
+  // starts from the nearest point of it; elsewhere a lead-in on the most bike paths (the classic's own router settings) leads to the
+  // best join point, then the whole loop. The preview, a refused location and a ride still waiting for GPS start at the usual start.
+  // state.join keeps what was decided (and the notices given), for the reroutes during the lead-in and for the tests.
+  const outbackTurn = (r) => r.wayAt[Math.floor((r.wayAt.length - 1) / 2)];
+  function joinClassic(sel, fix) {
+    let j;
+    try { j = C.planJoin(router, sel.r, [fix.lon, fix.lat], { w: selWeights(sel), ends: sel.kind === "outback" ? [0, outbackTurn(sel.r)] : null }); }
+    catch (e) { console.warn("classic ride: could not plan a start from here, riding from the usual start", e); return; }
+    state.join = { kind: j.kind, ms: j.ms, routed: j.routed, cands: j.cands, join: j.join, joinAt: j.joinAt, lead: null, at: 0, reachAt: 0,
+      loop: j.loop || null, target: j.target || null, outback: sel.kind === "outback", reached: j.kind !== "lead", notices: [] };
+    if (!j.route) return;   // "start" (you are at the usual start) or "none" (no lead-in from here): the ride as planned
+    if (j.lead) setLeadIn(j.lead, j.route);
+    state.ride.setRoute(j.route, C.routePOIs(j.route, window.POIS, 70));
+    if (j.joinAt > 0) state.rideEnd = placeLabel(j.join[0], j.join[1]);   // the ride ends where it joined the loop
+    map.getSource("route").setData(rideRouteData(j.route));
+    map.getSource("stops").setData(stopsData(j.route));
+    map.getSource("ends").setData({ type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "Point", coordinates: j.join }, properties: { k: "from" } }] });
+    if (j.lead) rideNotice(state.join.outback ? "leadInRide" : "leadInLoop", { d: C.fmtKm(j.at) });
+  }
+  // the lead-in now ridden (at the start, or after a reroute on it), and where along the whole ride it reaches the loop: found on
+  // the ride's own track, which RideGPS measures you on (the route's distances and its shape can differ by a few metres per km)
+  function setLeadIn(lead, route) {
+    const J = state.join;
+    J.lead = lead; J.at = lead.length;
+    J.reachAt = C.makeTrack(route).locate(J.join[0], J.join[1], -Infinity, lead.length + 1000).along;
+  }
+  // a classic's lead-in reached: the chime and "You're on the loop", once (from rideFrame)
+  function checkJoined(d) {
+    const J = state.join;
+    if (!J || J.reached || d < J.reachAt - 10) return;   // 10 m: about the GPS noise around the join point
+    J.reached = true;
+    rideNotice(J.outback ? "onRide" : "onLoop", { d: C.fmtKm(J.loop.length) }, true);
+  }
+  // still on a classic's lead-in and off it: a new lead-in to the same join point (heading-aware, like any reroute)
+  function leadInFrom(from, ro, heading) { return router.route(from, state.join.target, withHeading(ro.w, heading)); }
+  // one spoken and shown notice during a ride (with the chime for the ones that need your attention)
+  function rideNotice(key, vars, withChime = false) {
+    const text = t(key, vars);
+    if (withChime) chime();
+    C.voice.say(text); toast(text);
+    if (state.join) state.join.notices.push({ key, text, chime: withChime, d: state.ride ? Math.round(state.ride.d) : 0 });
+  }
+  // the route being ridden, for the map; a classic's lead-in still to ride is drawn in dots (layer route-lead), the loop as usual
+  function rideRouteData(route) {
+    const J = state.join;
+    if (!J || J.reached || !J.lead) return C.routePiecesGeoJSON(route);
+    const part = (r, isLead) => C.routePiecesGeoJSON(r).features.map((f) => Object.assign(f, { properties: Object.assign(f.properties, { lead: isLead }) }));
+    const features = part(J.lead, 1).concat(part(J.loop, 0));
+    features.forEach((f, i) => (f.id = i));
+    return { type: "FeatureCollection", features };
   }
   function gpsStatus(s) {
     const el = $("#ride-gps"); state.gpsState = s;
@@ -1549,21 +1610,26 @@
   function rerouteFrom(p) {
     const ride = state.ride, ro = state.rideOpts; if (!ride || !ro) return false;
     const t1 = performance.now();
-    let nr = null;
-    try { nr = newRouteFrom([p.lon, p.lat], ride, ro, p.heading); } catch (e) { console.warn("reroute failed", e); }
+    let nr = null, lead = null;
+    const J = state.join, leadIn = !!J && !J.reached;   // on a classic's lead-in: to the join point, then the whole loop
+    try {
+      if (leadIn) { lead = leadInFrom([p.lon, p.lat], ro, p.heading); nr = lead && C.joinRoutes(lead, J.loop); }
+      else nr = newRouteFrom([p.lon, p.lat], ride, ro, p.heading);
+    } catch (e) { console.warn("reroute failed", e); }
     const turn = nr && nr.maneuvers.find((m) => m.at > 3);   // what the card will show first: the next instruction, in metres
     state.rerouteLog.push({ at: [p.lon, p.lat], d: ride.d, ok: !!nr, ms: +(performance.now() - t1).toFixed(1), wall: Math.round(t1), heading: Number.isFinite(p.heading) ? Math.round(p.heading) : null,
-      start: nr && nr.coords[0], length: nr && Math.round(nr.length), nextTurnM: turn ? Math.round(turn.at) : null, turnAt: turn ? [turn.lon, turn.lat] : null, coords: nr ? nr.coords.slice(0, 60) : null });
+      start: nr && nr.coords[0], length: nr && Math.round(nr.length), nextTurnM: turn ? Math.round(turn.at) : null, turnAt: turn ? [turn.lon, turn.lat] : null, coords: nr ? nr.coords.slice(0, 60) : null, leadIn });
     if (!nr || nr.length < 1) {   // keep the old route, and say so (once a minute at most)
       if (performance.now() - state.rerouteFailAt > 60000) { toast(t("rerouteFailed")); chime(); C.voice.say(t("rerouteFailedVoice")); }
       state.rerouteFailAt = performance.now();
       return false;
     }
     state.reroutes++;
+    if (leadIn) setLeadIn(lead, nr);
     for (const mk of poiMarkers.values()) mk.remove();
     poiMarkers.clear(); afterGapUntil = 0; lastGapId = null; sparkAt = -1e9;
     ride.setRoute(nr, C.routePOIs(nr, window.POIS, 70));
-    map.getSource("route").setData(C.routePiecesGeoJSON(nr));
+    map.getSource("route").setData(rideRouteData(nr));
     map.getSource("route-alts").setData(empty);
     map.getSource("stops").setData(stopsData(nr));
     chime(); C.voice.say(t("rerouting")); toast(t("rerouted"));
@@ -1659,6 +1725,7 @@
     }
     if (state.follow && !state.holding) map.jumpTo(view);   // a GPS ride stops following while you move the map by hand
     showRider(f.fix !== false);           // a GPS ride shows you once it has a good fix
+    if (f.fix !== false) checkJoined(f.d);
     riderMarker.setLngLat([f.pos.lon, f.pos.lat]).setRotation(f.pos.heading);
     badgeMarker.setLngLat([f.pos.lon, f.pos.lat]);
     // turn card
@@ -1803,7 +1870,7 @@
   $("#ride-exit").onclick = () => endRide({ summary: true });
   // opts.summary: a GPS ride that ends by arriving or by "End" shows what was ridden (the preview and errors don't)
   function endRide({ summary = false } = {}) {
-    const wasGps = !!(state.ride && state.ride.gps), rerouted = state.reroutes > 0;
+    const wasGps = !!(state.ride && state.ride.gps), newRoute = state.reroutes > 0 || !!(state.join && (state.join.kind === "on" || state.join.kind === "lead"));
     const sum = summary && wasGps ? C.rideSummary(state.ride.trail) : null;
     const showSum = !!sum && sum.distanceM >= C.SUMMARY.MIN_SHOW_M;   // a few metres is not a ride
     if (state.ride) state.ride.pause(); state.ride = null;
@@ -1816,7 +1883,7 @@
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     hideSummary();
     setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapId = null;
-    if (rerouted) drawRoutes();   // the planned routes again, not the reroute
+    if (newRoute) drawRoutes();   // the planned routes again, not the reroute or the classic ride from where you were
     if (showSum) state.summary = sum;
     refreshSections(); wind.show(state.wx); renderWxCard();
     if (showSum) showSummary();

@@ -397,11 +397,11 @@
     _emit(extra) {
       const pos = (extra && extra.pos) || this.cursor.at(this.d);
       const look = lookahead(this.route, this.d, this.extras);
-      // events: gap alert 200 m before; turn prompt 80 m before; climb notice 250 m before
-      const g = look.nextGap;
-      if (g && look.nextGapDist <= 200) this._once("gap" + g.start, { type: "gap", gap: g, dist: look.nextGapDist });
-      if (look.next && look.nextDist <= 80) this._once("turn" + look.next.at, { type: "turn", m: look.next, dist: look.nextDist });
-      if (look.hill && look.hill.start - this.d <= 250 && look.hill.start > this.d) this._once("hill" + look.hill.start, { type: "hill", hill: look.hill, dist: look.hill.start - this.d });
+      // events: gap alert 200 m before; turn prompt 80 m before; climb notice 250 m before (none in a quiet frame: extra.quiet)
+      const g = look.nextGap, quiet = !!(extra && extra.quiet);
+      if (!quiet && g && look.nextGapDist <= 200) this._once("gap" + g.start, { type: "gap", gap: g, dist: look.nextGapDist });
+      if (!quiet && look.next && look.nextDist <= 80) this._once("turn" + look.next.at, { type: "turn", m: look.next, dist: look.nextDist });
+      if (!quiet && look.hill && look.hill.start - this.d <= 250 && look.hill.start > this.d) this._once("hill" + look.hill.start, { type: "hill", hill: look.hill, dist: look.hill.start - this.d });
       this.onFrame(Object.assign({ d: this.d, total: this.cursor.total, pos, look }, extra));
     }
     _once(key, ev) { if (this._fired.has(key)) return; this._fired.add(key); this.onEvent(ev); }
@@ -458,31 +458,54 @@
   }
 
   // ---------------------------------------------------------------- rejoining a ride after a detour: route pieces end to end
-  // The part of a route from distance D on, as a route of its own (distances start at 0).
-  function tailRoute(r, D) {
-    D = Math.max(0, Math.min(r.length, D));
-    const L = r.length - D;
-    const pieces = r.pieces.filter((p) => p.start + p.length > D + 0.01).map((p) => {
-      const s = Math.max(p.start, D);
-      return Object.assign({}, p, { start: s - D, length: p.start + p.length - s, names: p.names.slice(),
-        coords: s > p.start ? sliceCoords(r, s, p.start + p.length) : p.coords.slice() });
-    });
-    const gaps = r.gaps.filter((g) => g.start + g.length > D + 0.01).map((g) => {
-      const s = Math.max(g.start, D);
-      return Object.assign({}, g, { start: s - D, length: g.start + g.length - s, names: g.names.slice() });
-    });
-    const profile = [[0, elevAt(r, D)]].concat((r.profile || []).filter((p) => p[0] > D).map(([d, z]) => [d - D, z]));
+  // The part of a route between distances d0 and d1 along it, as a route of its own (distances start at 0). Legs, pieces and gaps
+  // that cross d0 or d1 are cut to fit; turns and stops at d1 belong to what comes after (except at the very end of the route).
+  // legCoords (optional, Router.legCoords): the shape is cut leg by leg, exactly at d0 and d1. Without it, the cut follows the route's
+  // own coords, which is a few metres out wherever they jump (a waypoint whose two sides snapped to different streets).
+  function sliceRoute(r, d0, d1, legCoords = null) {
+    d0 = Math.max(0, Math.min(r.length, d0)); d1 = Math.max(d0, Math.min(r.length, d1));
+    const L = d1 - d0, toEnd = d1 >= r.length;
+    const overlaps = (start, len) => start + len > d0 + 0.01 && start < d1 - 0.01;
+    const cut = (o, start, len, extra) => { const s = Math.max(start, d0), e = Math.min(start + len, d1); return Object.assign({}, o, extra(s, e)); };
+    // a leg's t0..t1 (fractions along its edge) change in step with the distance along it
+    const legs = r.legs.filter((l) => l.len > 0 && overlaps(l.dist0, l.len)).map((l) => cut(l, l.dist0, l.len, (s, e) => {
+      const tAt = (d) => l.t0 + (l.t1 - l.t0) * ((d - l.dist0) / l.len);
+      return { dist0: s - d0, len: e - s, t0: tAt(s), t1: tAt(e) };
+    }));
+    const shape = (s, e) => {   // coordinates from s to e metres along r
+      if (!legCoords) return sliceCoords(r, s, e);
+      const out = [];
+      for (const l of legs) {
+        if (l.dist0 + d0 >= e - 0.01 || l.dist0 + d0 + l.len <= s + 0.01) continue;
+        for (const c of legCoords(l)) { const last = out[out.length - 1]; if (!last || last[0] !== c[0] || last[1] !== c[1]) out.push(c); }
+      }
+      return out.length >= 2 ? out : sliceCoords(r, s, e);
+    };
+    const pieces = r.pieces.filter((p) => overlaps(p.start, p.length)).map((p) => cut(p, p.start, p.length, (s, e) => ({ start: s - d0, length: e - s,
+      names: p.names.slice(), coords: s > p.start || e < p.start + p.length ? shape(s, e) : p.coords.slice() })));
+    const gaps = r.gaps.filter((g) => overlaps(g.start, g.length)).map((g) => cut(g, g.start, g.length, (s, e) => ({ start: s - d0, length: e - s, names: g.names.slice() })));
+    const inner = (r.profile || []).filter((p) => p[0] > d0 && p[0] < d1).map(([d, z]) => [d - d0, z]);
+    const profile = [[0, elevAt(r, d0)], ...inner, [L, elevAt(r, d1)]];
     let climb = 0, descent = 0;
     for (let i = 1; i < profile.length; i++) { const dz = profile[i][1] - profile[i - 1][1]; if (dz > 0) climb += dz; else descent -= dz; }
     const byTier = [0, 0, 0, 0, 0, 0]; pieces.forEach((p) => (byTier[p.tier] += p.length));
+    const inside = (x) => x.at >= d0 && (x.at < d1 || toEnd);
     return {
-      legs: r.legs.filter((l) => (l.dist0 || 0) + (l.len || 0) > D).map((l) => Object.assign({}, l, { dist0: (l.dist0 || 0) - D })),
-      coords: sliceCoords(r, D, r.length), pieces, gaps, profile, byTier, length: L,
+      legs, coords: shape(d0, d1), pieces, gaps, profile, byTier, length: L,
       infraShare: L ? (byTier[0] + byTier[1] + byTier[2]) / L : 0, climb, descent,
-      maneuvers: r.maneuvers.filter((m) => m.at >= D).map((m) => Object.assign({}, m, { at: m.at - D })),
-      stops: (r.stops || []).filter((s) => s.at >= D).map((s) => Object.assign({}, s, { at: s.at - D })),
-      from: null, to: r.to,
+      maneuvers: r.maneuvers.filter(inside).map((m) => Object.assign({}, m, { at: m.at - d0 })),
+      stops: (r.stops || []).filter(inside).map((s) => Object.assign({}, s, { at: s.at - d0 })),
+      from: d0 === 0 ? r.from : null, to: toEnd ? r.to : null,
     };
+  }
+  // The part of a route from distance D on.
+  function tailRoute(r, D) { return sliceRoute(r, D, r.length); }
+  // A loop ridden from distance D along it: from D round to its end, then on from its start back to D. Same length, climb, turns
+  // and stops, with a turn instruction where the old start was. D at (or within half a metre of) either end: the route itself.
+  // legCoords: as in sliceRoute.
+  function rotateRoute(r, D, legCoords = null) {
+    if (!(D > 0.5 && D < r.length - 0.5)) return r;
+    return Object.assign(joinRoutes(sliceRoute(r, D, r.length, legCoords), sliceRoute(r, 0, D, legCoords)), { climb: r.climb, descent: r.descent });
   }
   function turnKind(bIn, bOut) {   // same thresholds as the router's turn instructions
     const d = ((bOut - bIn + 540) % 360) - 180;
@@ -522,9 +545,103 @@
       profile: (a.profile || []).concat((b.profile || []).map(([d, z]) => [d + off, z])),
       climb: a.climb + b.climb, descent: a.descent + b.descent,
       maneuvers: a.maneuvers.concat(joint, later),
-      stops: (b.stops || []).map((s) => Object.assign({}, s, { at: s.at + off })),
+      stops: (a.stops || []).concat((b.stops || []).map((s) => Object.assign({}, s, { at: s.at + off }))),
       from: a.from, to: b.to,
     };
+  }
+
+  // ---------------------------------------------------------------- a classic ride from where you are (2026-11-03)
+  // "Let's ride!" on a classic with GPS: the first good fix decides where the ride starts (app.js joinClassic).
+  //  - On the loop (within ON_M of its line): it starts at the nearest point and goes once round, back to that point.
+  //  - Elsewhere: a lead-in on the most bike paths to the join point, then the whole loop from there. The join point is the one with
+  //    the shortest lead-in (riding distance, not a straight line: no crossing a river or a highway) among candidate points spread
+  //    along the loop, one every SPACING_M (CANDS: at least / at most), of which the ROUTED nearest in a straight line are routed.
+  //    A lead-in that reaches the loop before its candidate joins it there instead.
+  //  - An out-and-back: its two ends are the only join points.
+  // ON_M = 50 m: wide enough for a rider on the sidewalk, in a park beside the path or with a fix 20-30 m off, and inside GPS.START_M
+  // (60 m), so the ride counts you on it from the first fix; much wider would join from a parallel street or across the canal.
+  // SAME_M: this close to the loop's own start, the ride is exactly the planned one.
+  // Places along the loop are found from its legs (Router.legCoords), not its coords, which can jump at a waypoint.
+  const JOIN = { ON_M: 50, SAME_M: 30, SPACING_M: 700, CANDS: [8, 20], ROUTED: 8 };
+  // the point at distance d along a route, as the router takes a place on a street: { e: edge, t: fraction along it, dist: 0, lon, lat }
+  function routePoint(router, r, d) {
+    const legs = r.legs.filter((l) => l.len > 0);
+    const l = legs.find((x) => d < x.dist0 + x.len) || legs[legs.length - 1];
+    const t = l.t0 + (l.t1 - l.t0) * Math.max(0, Math.min(1, (d - l.dist0) / l.len)), [lon, lat] = router.legCoords({ e: l.e, t0: t, t1: t })[0];
+    return { e: l.e, t, dist: 0, lon, lat };
+  }
+  // the point of a route nearest to (lon, lat), measured along its legs: { off: metres away, along: metres along the route }
+  function locateOnLegs(router, r, lon, lat) {
+    const kx = Math.cos(lat * D2R) * R_EARTH * D2R, ky = R_EARTH * D2R, px = lon * kx, py = lat * ky;
+    let best = { off: Infinity, along: 0 };
+    for (const l of r.legs) {
+      if (!(l.len > 0)) continue;
+      const c = router.legCoords(l), seg = [];
+      for (let i = 1; i < c.length; i++) seg.push(distM(c[i - 1][0], c[i - 1][1], c[i][0], c[i][1]));
+      const geo = seg.reduce((a, b) => a + b, 0) || 1;
+      for (let i = 1, acc = 0; i < c.length; acc += seg[i - 1], i++) {
+        const ax = c[i - 1][0] * kx, ay = c[i - 1][1] * ky, vx = c[i][0] * kx - ax, vy = c[i][1] * ky - ay, L2 = vx * vx + vy * vy;
+        const u = L2 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / L2)) : 0, off = Math.hypot(px - ax - vx * u, py - ay - vy * u);
+        if (off < best.off) best = { off, along: l.dist0 + ((acc + seg[i - 1] * u) / geo) * l.len };
+      }
+    }
+    return best;
+  }
+  // the graph nodes a route rides through, each with the distance where the route first passes it
+  function routeNodes(router, r) {
+    const out = new Map(), node = (e, t) => (t === 0 ? router.ea[e] : t === 1 ? router.eb[e] : -1);
+    for (const l of r.legs) {
+      if (!(l.len > 0)) continue;
+      const a = node(l.e, l.t0), b = node(l.e, l.t1);
+      if (a >= 0 && !out.has(a)) out.set(a, l.dist0);
+      if (b >= 0 && !out.has(b)) out.set(b, l.dist0 + l.len);
+    }
+    return out;
+  }
+  // where a lead-in first reaches the loop: { cut: metres along the lead-in, along: metres along the loop }, or null
+  function firstTouch(router, lead, nodes) {
+    for (const l of lead.legs) {
+      if (!(l.len > 0)) continue;
+      const v = l.t1 === 0 ? router.ea[l.e] : l.t1 === 1 ? router.eb[l.e] : -1;
+      if (v >= 0 && nodes.has(v)) return { cut: l.dist0 + l.len, along: nodes.get(v) };
+    }
+    return null;
+  }
+  // r: the classic's route (a loop; an out-and-back passes opts.ends = [0, turnaround m]); here: [lon, lat]; opts.w: router options.
+  // Returns { kind, join: [lon, lat] where the loop starts, joinAt: its distance along r, ms: planning time, ... } with kind
+  //   "start": ride r as planned; "on": route = r from the nearest point; "lead": route = lead-in + loop, with lead, loop,
+  //   at (the lead-in's length) and target (the join point, for rerouting during the lead-in); "none": no lead-in found, ride r.
+  function planJoin(router, r, here, opts = {}) {
+    const t0 = performance.now(), L = r.length, ends = opts.ends || null, lc = (l) => router.legCoords(l);
+    const done = (o) => Object.assign(o, { ms: +(performance.now() - t0).toFixed(1) });
+    // on the loop at D: from there round (or as planned, at its own start)
+    const onAt = (D, extra) => {
+      if (D < JOIN.SAME_M || D > L - JOIN.SAME_M) return done(Object.assign({ kind: "start", join: r.coords[0], joinAt: 0 }, extra));
+      const route = rotateRoute(r, D, lc);
+      return done(Object.assign({ kind: "on", route, join: route.coords[0], joinAt: D }, extra));
+    };
+    const offTo = (d) => { const p = routePoint(router, r, d); return { d, off: distM(here[0], here[1], p.lon, p.lat) }; };
+    const nearest = ends ? ends.map(offTo).sort((a, b) => a.off - b.off)[0] : (({ off, along }) => ({ off, d: along }))(locateOnLegs(router, r, here[0], here[1]));
+    if (nearest.off <= JOIN.ON_M) return onAt(nearest.d);
+    // candidate join points, nearest first in a straight line; the nearest few are routed, and the shortest ride to the loop wins
+    const n = ends ? ends.length : Math.max(JOIN.CANDS[0], Math.min(JOIN.CANDS[1], Math.round(L / JOIN.SPACING_M))), spacing = L / n;
+    const cands = (ends || Array.from({ length: n }, (_, i) => (i * L) / n)).map(offTo).sort((a, b) => a.off - b.off);
+    const nodes = ends ? null : routeNodes(router, r);
+    let best = null, routed = 0;
+    for (const c of cands.slice(0, JOIN.ROUTED)) {
+      if (best && c.off > best.cut + spacing) break;   // farther in a straight line than the best ride so far (and its neighbours): no better
+      routed++;
+      const lead = router.route(here, routePoint(router, r, c.d), opts.w || {});
+      if (!lead) continue;
+      const touch = nodes && firstTouch(router, lead, nodes);
+      const cand = touch && touch.cut < lead.length - 0.5 ? { lead, cut: touch.cut, along: touch.along } : { lead, cut: lead.length, along: c.d };
+      if (!best || cand.cut < best.cut) best = cand;
+    }
+    if (!best) return done({ kind: "none", join: r.coords[0], joinAt: 0, routed });
+    if (best.cut < JOIN.ON_M) return onAt(best.along, { routed });   // just over ON_M from its line, but the street you are on leads straight onto it
+    const lead = best.cut < best.lead.length - 0.5 ? sliceRoute(best.lead, 0, best.cut, lc) : best.lead, loop = rotateRoute(r, best.along, lc);
+    return done({ kind: "lead", route: joinRoutes(lead, loop), lead, loop, at: lead.length, target: routePoint(router, loop, 0),
+      join: loop.coords[0], joinAt: best.along, routed, cands: n });
   }
 
   // ---------------------------------------------------------------- ride with the phone's GPS
@@ -566,13 +683,16 @@
   }
   // opts: route, pois, geo (navigator.geolocation or a ReplayGeo), onFrame, onEvent, onStatus({state: wait|ok|off, acc, kmh}),
   //       onOffRoute({lon, lat, acc, heading}) -> true when the app rerouted (it calls setRoute); heading = the direction you are
-  //       riding in degrees, or null when unclear (headingFromFixes), so the new route does not start by turning you round; onError({code})
+  //       riding in degrees, or null when unclear (headingFromFixes), so the new route does not start by turning you round; onError({code});
+  //       onFirstFix({lon, lat, acc}): once, at the first good fix, before it is placed on the route (the app may call setRoute
+  //       there, e.g. to start a classic ride where you are)
   class RideGPS extends RideCore {
     constructor(route, opts = {}) {
       super(route, opts);
       this.gps = true; this.mult = 1;
       this.geo = opts.geo !== undefined ? opts.geo : (navigator.geolocation || null);
       this.onStatus = opts.onStatus || (() => {}); this.onOffRoute = opts.onOffRoute || (() => false); this.onError = opts.onError || (() => {});
+      this.onFirstFix = opts.onFirstFix || null;
       this.fix = null; this.est = null; this.v = 0; this.back = 0;
       this.offSince = null; this.offCount = 0; this.blend = 0; this.raw = null; this.rawHeading = 0;
       this.lastReroute = -Infinity; this.jump = false; this.resync = false; this.busyUntil = 0; this.arrived = false;
@@ -595,7 +715,8 @@
     start() {
       if (this.running) return;
       this.running = true;
-      this._emit({ fix: false, snap: true, gps: true });   // the route's start, until the first good fix
+      // the route's start, until the first good fix; no prompts yet if that fix may still change the route (onFirstFix)
+      this._emit({ fix: false, snap: true, gps: true, quiet: !!this.onFirstFix });
       this._status("wait");
       this._listen();
       this._last = performance.now(); cancelAnimationFrame(this._raf); this._raf = requestAnimationFrame((t) => this._tick(t));
@@ -632,7 +753,9 @@
         if (!this.fix || wall - this.fix.wall > GPS.STALE_MS) this._status("wait");
         return;
       }
-      const lon = c.longitude, lat = c.latitude, acc = c.accuracy, L = this.cursor.total;
+      const lon = c.longitude, lat = c.latitude, acc = c.accuracy;
+      if (this.onFirstFix) { const f = this.onFirstFix; this.onFirstFix = null; f({ lon, lat, acc }); }   // may set a new route
+      const L = this.cursor.total;
       const gap = this.fix ? Math.max(0.05, (t - this.fix.t) / 1000) : Infinity;
       const fresh = this.est == null || this.resync || gap > 6;   // first fix, or back after a pause
       this.resync = false;
@@ -786,12 +909,13 @@
   // Works like navigator.geolocation (watchPosition / clearWatch), so the ride runs through exactly the same code as real GPS.
   // A synthetic ride along the ride's current route: one fix a second (faster with `speedup`), a few metres of noise,
   // a poor fix now and then (to be ignored), and optionally a detour: 60 m off to one side, 150 m alongside the route, then back.
-  // After the app reroutes, it carries on along the new route.
+  // After the app reroutes, it carries on along the new route (a detour still to come stays the same distance ahead).
+  // from: [lon, lat] where the rider waits, away from the route, until the app gives a new route (a classic ride's lead-in).
   class ReplayGeo {
     constructor(opts = {}) {
       this.getRoute = opts.getRoute || (() => null);
       this.v = (opts.kmh || 18) / 3.6; this.k = Math.max(0.25, opts.speedup || 1);
-      this.noise = opts.noise ?? 2.5; this.startAt = opts.startAt || 0;
+      this.noise = opts.noise ?? 2.5; this.startAt = opts.startAt || 0; this.from = opts.from || null;
       // straight: at detourAt the rider turns off the route at a right angle and rides straight on for good, ignoring any new route
       // (a rider who left the route on purpose); the detour is then one very long leg out
       this.straight = !!opts.straight;
@@ -824,12 +948,16 @@
       const now = performance.now(), dt = this._t ? Math.min(3, (now - this._t) / 1000) : 0; this._t = now;
       const ds = this.v * this.k * dt; this.simMs += dt * this.k * 1000;
       if (r !== this.route) {
-        if (this.route && this.pos) {   // rerouted: carry on along the new route (unless riding straight on)
-          if (!(this.straight && this.phase === "detour")) { this.d = makeTrack(r).locate(this.pos[0], this.pos[1]).along; this.phase = "route"; this.detourAt = null; }
-        } else this.d = this.startAt;
+        if (this.route && this.pos) {   // rerouted: carry on along the new route (unless riding straight on), from its first stretch near you
+          if (!(this.straight && this.phase === "detour")) {
+            const d = makeTrack(r).locate(this.pos[0], this.pos[1], -Infinity, Infinity, 25).along;
+            if (this.detourAt != null) this.detourAt = d + (this.detourAt - this.d);
+            this.d = d; this.phase = "route";
+          }
+        } else { this.d = this.startAt; if (this.from) this.phase = "from"; }
         this.route = r; this.cur = buildCursor(r);
       } else if (this.phase === "detour") this.s += ds;
-      else this.d = Math.min(this.cur.total, this.d + ds);
+      else if (this.phase === "route") this.d = Math.min(this.cur.total, this.d + ds);
       if (this.phase === "route" && this.detourAt != null && this.d >= this.detourAt) {
         const p = this.cur.at(this.detourAt), tr = makeTrack(r);
         this.det = { lon: p.lon, lat: p.lat, h: p.heading, d: this.detourAt, side: 1 };
@@ -839,6 +967,7 @@
         this.phase = "detour"; this.s = this.d - this.detourAt; this.detourAt = null;
       }
       let lon, lat, heading, speed = this.v * this.k;
+      if (this.phase === "from") { [lon, lat] = this.from; heading = 0; speed = 0; }   // standing still: no heading
       if (this.phase === "detour") {
         const { out, along } = this.detour, s = this.s, D = this.det;
         if (s >= 2 * out + along) { this.phase = "route"; this.d = D.d + along + (s - 2 * out - along); }
@@ -951,6 +1080,6 @@
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
-    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, tailRoute, joinRoutes, voice, audioSession, gapSentence, buildCursor, distM,
+    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, sliceRoute, tailRoute, rotateRoute, joinRoutes, JOIN, planJoin, voice, audioSession, gapSentence, buildCursor, distM,
     cleanTrail, rideSummary, SUMMARY, isNight };
 })();

@@ -79,6 +79,8 @@
       rsShareText: "I rode {d} in {t} with Piste, a Montréal bike-route app.",
       offRoute: "Off route", rerouting: "Rerouting", rerouted: "New route from here", recenter: "Re-center", ok: "OK",
       rerouteFailed: "No new route found from here. Keeping the planned route.", rerouteFailedVoice: "No new route found. Keeping the planned route.",
+      // a classic ride from where you are: the lead-in to the loop (or to an out-and-back's start), then the ride itself
+      leadInLoop: "{d} to the start of the loop", leadInRide: "{d} to the start of the ride", onLoop: "You're on the loop: {d} to go", onRide: "You're on the route: {d} to go",
       gpsDenied: "Piste can't use your location, so the ride can't follow you. You can allow location for this site in your phone's settings, or preview the ride instead.",
       gpsUnavailable: "Your location isn't available on this device. You can preview the ride instead.",
       // welcome card, feedback and the guided tour (tour.js)
@@ -192,6 +194,7 @@
       rsShareText: "J'ai roulé {d} en {t} avec Piste, une appli d'itinéraires à vélo à Montréal.",
       offRoute: "Hors itinéraire", rerouting: "Nouvel itinéraire", rerouted: "Nouvel itinéraire à partir d'ici", recenter: "Recentrer", ok: "OK",
       rerouteFailed: "Aucun nouvel itinéraire trouvé d'ici. On garde l'itinéraire prévu.", rerouteFailedVoice: "Aucun nouvel itinéraire trouvé. On garde l'itinéraire prévu.",
+      leadInLoop: "{d} jusqu'au début de la boucle", leadInRide: "{d} jusqu'au départ du parcours", onLoop: "Vous êtes sur la boucle{nb}: encore {d}", onRide: "Vous êtes sur le parcours{nb}: encore {d}",
       gpsDenied: "Piste n'a pas accès à votre position, alors le trajet ne peut pas vous suivre. Vous pouvez autoriser la localisation pour ce site dans les réglages du téléphone, ou voir un aperçu du trajet.",
       gpsUnavailable: "Votre position n'est pas disponible sur cet appareil. Vous pouvez voir un aperçu du trajet.",
       welcomeTitle: "Bienvenue dans Piste", welcomeText: "Des itinéraires à vélo à Montréal qui vous gardent sur les pistes cyclables protégées, et vous montrent où il n'y en a pas.",

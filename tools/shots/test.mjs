@@ -545,18 +545,138 @@ await run("GPS ride (replayed track): riding straight on after leaving the route
 await run("GPS ride (replayed track): on a classic ride, a reroute rejoins the ride ahead", `${APP}?classic=oldport&gps=replay&gpsx=4&gpsat=1500&detour=1600`, async (page) => page.evaluate(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const app = window.__app, s = app.state;
-  const planned = s.routes[0].r;
   document.querySelector("#ride-go").click(); window.__flatRide();
+  for (const t0 = performance.now(); !s.join && performance.now() - t0 < 20000;) await sleep(50);
+  const planned = s.ride.route;   // 2026-11-03: a classic ride starts where you are (here 1.5 km into the loop: the loop from there)
   const t0 = performance.now();
   while (s.reroutes < 1 && performance.now() - t0 < 60000) await sleep(200);
   await sleep(1500);
   const r = s.ride.route, log = s.rerouteLog[0] || {}, left = planned.length - (log.d || 0);   // what was left of the ride when you went off it
-  const out = { reroutes: s.reroutes, rejoin: s.rideOpts.rejoin, leftM: Math.round(left), newM: Math.round(r.length), plannedSights: planned.stops.map((x) => x.label),
+  const out = { start: s.join && s.join.kind, reroutes: s.reroutes, rejoin: s.rideOpts.rejoin, leftM: Math.round(left), newM: Math.round(r.length), plannedSights: planned.stops.map((x) => x.label),
     sights: r.stops.map((x) => x.label), piecesM: Math.round(r.pieces.reduce((a, p) => a + p.length, 0)), onNewRoute: s.ride.offCount === 0 };
   app.endRide();
-  out.ok = out.reroutes === 1 && out.rejoin && Math.abs(out.newM - out.leftM) < 400 && out.sights.length >= 1
+  out.ok = out.start === "on" && out.reroutes === 1 && out.rejoin && Math.abs(out.newM - out.leftM) < 400 && out.sights.length >= 1
     && out.sights.join() === planned.stops.filter((x) => x.at > log.d + 250).map((x) => x.label).join() && Math.abs(out.piecesM - out.newM) <= 1 && out.onNewRoute;
   return out;
+}));
+
+// 2026-11-03: a classic ride starts where you are (common.js planJoin, app.js joinClassic). On the loop (here 5 km into the Plateau loop) it starts
+// at the nearest point and goes once round, back to it: the planned ride turned round, so the length, climb, sights and streets (in order) are the
+// same. No lead-in and no notices; the ride ends where it began; after it the planned loop is back on the map.
+await run("GPS ride (replayed track): a classic ride started mid-loop starts there and goes once round", `${APP}?classic=plateau&gps=replay&gpsx=4&gpsat=5000`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, s = app.state, C = BikeCommon;
+  const said = [], say = C.voice.say; C.voice.say = (text) => said.push(text);
+  const planned = s.routes[0].r, L = planned.length, gap = (a, b) => C.distM(a[0], a[1], b[0], b[1]);
+  document.querySelector("#ride-go").click(); window.__flatRide();
+  const ride = s.ride, geo = ride.geo;
+  for (const t0 = performance.now(); !s.join && performance.now() - t0 < 20000;) await sleep(50);
+  const J = s.join || {}, r = ride.route, firstFix = geo.log.find((e) => !e.bad) || {};   // the first good fix decides where the ride starts
+  // the same streets in the same order, from the one the rider is on round to it again (it is cut in two: the ride's first and last leg)
+  const pe = planned.legs.filter((l) => l.len > 0), k = pe.findIndex((l) => J.joinAt < l.dist0 + l.len), ids = (ls) => ls.map((l) => l.e).join();
+  const sameStreets = [ids(pe.slice(k).concat(pe.slice(0, k + 1))), ids(pe.slice(k).concat(pe.slice(0, k)))].includes(ids(r.legs));
+  const sightsOk = planned.stops.length === r.stops.length && planned.stops.every((p) => r.stops.some((q) => q.label === p.label && Math.abs(q.at - ((p.at - J.joinAt + L) % L)) < 1));
+  const d0 = ride.d; await sleep(3000);   // and it rides on from there
+  const drawn = await app.map.getSource("route").getData();
+  const out = { kind: J.kind, ms: J.ms, joinAt: Math.round(J.joinAt), riderToJoinM: J.join && firstFix.lon ? +gap([firstFix.lon, firstFix.lat], J.join).toFixed(1) : null,
+    plannedM: Math.round(L), routeM: Math.round(r.length), startToJoinM: J.join ? +gap(r.coords[0], J.join).toFixed(2) : null, endToJoinM: J.join ? +gap(r.coords.at(-1), J.join).toFixed(2) : null,
+    sameStreets, sightsOk, turns: [planned.maneuvers.length, r.maneuvers.length], climb: [Math.round(planned.climb), Math.round(r.climb)],
+    piecesM: Math.round(r.pieces.reduce((a, p) => a + p.length, 0)), advanced: [Math.round(d0), Math.round(ride.d)], onRoute: ride.offCount === 0, reroutes: s.reroutes,
+    leadDrawn: drawn.features.filter((f) => f.properties.lead === 1).length, notices: (J.notices || []).length, said, rideEnd: s.rideEnd };
+  app.endRide(); C.voice.say = say;
+  const after = (await app.map.getSource("route").getData()).features.length, ends = (await app.map.getSource("ends").getData()).features;
+  out.restored = after === C.routePiecesGeoJSON(planned).features.length && !!ends[0] && gap(ends[0].geometry.coordinates, planned.coords[0]) < 0.01;
+  out.ok = out.kind === "on" && out.riderToJoinM !== null && out.riderToJoinM < 15 && out.joinAt > 1000 && Math.abs(r.length - L) < 0.5 && out.startToJoinM < 0.01 && out.endToJoinM < 0.01
+    && out.sameStreets && out.sightsOk && Math.abs(out.turns[0] - out.turns[1]) <= 1 && out.climb[0] === out.climb[1] && Math.abs(out.piecesM - out.routeM) <= 1
+    && out.advanced[1] > out.advanced[0] && out.onRoute && out.reroutes === 0 && out.leadDrawn === 0 && out.notices === 0 && !said.some((x) => /loop/.test(x))
+    && out.rideEnd !== "Parc La Fontaine" && out.restored;
+  return out;
+}));
+
+// About 1 km from the Plateau loop (in Outremont): a lead-in on the most bike paths to the join point with the shortest ride (not the loop's nearest
+// point in a straight line), drawn in dots, then the whole loop from there, ending back at the join point. "1.1 km to the start of the loop" once
+// at the start; the chime and "You're on the loop: 10 km to go" once on reaching it. A detour on the lead-in reroutes to the same join point.
+await run("GPS ride (replayed track): a classic ride from 1 km away: lead-in to the best join point, a detour on it, notices once", `${APP}?classic=plateau&gps=replay&gpsx=5&gpsfrom=-73.60423,45.5155&detour=250`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, s = app.state, C = BikeCommon, from = [-73.60423, 45.5155];
+  // the chime: a stand-in Web Audio context that notes when each tone starts (two per chime)
+  const tones = [], node = () => ({ connect: (x) => x, start() {}, stop() {}, frequency: {}, gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} } });
+  window.AudioContext = class { constructor() { this.state = "running"; this.currentTime = 0; this.destination = {}; } resume() { return Promise.resolve(); } suspend() { return Promise.resolve(); }
+    createBuffer() { return {}; } createBufferSource() { return node(); } createGain() { return node(); } createOscillator() { tones.push(performance.now()); return node(); } };
+  const said = [], say = C.voice.say; C.voice.say = (text) => said.push({ text, t: performance.now() });
+  const toasts = [], toastEl = document.querySelector("#toast");
+  new MutationObserver(() => { if (!toastEl.hidden && toasts.at(-1) !== toastEl.textContent) toasts.push(toastEl.textContent); }).observe(toastEl, { childList: true, attributes: true, characterData: true, subtree: true });
+  const planned = s.routes[0].r, L = planned.length, gap = (a, b) => C.distM(a[0], a[1], b[0], b[1]);
+  document.querySelector("#ride-go").click(); window.__flatRide();
+  const ride = s.ride;
+  for (const t0 = performance.now(); !s.join && performance.now() - t0 < 20000;) await sleep(50);
+  const J = s.join || {}, loop = J.loop, r0 = ride.route;
+  // chosen by riding distance: never longer than riding to the loop's nearest point in a straight line
+  const near = C.buildCursor(planned).at(C.makeTrack(planned).locate(from[0], from[1]).along);
+  const toNearest = app.router.route(from, [near.lon, near.lat], { w: BikeRouter.PROFILES.bikemax.w, hill: 4 });
+  await sleep(300);
+  const drawn = (await app.map.getSource("route").getData()).features, leadF = drawn.filter((f) => f.properties.lead === 1);
+  const dot = (await app.map.getSource("ends").getData()).features[0];
+  const start = { kind: J.kind, ms: J.ms, routed: J.routed, cands: J.cands, leadM: Math.round(J.at), toNearestM: toNearest && Math.round(toNearest.length), joinAt: Math.round(J.joinAt),
+    loopM: loop && Math.round(loop.length), plannedM: Math.round(L), routeM: Math.round(r0.length), riderToStartM: Math.round(gap(r0.coords[0], from)),
+    endToJoinM: +gap(r0.coords.at(-1), J.join).toFixed(2), leadEndToJoinM: J.lead ? +gap(J.lead.coords.at(-1), J.join).toFixed(2) : null, joinToUsualStartM: Math.round(gap(J.join, planned.coords[0])),
+    leadDrawnM: leadF.reduce((a, f) => a + f.properties.len, 0), leadPieces: leadF.length, loopPieces: drawn.length - leadF.length,
+    leadLayer: !!app.map.getLayer("route-lead") && JSON.stringify(app.map.getPaintProperty("route-lead", "line-dasharray")), dotToJoinM: dot ? +gap(dot.geometry.coordinates, J.join).toFixed(2) : null };
+  // the detour 250 m into the lead-in: one reroute, back to the same join point, then the same loop
+  for (const t0 = performance.now(); s.reroutes < 1 && performance.now() - t0 < 60000;) await sleep(200);
+  const r1 = ride.route, log = s.rerouteLog[0] || {};
+  const reroute = { reroutes: s.reroutes, leadIn: log.leadIn, newLeadM: Math.round(J.at), loopM: Math.round(r1.length - J.at), sameLoop: J.loop === loop, endToJoinM: +gap(r1.coords.at(-1), J.join).toFixed(2),
+    leadEndToJoinM: J.lead ? +gap(J.lead.coords.at(-1), J.join).toFixed(2) : null, fixToStartM: log.at ? Math.round(gap(log.at, r1.coords[0])) : null, reachedYet: J.reached };
+  // on to the loop
+  for (const t0 = performance.now(); !J.reached && performance.now() - t0 < 120000;) await sleep(200);
+  await sleep(4000);   // long enough for a repeat, if there were one
+  const onLoop = said.filter((x) => /^You're on the loop/.test(x.text)), leadSaid = said.filter((x) => /to the start of the loop$/.test(x.text));
+  const reached = { reached: J.reached, onLoop: onLoop.map((x) => x.text), leadSaid: leadSaid.map((x) => x.text), tonesWithIt: onLoop[0] ? tones.filter((t) => t <= onLoop[0].t && t > onLoop[0].t - 100).length : 0,
+    notices: (J.notices || []).map((n) => n.key).join(), toasts: toasts.filter((x) => /loop/.test(x)), riderAtJoinM: Math.round(Math.abs(ride.d - J.reachAt)), rerouting: said.filter((x) => x.text === "Rerouting").length };
+  C.voice.say = say;
+  BikeI18n.lang = "fr"; const fr = [BikeI18n.t("leadInLoop", { d: "1,1 km" }), BikeI18n.t("onLoop", { d: "10 km" }), BikeI18n.t("leadInRide", { d: "4 km" }), BikeI18n.t("onRide", { d: "56 km" })]; BikeI18n.lang = "en";
+  app.endRide();
+  const restored = (await app.map.getSource("route").getData()).features.length === C.routePiecesGeoJSON(planned).features.length;
+  const ok = start.kind === "lead" && start.ms < 250 && start.routed >= 2 && start.leadM > 500 && start.leadM < 2500 && start.toNearestM && start.leadM <= start.toNearestM + 1
+    && start.loopM === start.plannedM && Math.abs(start.routeM - start.leadM - start.plannedM) <= 1 && start.riderToStartM < 60 && start.endToJoinM < 0.01 && start.leadEndToJoinM < 0.01
+    && start.joinToUsualStartM > 300 && Math.abs(start.leadDrawnM - start.leadM) <= start.leadPieces && start.loopPieces > 0 && start.leadLayer === "[0,1.7]" && start.dotToJoinM < 0.01
+    && reroute.reroutes === 1 && reroute.leadIn === true && reroute.sameLoop && Math.abs(reroute.loopM - start.plannedM) <= 1 && reroute.endToJoinM < 0.01 && reroute.leadEndToJoinM < 0.01
+    && reroute.fixToStartM !== null && reroute.fixToStartM < 70 && !reroute.reachedYet
+    && reached.reached && reached.onLoop.length === 1 && reached.onLoop[0] === "You're on the loop: 10 km to go" && reached.leadSaid.length === 1 && /^1\.\d km to the start of the loop$/.test(reached.leadSaid[0])
+    && reached.tonesWithIt === 2 && reached.notices === "leadInLoop,onLoop" && reached.toasts.length === 2 && reached.riderAtJoinM < 400 && reached.rerouting === 1
+    && /jusqu'au début de la boucle$/.test(fr[0]) && /^Vous êtes sur la boucle : encore 10 km$/.test(fr[1]) && /départ du parcours$/.test(fr[2]) && /sur le parcours/.test(fr[3]) && restored;
+  return { ok, start, reroute, reached, fr, restored };
+}));
+
+// The out-and-back (Pointe-Claire) joins at one of its two ends; at a loop's own start the ride is the planned one; the preview (no GPS) and a
+// refused location start at the usual start, exactly as before: no planning, no lead-in, no notices.
+await run("classic rides from where you are: out-and-back ends; the usual start, the preview and a refused location unchanged", `${APP}?classic=plateau&gps=replay&gpsdeny`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const app = window.__app, s = app.state, C = BikeCommon, gap = (a, b) => C.distM(a[0], a[1], b[0], b[1]), w = { w: BikeRouter.PROFILES.bikemax.w, hill: 4 };
+  const pc = app.classicRoute(window.CLASSICS.findIndex((c) => c.id === "pointeclaire")), turn = pc.wayAt[2], ends = [0, turn];
+  const outback = [[-73.8256, 45.434], [-73.57, 45.486]].map((here) => { const j = C.planJoin(app.router, pc, here, { w, ends });
+    return { kind: j.kind, joinAt: Math.round(j.joinAt), leadM: j.lead ? Math.round(j.lead.length) : 0, rideM: j.route ? Math.round(j.route.length - (j.lead ? j.lead.length : 0)) : 0,
+      leadEndToJoinM: j.lead ? +gap(j.lead.coords.at(-1), j.join).toFixed(2) : null, ms: j.ms }; });
+  const planned = s.routes[0].r, atStart = C.planJoin(app.router, planned, planned.coords[0], { w });
+  const leadDrawn = async () => (await app.map.getSource("route").getData()).features.filter((f) => f.properties.lead === 1).length;
+  // the preview: the simulated ride on the planned loop, from its start
+  document.querySelector("#ride-preview").click();
+  await sleep(1200); const d1 = s.ride ? s.ride.d : -1;
+  for (const t0 = performance.now(); s.ride && s.ride.d <= d1 && performance.now() - t0 < 15000;) await sleep(100);   // slow machines draw few frames
+  const preview = { sim: !!s.ride && !s.ride.gps, samePlanned: !!s.ride && s.ride.route === planned, join: s.join, leadDrawn: await leadDrawn(), advanced: !!s.ride && s.ride.d > d1 && d1 >= 0 && d1 < 400 };
+  app.endRide();
+  // a refused location: the ride waits on the planned loop, then the calm message; nothing was planned
+  document.querySelector("#ride-go").click();
+  const waiting = { samePlanned: !!s.ride && s.ride.route === planned, join: s.join };
+  for (const t0 = performance.now(); document.querySelector("#notice").hidden && performance.now() - t0 < 8000;) await sleep(100);
+  const ends2 = (await app.map.getSource("ends").getData()).features;
+  const refused = { notice: document.querySelector("#notice").hidden ? "" : document.querySelector("#notice-text").textContent.slice(0, 40), ride: s.ride, join: s.join, leadDrawn: await leadDrawn(),
+    planned: (await app.map.getSource("route").getData()).features.length === C.routePiecesGeoJSON(planned).features.length, dotAtStart: !!ends2[0] && gap(ends2[0].geometry.coordinates, planned.coords[0]) < 0.01 };
+  const ok = outback[0].kind === "lead" && Math.abs(outback[0].joinAt - turn) <= 1 && outback[0].leadM > 300 && outback[0].leadEndToJoinM < 0.01 && Math.abs(outback[0].rideM - pc.length) <= 1
+    && outback[1].kind === "lead" && outback[1].joinAt === 0 && outback[1].leadM > 300 && Math.abs(outback[1].rideM - pc.length) <= 1 && atStart.kind === "start" && !atStart.route
+    && preview.sim && preview.samePlanned && preview.join === null && preview.leadDrawn === 0 && preview.advanced
+    && waiting.samePlanned && waiting.join === null && /can't use your location/.test(refused.notice) && refused.ride === null && refused.join === null && refused.leadDrawn === 0 && refused.planned && refused.dotAtStart;
+  return { ok, turnM: Math.round(turn), outback, atStart: atStart.kind, preview, waiting, refused };
 }));
 
 await run("GPS: location refused shows a calm message, and the preview still works", `${APP}?trip=montroyal&gps=1`, async (page) => page.evaluate(async () => {
