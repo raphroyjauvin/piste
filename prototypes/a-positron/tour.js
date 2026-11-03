@@ -195,7 +195,10 @@
     P.store.set("welcomed", "1"); welcomeState = "closed";
     document.removeEventListener("keydown", welcomeKey, true);
     const a = welcome.animate([{ opacity: 1 }, { opacity: 0 }], { duration: tour ? 150 : 180, easing: "ease-out", fill: "forwards" });
-    a.onfinish = () => { welcome.hidden = true; a.cancel(); };
+    a.onfinish = () => {
+      welcome.hidden = true; a.cancel();
+      document.dispatchEvent(new CustomEvent("piste:welcome-closed", { detail: { tour: open } }));   // app.js may ask for the location now (or when the tour ends)
+    };
     P.track("welcome", { choice: tour ? "tour" : "explore" });
     if (tour) start(0);
     else if (visible(welcomeFocus) && welcomeFocus !== document.body) welcomeFocus.focus({ preventScroll: true });
@@ -597,6 +600,7 @@
     a.onfinish = hide; a.oncancel = hide;
     if (visible(lastFocus) && !(P.isPhone() && /^(INPUT|TEXTAREA)$/.test(lastFocus.tagName))) lastFocus.focus({ preventScroll: true });
     else if (card.contains(document.activeElement)) document.activeElement.blur();
+    document.dispatchEvent(new Event("piste:tour-ended"));
   }
 
   // for tests and screenshots: the step, its targets, the cut-outs and the card, as on screen

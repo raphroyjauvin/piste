@@ -64,6 +64,8 @@
       </div>
     </div>
     <div id="places" class="places" role="group"></div>
+    <!-- the ★ chip's list: saved places, then the last two destinations (app.js renderPlaceList); it floats, so it shows over the keyboard too -->
+    <div id="place-list" class="place-list" role="group" hidden></div>
     <ul id="suggest" class="suggest" hidden></ul>
   </section>
 
@@ -78,23 +80,26 @@
     <div class="ends"><span>1 km</span><span>100 km</span></div>
     <div class="stop-pick"><span id="stop-label"><span data-i18n="stopOnWay"></span> <em data-i18n="optional"></em></span>
       <div id="stop-chips" class="stop-chips" role="radiogroup" aria-labelledby="stop-label"></div></div>
-    <label class="check"><input id="avoid-wind" type="checkbox"> <span data-i18n="avoidWind"></span></label>
   </section>
 
   <section class="prefs go-or-custom">
-    <div class="pref-row"><label for="strict" data-i18n="routeStyle"></label><output id="strict-out"></output></div>
-    <input id="strict" type="range" min="0" max="100" value="85" step="1">
-    <div class="ends"><span data-i18n="mostDirect"></span><span data-i18n="mostLanes"></span></div>
-    <div class="pref-checks">
-      <label class="check"><input id="hills" type="checkbox"> <span data-i18n="avoidHills"></span></label>
-      <label class="check"><input id="avoid-works" type="checkbox"> <span data-i18n="avoidWorks"></span></label>
+    <div class="route-style go-only">
+      <div class="pref-row"><label for="strict" data-i18n="routeStyle"></label><output id="strict-out"></output></div>
+      <input id="strict" type="range" min="0" max="100" value="85" step="1">
+      <div class="ends"><span data-i18n="mostDirect"></span><span data-i18n="mostLanes"></span></div>
+    </div>
+    <!-- "Avoid": real checkboxes drawn as chips; headwinds only in a made-to-order ride -->
+    <div class="avoid" role="group" aria-labelledby="avoid-label">
+      <span id="avoid-label" class="avoid-label" data-i18n="avoid"></span>
+      <label class="toggle"><input id="hills" type="checkbox"><span data-i18n="avoidHills"></span></label>
+      <label class="toggle custom-only" hidden><input id="avoid-wind" type="checkbox"><span data-i18n="avoidWind"></span></label>
+      <label class="toggle"><input id="avoid-works" type="checkbox"><span data-i18n="avoidWorks"></span></label>
     </div>
   </section>
 
   <section id="routes" class="routes" aria-live="polite"></section>
   <section id="detail" class="detail"></section>
-  <footer class="credits">
-    <p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo · ECCC · OpenFreeMap</p>
+  <footer class="panel-foot">
     <div id="foot-links" class="foot-links">
       <button type="button" id="feedback-link" class="feedback-link" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="feedback"></span></button>
       <button type="button" id="tour-again" class="tour-again" data-i18n="takeTour"></button>

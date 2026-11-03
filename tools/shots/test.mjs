@@ -173,7 +173,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     popTransition: (() => { const d = document.createElement("div"); d.className = "poi-pop"; document.body.appendChild(d); const v = getComputedStyle(d).transitionDuration; d.remove(); return v; })(),
     rideText: document.querySelector("#ride-go") && document.querySelector("#ride-go").textContent,
     previewLink: !!document.querySelector("#ride-preview"),   // desktop: "Let's ride!" is the preview, so no separate link
-    windOnlyInSuggest: !!document.querySelector("#avoid-wind").closest("#suggest-form") && !document.querySelector(".pref-checks #avoid-wind"),
+    windOnlyInSuggest: document.querySelector("#avoid-wind").closest(".toggle").classList.contains("custom-only") && !document.querySelector("#avoid-wind").closest(".toggle").getClientRects().length,   // 2026-11-03: a chip in the Avoid row, custom rides only
     routedGone: !document.querySelector(".routed-in") && !/Routed on this device/.test(document.body.innerText),   // 2026-10-31: the timing line under the route cards is gone
   }));
   const noFloatingCopy = await page.evaluate(() => !document.querySelector("#ride-fab"));
@@ -185,7 +185,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
   await page.click("#view-btn"); await page.waitForTimeout(1200);
   const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
   const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windOnlyInSuggest && before.routedGone && noFloatingCopy
-    && !before.tripChips && !before.exploreNote && before.avoidHills === "Avoid hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
+    && !before.tripChips && !before.exploreNote && before.avoidHills === "Hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
     && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
   return { ok, ...before, noFloatingCopy, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
 });
@@ -250,6 +250,59 @@ await run("suggest a ride: custom loops, stops, 100 km box, headwinds", `${APP}?
       && (!fix || !!s.wxData),   // with the saved forecast the wind data must have loaded, so the headwind costs were really applied
     loops, stops, startLabel, clamped, long, restroom, withHeadwindAvoidance: windy, weatherLoaded: !!s.wxData };
 }, FIX));
+
+// ---- local first (2026-11-03): the suggester skips chains, fast food and big-box shops (they stay on the map), puts real destinations first,
+// and leaves out places closed when you would get there (OSM opening hours: the common simple forms; anything else is unknown, so kept) ----
+await run("ride suggester: local first, real destinations first, never closed on arrival", APP, async (page) => page.evaluate(async () => {
+  const S = window.BikeSuggest, P = window.POIS, app = window.__app, F = S.FLAGS;
+  const mtl = (iso) => new Date(iso);   // Montréal is UTC-5 in November 2026: Wednesday 4 Nov 10:00 there is 15:00Z
+  const WED_10 = mtl("2026-11-04T15:00:00Z"), WED_1230 = mtl("2026-11-04T17:30:00Z"), WED_1330 = mtl("2026-11-04T18:30:00Z"), WED_19 = mtl("2026-11-05T00:00:00Z"),
+    THU_02 = mtl("2026-11-05T07:00:00Z"), SAT_0730 = mtl("2026-11-07T12:30:00Z"), SAT_09 = mtl("2026-11-07T14:00:00Z"), SUN_12 = mtl("2026-11-08T17:00:00Z"), MON_12 = mtl("2026-11-02T17:00:00Z");
+  const open = (text, d) => S.openAt(S.parseHours(text), d);
+  const hours = {
+    weekdays: open("Mo-Fr 07:00-18:00; Sa,Su 08:00-17:00", WED_10) === true && open("Mo-Fr 07:00-18:00; Sa,Su 08:00-17:00", WED_19) === false
+      && open("Mo-Fr 07:00-18:00; Sa,Su 08:00-17:00", SAT_0730) === false && open("Mo-Fr 07:00-18:00; Sa,Su 08:00-17:00", SAT_09) === true,
+    always: open("24/7", THU_02) === true, off: open("off", WED_10) === false, dayOff: open("Tu-Su 11:00-22:00; Mo off", MON_12) === false,
+    wrapDays: open("Fr-Mo 10:00-14:00", SUN_12) === true && open("Fr-Mo 10:00-14:00", WED_10) === false,
+    twoSpans: open("Mo-Fr 08:00-12:00,13:00-17:00", WED_1230) === false && open("Mo-Fr 08:00-12:00,13:00-17:00", WED_1330) === true,
+    pastMidnight: open("Mo-Su 16:00-03:00", THU_02) === true && open("Mo-Su 16:00-03:00", WED_10) === false,
+    commaRules: open("Su-Th 11:30-23:00,Fr,Sa 11:30-01:00", WED_10) === false && open("Su-Th 11:30-23:00,Fr,Sa 11:30-01:00", WED_1230) === true,
+    holidays: open("Mo-Fr 09:00-17:00; PH off", WED_10) === true && open("Mo-Su,PH 07:00-19:00", WED_10) === true,
+    unknown: ["sunrise-sunset", "Oct 01-Apr 14 07:00-19:00", "Mo-Su 08:00+", "", "\"by appointment\""].every((x) => S.parseHours(x) === null && open(x, WED_10) === null),
+  };
+  // arrival = leaving time + riding minutes; a place must still be open 15 minutes after you arrive; unknown hours are kept
+  const cafe = (h) => ["cafe", "Test", -73.58, 45.52, F.REAL, h], WED_16 = mtl("2026-11-04T21:00:00Z");
+  const arrival = { openAt1620: !S.closedOnArrival(cafe("Mo-Su 08:00-17:00"), WED_16, 20), closingSoon: S.closedOnArrival(cafe("Mo-Su 08:00-17:00"), WED_16, 50),
+    closed: S.closedOnArrival(cafe("Mo-Su 08:00-17:00"), WED_16, 70), unknownKept: !S.closedOnArrival(cafe("sunrise-sunset"), WED_16, 70), noHoursKept: !S.closedOnArrival(["cafe", "Bare", -73.58, 45.52], WED_16, 70) };
+  // the flags in pois.js: chains, fast food and big-box shops are skipped, but every place stays on the map; BIXI and metro keep their own 5th element
+  const named = (n) => P.filter((p) => p[1] === n), mapData = await app.map.getSource("pois").getData();
+  const chains = ["Tim Hortons", "McDonald's", "Starbucks", "Subway", "Dollarama"].map((n) => [n, named(n).length, named(n).filter((p) => S.poiFlags(p) & F.SKIP).length]);
+  const flags = { chainsSkipped: chains.every(([, n, k]) => n >= 3 && k === n), onMap: mapData.features.length === P.length && mapData.features.some((f) => f.properties.name === "Tim Hortons"),
+    transitUntouched: P.filter((p) => p[0] === "bixi" || p[0] === "metro").every((p) => S.poiFlags(p) === 0),
+    fastFoodNeverCandidate: !app.suggester.candidates(["food"]).some((i) => /^(McDonald's|Subway|A&W|KFC|Burger King)$/.test(P[i][1])) };
+  const counts = Object.fromEntries(Object.entries(S.STOP_KINDS).map(([k, v]) => [k, app.suggester.candidates(v.kinds).length]));
+  // a real destination a little farther (within 10% of the distance) comes before a bare entry; a much farther one does not
+  const start = [-73.58, 45.52], at = (m, real) => ["cafe", real ? "Real" : "Bare", start[0], start[1] + m / 111000, real ? F.REAL : undefined].filter((v) => v !== undefined);
+  const order = (pois) => new S.Suggester(app.router, pois).pick(start, 2000, ["cafe"], WED_10).map((p) => p.name).join();
+  const real = { closeReal: order([at(2040, false), at(2160, true)]) === "Real,Bare", farReal: order([at(2000, false), at(2300, true)]) === "Bare,Real",
+    skippedNever: order([at(2000, false), ["cafe", "Chain", start[0], start[1] + 2000 / 111000, F.SKIP]]) === "Bare",
+    closedNever: order([at(2000, false), ["cafe", "Shut", start[0], start[1] + 2000 / 111000, F.REAL, "Mo-Su 18:00-23:00"]]) === "Bare" };
+  // real suggestions, every stop kind, from the Plateau at 10:00 on a Wednesday (and coffee in the West Island): no chain, nothing closed on arrival
+  const weights = BikeRouter.weightsFor(1, false), rides = {};
+  for (const [name, from, kinds] of [["plateau", [-73.5795, 45.5235], Object.keys(S.STOP_KINDS)], ["westIsland", [-73.8237, 45.4602], ["cafe"]]]) {
+    for (const stop of kinds) {
+      const picks = await app.suggester.suggest({ start: from, km: 8, loop: true, stop, weights, now: WED_10 });
+      const bad = picks.filter((c) => (S.poiFlags(P[c.poi.i]) & F.SKIP) || S.closedOnArrival(P[c.poi.i], WED_10, BikeCommon.rideMinutes(c.route) * c.route.stops[0].at / c.route.length));
+      rides[`${name}:${stop}`] = picks.length + (bad.length ? ` (${bad.length} bad)` : "");
+    }
+  }
+  const late = await app.suggester.suggest({ start: [-73.5795, 45.5235], km: 8, loop: true, stop: "cafe", weights, now: mtl("2026-11-05T04:30:00Z") });   // 23:30
+  const lateOk = late.every((c) => !S.closedOnArrival(P[c.poi.i], mtl("2026-11-05T04:30:00Z"), BikeCommon.rideMinutes(c.route) * c.route.stops[0].at / c.route.length));
+  const checks = { ...Object.fromEntries(Object.entries(hours).map(([k, v]) => ["hours_" + k, v])), ...Object.fromEntries(Object.entries(arrival).map(([k, v]) => ["arrival_" + k, v])),
+    ...flags, ...real, everyKind: Object.values(rides).every((v) => /^[123]$/.test(String(v))), lateOk, enoughCandidates: Object.values(counts).every((n) => n >= 100) };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), chains, counts, rides, late: late.length };
+}));
 
 await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, async (page) => {
   const out = await page.evaluate(async () => {
@@ -490,9 +543,10 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   // tap the destination bar: the card slides so the bars sit just above the keyboard (a guess here: no real keyboard), brand and tabs hide
   const to = await page.locator("#to").boundingBox();
   await page.mouse.click(to.x + 20, to.y + to.height / 2); await page.waitForTimeout(400);
-  const docked = await settled(page, () => { const f = document.querySelector("#to").closest(".field").getBoundingClientRect();
+  const docked = await settled(page, () => { const f = document.querySelector("#to").closest(".field").getBoundingClientRect(), c = document.querySelector("#places").getBoundingClientRect();
     return { searching: document.body.classList.contains("searching"), active: document.activeElement.id, brandHidden: getComputedStyle(document.querySelector("#brand")).display === "none",
-      fieldBottom: Math.round(f.bottom), kbTop: Math.round(innerHeight - Math.max(260, innerHeight * 0.47)), clearShown: getComputedStyle(document.querySelector('.clear[data-target="to"]')).display !== "none" }; });
+      fieldBottom: Math.round(f.bottom), chipsTop: Math.round(c.top + 7), chipsBottom: Math.round(c.bottom - 7), kbTop: Math.round(innerHeight - Math.max(260, innerHeight * 0.47)),
+      clearShown: getComputedStyle(document.querySelector('.clear[data-target="to"]')).display !== "none" }; });   // the chips' circles sit 7 px inside their 44 px rows
   const suggestShown = () => { const l = document.querySelector("#suggest"); return !l.hidden && l.children.length > 0; };
   // type: suggestions float over the map, above the card (select the old destination first, so the text searched is exactly "marché jean")
   await page.keyboard.press("Control+A"); await page.keyboard.type("marché jean"); await until(page, suggestShown);
@@ -515,7 +569,7 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   await until(page, () => !document.body.classList.contains("searching") && window.__app.state.routes.length > 0 && document.querySelector("#panel").dataset.sheet === "half");   // card back, route drawn
   const done = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), routes: window.__app.state.routes.length, sheet: document.querySelector("#panel").dataset.sheet }));
   return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW
-      && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.kbTop && docked.fieldBottom >= docked.kbTop - 30
+      && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.chipsTop && docked.chipsBottom <= docked.kbTop && docked.chipsBottom >= docked.kbTop - 30
       && list.shown && list.aboveCard && !cancelled.searching && cancelled.cleared && cancelled.noKeyboard && cancelled.startKept && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
     half, full, peek, ...layout, docked, list, cancelled, moved, done };
 }, { width: 402, height: 874 });
@@ -1360,6 +1414,84 @@ await run("search bars: Use my location refused shows a calm message and changes
   return { ok, toast, before, after };
 }, { width: 1440, height: 900 }, { permissions: [] });
 
+// ---- locate on open (2026-11-03): location already allowed, the map opens on you; a first visit asks once, after the welcome card ----
+await run("locate on open: location allowed, the map opens on you (a dot, My location), nothing when far away or on a shared link", APP, async (page, ctx) => {
+  const infos = []; page.on("console", (m) => { if (m.type() === "info") infos.push(m.text()); });
+  await until(page, () => window.__app.state.fromLabel === "My location" && !window.__app.map.isMoving(), null, 20000);
+  const here = await page.evaluate(() => { const s = window.__app.state, c = window.__app.map.getCenter(), dot = document.querySelector(".me-dot");
+    return { from: s.from && s.from.map((v) => +v.toFixed(4)), val: document.querySelector("#from").value, centre: [+c.lng.toFixed(3), +c.lat.toFixed(3)], zoom: +window.__app.map.getZoom().toFixed(1),
+      dot: !!dot && dot.getAttribute("aria-hidden") === "true", focus: document.activeElement.tagName, toast: !document.querySelector("#toast").hidden, routes: s.routes.length }; });
+  // far from the island (Toronto): the default view stays and no message shows
+  await ctx.setGeolocation({ latitude: 43.6532, longitude: -79.3832 });
+  await page.goto(BASE + APP, { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  for (let i = 0; i < 100 && !infos.some((x) => /off the island/.test(x)); i++) await page.waitForTimeout(100);
+  const far = await page.evaluate(() => { const c = window.__app.map.getCenter(); return { from: window.__app.state.from, dot: !!document.querySelector(".me-dot"), centre: [+c.lng.toFixed(3), +c.lat.toFixed(3)], toast: !document.querySelector("#toast").hidden }; });
+  // a shared link (from, to, trip, suggest, classic, ride) shows what it says, never your position
+  await ctx.setGeolocation({ latitude: 45.5232, longitude: -73.5865 });
+  await page.goto(BASE + APP + "?trip=montroyal", { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(idle);
+  const link = await page.evaluate(() => ({ label: window.__app.state.fromLabel, dot: !!document.querySelector(".me-dot") }));
+  const near = (a, b) => Math.abs(a - b) < 0.003;
+  const checks = { startIsYou: here.val === "My location" && here.from && here.from.join() === "-73.5865,45.5232", centred: near(here.centre[0], -73.5865) && near(here.centre[1], 45.5232) && here.zoom >= 14.5,
+    dot: here.dot, noFocusTaken: !/^(INPUT|TEXTAREA)$/.test(here.focus), quiet: !here.toast, noRoute: here.routes === 0,
+    farIgnored: far.from === null && !far.dot && near(far.centre[0], -73.585) && near(far.centre[1], 45.522) && !far.toast, farNoted: infos.some((x) => /off the island/.test(x)),
+    linkWins: link.label === "Mont-Royal metro" && !link.dot };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), here, far, link, infos };
+}, { width: 1440, height: 900 }, { permissions: ["geolocation"], geolocation: { latitude: 45.5232, longitude: -73.5865, accuracy: 10 } });
+
+// The browser's permission and position are stubbed (localStorage "test-geo-perm" = prompt | denied | granted, "test-geo-deny" = 1 refuses),
+// so the first-visit question can be followed without a real prompt; every call to getCurrentPosition is counted.
+const geoStub = () => {
+  window.__geoCalls = 0;
+  const ls = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  Object.defineProperty(navigator, "permissions", { configurable: true, value: { query: async ({ name }) => ({ name, state: ls("test-geo-perm") || "prompt" }) } });
+  Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
+    getCurrentPosition(ok, fail) { window.__geoCalls++; setTimeout(() => (ls("test-geo-deny") ? fail({ code: 1, message: "refused (test)" }) : ok({ coords: { longitude: -73.5795, latitude: 45.5235, accuracy: 12 } })), 30); },
+    watchPosition() { return 0; }, clearWatch() {} } });
+};
+await run("locate on open: a first visit asks once, right after the welcome card (after the tour if taken); refused or denied, nothing more", APP, async (page, ctx) => {
+  const fresh = async (perm, deny) => {   // a first visit again, with this permission state
+    await page.evaluate(([perm, deny]) => { for (const k of ["piste-welcomed", "piste-locate-asked"]) localStorage.removeItem(k); localStorage.setItem("test-geo-perm", perm); if (deny) localStorage.setItem("test-geo-deny", "1"); else localStorage.removeItem("test-geo-deny"); }, [perm, deny]);
+    await page.goto(BASE + APP, { waitUntil: "load" });
+    await until(page, welcomeUp, null, 90000);
+  };
+  const snap = () => page.evaluate(() => ({ calls: window.__geoCalls, label: window.__app.state.fromLabel, asked: localStorage.getItem("piste-locate-asked"), toast: !document.querySelector("#toast").hidden,
+    focus: document.activeElement.tagName, welcome: !document.querySelector("#welcome").hidden, dot: !!document.querySelector(".me-dot") }));
+  await ctx.addInitScript(geoStub);
+  // "prompt": not while the welcome card shows; once it closes, one question, and the start becomes My location
+  await fresh("prompt", false);
+  const during = await snap();
+  await page.click("#welcome-skip");
+  await until(page, () => window.__app.state.fromLabel === "My location");
+  const after = await snap();
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 }); await page.evaluate(idle);
+  const reload = await snap();   // still "prompt": already asked, so no question
+  // the tour first: no question during the tour, one when it ends
+  await fresh("prompt", false);
+  await page.click("#welcome-tour"); await until(page, () => window.pisteTour.info().open && window.pisteTour.info().settled, null, 30000);
+  const inTour = await snap();
+  await page.keyboard.press("Escape"); await until(page, () => !window.pisteTour.info().open);
+  await until(page, () => window.__geoCalls === 1 && window.__app.state.fromLabel === "My location");
+  const afterTour = await snap();
+  // refused at the question: no message, nothing changes, and it is never asked again
+  await fresh("prompt", true);
+  await page.click("#welcome-skip"); await until(page, () => window.__geoCalls === 1);
+  await page.evaluate(idle);
+  const refused = await snap();
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 }); await page.evaluate(idle);
+  const refusedReload = await snap();
+  // denied in the browser: never asked
+  await fresh("denied", false);
+  await page.click("#welcome-skip"); await until(page, () => document.querySelector("#welcome").hidden); await page.evaluate(idle);
+  const denied = await snap();
+  const checks = { notOverWelcome: during.calls === 0 && during.welcome, askedAfter: after.calls === 1 && after.label === "My location" && after.asked === "1" && after.dot && !after.welcome && !/^(INPUT|TEXTAREA)$/.test(after.focus),
+    onceOnly: reload.calls === 0 && reload.label === "", notDuringTour: inTour.calls === 0, afterTour: afterTour.calls === 1 && afterTour.label === "My location",
+    refusedQuiet: refused.calls === 1 && refused.label === "" && !refused.toast && refused.asked === "1" && !refused.dot, refusedNotAgain: refusedReload.calls === 0, deniedNever: denied.calls === 0 && denied.label === "" };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), during, after, reload, inTour, afterTour, refused, refusedReload, denied };
+}, { width: 1440, height: 900 }, { fresh: true });
+
 await run("search bars (phone): x never opens the keyboard, bars keep their layout in a 390 px card", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
   const fit = await page.evaluate(() => { const panel = document.querySelector("#panel").getBoundingClientRect();
     return ["from", "to"].map((w) => { const f = document.querySelector("#" + w).closest(".field").getBoundingClientRect(), i = document.querySelector("#" + w).getBoundingClientRect();
@@ -1418,10 +1550,17 @@ await run("map credits: the i sits bottom right, opens leftwards, becomes an x (
   await page.click(".maplibregl-ctrl-attrib-button"); await page.waitForTimeout(400);
   const again = await page.evaluate(creditsProbe);
   const stays = Math.abs(open.btn[2] - closed.btn[2]) <= 1 && Math.abs(open.btn[3] - closed.btn[3]) <= 1;
+  // 2026-11-03: the card's footer has no credits line any more; the "i" and About & terms between them name every source it had
+  const sources = await page.evaluate(() => {
+    const foot = document.querySelector("#panel footer"), i = document.querySelector(".maplibregl-ctrl-attrib-inner").textContent, about = document.querySelector("#about-card").textContent;
+    const all = ["Ville de Montréal (CC BY 4.0)", "OpenStreetMap contributors", "NRCan HRDEM 2023 + 2024", "Canopée 2019", "STM", "REM (OpenStreetMap)", "BIXI", "Open-Meteo", "ECCC", "OpenFreeMap"];
+    return { footerClean: !/Ville de Montréal|OpenStreetMap|NRCan/.test(foot.textContent) && !document.querySelector(".credits"), missing: all.filter((x) => !i.includes(x) && !about.includes(x)),
+      inI: all.filter((x) => i.includes(x)).length, osmInI: /OpenStreetMap/.test(i) };
+  });
   const ok = closed.nearRight && closed.nearBottom && closed.size[0] <= 24 && closed.size[1] <= 24 && closed.zoomAbove === true && !closed.open
     && open.open && stays && open.box[0] < closed.btn[0] - 150 && Math.abs(open.box[2] - closed.box[2]) <= 1 && open.icon !== closed.icon && creditsText(open.text)
-    && !again.open && again.icon === closed.icon && Math.abs(again.btn[0] - closed.btn[0]) <= 1;
-  return { ok, closed, open, again, stays };
+    && !again.open && again.icon === closed.icon && Math.abs(again.btn[0] - closed.btn[0]) <= 1 && sources.footerClean && !sources.missing.length && sources.osmInI;
+  return { ok, closed, open, again, stays, sources };
 });
 await run("map credits (phone): the i rides just above the bottom sheet, 44 px tap area, hides with the sheet fully up", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
   const at = {};
@@ -1610,6 +1749,46 @@ await run("avoid construction: off by default, remembered, moves the route off a
   return { ok, defaults, moved, kept, back, cleared, tap, label: cb.parentElement.textContent.trim() };
 }));
 
+// ---- the Avoid row (2026-11-03): a small "Avoid" label, then real checkboxes drawn as chips, on one line at 390 px in English and French;
+// made-to-order rides have no route-style slider and always take the most bike paths ----
+await run("Avoid row: one line of chips at 390 px (EN, FR, all on); made-to-order rides: no slider, most bike paths", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
+  const row = () => page.evaluate(async () => {
+    const r = document.querySelector(".avoid"), p = document.querySelector("#panel").getBoundingClientRect();
+    await Promise.all(r.getAnimations({ subtree: true }).map((a) => a.finished));   // the check marks slide in
+    const items = [...r.children].filter((c) => c.getClientRects().length), rects = items.map((c) => c.getBoundingClientRect()), mid = rects.map((b) => b.top + b.height / 2);
+    const name = document.getElementById(r.getAttribute("aria-labelledby"));
+    return { label: name && name.textContent, role: r.getAttribute("role"), chips: items.slice(1).map((c) => c.textContent.trim()), oneLine: Math.max(...mid) - Math.min(...mid) < 2,
+      inside: rects.every((b) => b.left >= p.left + 15.5 && b.right <= p.right - 15.5), right: Math.round(Math.max(...rects.map((b) => b.right))), tap44: items.slice(1).every((c) => c.getBoundingClientRect().height >= 44),
+      boxes: items.slice(1).map((c) => { const i = c.querySelector("input"); return `${i.id}:${i.type}:${i.checked}`; }), slider: document.querySelector("#strict").getClientRects().length > 0 };
+  });
+  const go = await row();
+  for (const id of ["hills", "avoid-works"]) await page.tap(`.avoid label:has(#${id})`);
+  const goOn = await row();
+  // Suggest a ride, made to order: headwinds joins the row, and the route-style slider goes
+  await page.evaluate(() => { const s = document.querySelector("#strict"); s.value = 0; s.dispatchEvent(new Event("input")); window.__app.setTab("suggest"); window.__app.setSuggMode("custom"); });
+  await page.tap(".avoid label:has(#avoid-wind)");
+  const custom = await row();
+  await page.evaluate(() => window.__app.setLang("fr"));
+  const fr = await row();
+  // the suggester is handed the "most bike paths" weights whatever the hidden slider says
+  const weights = await page.evaluate(async () => {
+    const a = window.__app, sg = a.suggester, orig = sg.suggest.bind(sg); let got = null;
+    sg.suggest = (o) => { got = o.weights; return orig(o); };
+    await a.computeSuggestions(true); sg.suggest = orig;
+    const want = BikeRouter.weightsFor(1, true), low = BikeRouter.weightsFor(0, true);
+    return { most: JSON.stringify(got.w) === JSON.stringify(want.w) && got.hill === want.hill, notSlider: JSON.stringify(got.w) !== JSON.stringify(low.w), routes: a.state.routes.length };
+  });
+  await page.evaluate(() => { window.__app.setLang("en"); window.__app.setTab("go"); });
+  const back = await row();
+  const checks = { group: go.role === "group" && go.label === "Avoid", goChips: go.chips.join() === "Hills,Construction" && go.oneLine && go.inside && go.tap44 && go.slider,
+    realBoxes: go.boxes.join() === "hills:checkbox:false,avoid-works:checkbox:false", goAllOn: goOn.boxes.join() === "hills:checkbox:true,avoid-works:checkbox:true" && goOn.oneLine && goOn.inside,
+    customChips: custom.chips.join() === "Hills,Headwinds,Construction" && custom.oneLine && custom.inside && custom.boxes.every((b) => b.endsWith(":true")) && !custom.slider,
+    french: fr.label === "Éviter" && fr.chips.join() === "Côtes,Vent de face,Chantiers" && fr.oneLine && fr.inside, mostBikePaths: weights.most && weights.notSlider && weights.routes > 0,
+    goSliderBack: back.slider && back.chips.join() === "Hills,Construction" };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), go, goOn, custom, fr, weights, back };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
 // ---- Offline (2026-11-02): with ?sw=1 the service worker (a-positron/sw.js) is installed; with the signal gone, a reload still opens the app and plans a route ----
 await run("offline: the service worker keeps the app and routing working without a signal", `${APP}?sw=1`, async (page, ctx) => {
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
@@ -1671,7 +1850,8 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
   // headwinds no longer shape the Go routes (even with a strong wind on record), and the checkbox lives in the Suggest form
   const wind = await page.evaluate(() => { const a = window.__app, s = a.state, len = () => s.routes.map((c) => Math.round(c.r.length)).join();
     const before = len(); s.wxData = { now: { wind: 40, dir: 90 } }; s.avoidWind = true; a.recompute(false); const after = len(); s.avoidWind = false; s.wxData = null;
-    return { same: before === after, inForm: !!document.querySelector("#suggest-form #avoid-wind"), inPrefs: !!document.querySelector(".pref-checks #avoid-wind") }; });
+    const chip = document.querySelector("#avoid-wind").closest(".toggle");
+    return { same: before === after, customOnly: chip.classList.contains("custom-only"), hiddenInGo: !chip.getClientRects().length }; });
   // the share button: icon only, named, 44 px, not in the tour; Web Share gets the address that reopens the route
   await page.evaluate(shareStub);
   const btn = await page.evaluate(() => { const b = document.querySelector("#detail .share-btn"), r = b && b.getBoundingClientRect();
@@ -1698,7 +1878,7 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
   const classic = await page.evaluate(() => window.__shared[0].url);
   const loops = await page.evaluate(async () => { const a = window.__app; a.setSuggMode("custom"); await a.computeSuggestions(true); return !document.querySelector(".share-btn"); });
   const ok = cards.n >= 1 && cards.subs.every((x) => !/stretch|without a bike path|tronçon/i.test(x)) && cards.pct.every((x) => /on bike paths/.test(x))
-    && wind.same && wind.inForm && !wind.inPrefs
+    && wind.same && wind.customOnly && wind.hiddenInGo
     && btn && btn.label === "Share this route" && btn.text === "" && btn.svg && btn.w >= 44 && btn.h >= 44 && !/share/i.test(btn.tour)
     && web.url === web.want && !/welcome|notrack/.test(web.url) && copied.text === web.url && copied.toast === "Link copied" && failed === "Couldn't copy the link"
     && again === was && /\?classic=oldport$/.test(classic) && !/welcome|notrack/.test(classic) && loops;
@@ -1706,92 +1886,180 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
 }, { width: 1440, height: 900 });
 
 // ------------------------------------------------------------------ saved places (2026-11-02): Home, Work, others; recents; all on this device
+// 2026-11-03: the chips are Home, Work, ★ and +, icon only (names in aria-label and title); ★ (once there is a saved place or a recent
+// destination) opens the list of saved places and the last two destinations; an empty search bar shows no list.
 const placeChips = () => [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label"));
-await run("saved places: set Home, use it, name a place, edit, delete, reload, recents, nothing sent", `${APP}`, async (page, ctx) => {
+const listRows = () => [...document.querySelectorAll("#place-list .pl-row")].map((b) => b.textContent.trim());
+await run("saved places: icon chips, set Home, use it, ★ list (saved, last 2 destinations), edit and delete from it, no list on an empty bar, nothing sent", `${APP}`, async (page, ctx) => {
   const seen = []; ctx.on("request", (r) => seen.push(r.url() + " " + (r.postData() || "")));
   const out = {};
+  const chipLook = () => page.evaluate(() => [...document.querySelectorAll("#places .place")].map((b) => ({ name: b.getAttribute("aria-label"), title: b.title, text: b.textContent.trim(), svg: !!b.querySelector("svg"),
+    edge: getComputedStyle(b, "::before").borderTopStyle, w: Math.round(b.getBoundingClientRect().width), h: Math.round(b.getBoundingClientRect().height) })));
   out.start = await page.evaluate(placeChips);
+  out.look = await chipLook();
   await page.click('#places [data-kind="home"]');   // nothing chosen yet
   out.nothingToast = await page.evaluate(() => (document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent));
   // choose a place, then "Set home" keeps it; Home keeps working after a reload
   await page.evaluate(() => { window.piste.setPoint("to", [-73.5745, 45.5163], "Zorglub"); });
   await page.click('#places [data-kind="home"]');
-  out.afterSet = await page.evaluate(placeChips);
+  out.afterSet = await chipLook();
   await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
-  out.afterReload = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label")), store: JSON.parse(localStorage.getItem("piste-places")) }));
+  out.afterReload = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")), store: JSON.parse(localStorage.getItem("piste-places")) }));
   // a start only: the Home chip becomes the destination and the route is made
   await page.evaluate(() => { window.piste.setPoint("from", [-73.5875, 45.5231], "Start place"); });
   await page.click('#places [data-i="0"]');
   await until(page, () => window.__app.state.routes.length > 0);
   out.routed = await page.evaluate(() => { const s = window.__app.state; return { to: s.to && s.to.map((v) => +v.toFixed(4)), label: s.toLabel, routes: s.routes.length }; });
-  // "＋": name the destination
+  // "+": name the destination; it is not a chip of its own, ★ appears and lists it
   await page.click("#places .add");
   out.dialog = await page.evaluate(() => ({ open: !document.querySelector("#place-dialog").hidden, name: document.querySelector("#pl-name").value, del: document.querySelector("#pl-delete").hidden }));
   await page.fill("#pl-name", "Café Zorglub"); await page.keyboard.press("Enter");
   await until(page, () => document.querySelector("#place-dialog").hidden);
   out.named = await page.evaluate(placeChips);
-  // edit with the keyboard (F2 on the chip): rename; then, with the mouse (right click), move it to the current place; then delete it
-  await page.focus('#places [data-i="1"]'); await page.keyboard.press("F2");
-  await until(page, () => !document.querySelector("#place-dialog").hidden);
+  await page.click("#places .star");
+  out.list = await page.evaluate(() => ({ open: !document.querySelector("#place-list").hidden, expanded: document.querySelector("#places .star").getAttribute("aria-expanded"),
+    rows: [...document.querySelectorAll("#place-list .pl-row")].map((b) => b.textContent.trim()), edit: document.querySelector("#place-list .pl-edit") && document.querySelector("#place-list .pl-edit").getAttribute("aria-label") }));
+  // its pencil: the place form (rename), then focus back on ★
+  await page.click("#place-list .pl-edit"); await until(page, () => !document.querySelector("#place-dialog").hidden);
+  out.editOpen = await page.evaluate(() => ({ title: document.querySelector("#pl-title").textContent, name: document.querySelector("#pl-name").value, listClosed: document.querySelector("#place-list").hidden }));
   await page.fill("#pl-name", "Café 2"); await page.click('#place-form button[type="submit"]');
   await until(page, () => document.querySelector("#place-dialog").hidden);
+  out.renamed = await page.evaluate(() => ({ focus: document.activeElement.classList.contains("star"), names: JSON.parse(localStorage.getItem("piste-places")).map((p) => p.name) }));
+  // move it to the current place, then delete it: ★ goes with it (no recent destinations yet)
   await page.evaluate(() => { window.piste.setPoint("to", [-73.6, 45.53], "Elsewhere"); });
-  await page.click('#places [data-i="1"]', { button: "right" });
-  await until(page, () => !document.querySelector("#place-dialog").hidden);
+  await page.click("#places .star"); await page.click("#place-list .pl-edit"); await until(page, () => !document.querySelector("#place-dialog").hidden);
   await page.click("#pl-use"); await until(page, () => document.querySelector("#place-dialog").hidden);
-  out.moved = await page.evaluate(() => { const p = JSON.parse(localStorage.getItem("piste-places")); return { chips: [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label")), ll: p[1].ll }; });
-  await page.click('#places [data-i="1"]', { button: "right" }); await until(page, () => !document.querySelector("#place-dialog").hidden);
+  out.moved = await page.evaluate(() => JSON.parse(localStorage.getItem("piste-places"))[1].ll);
+  await page.click("#places .star"); await page.click("#place-list .pl-edit"); await until(page, () => !document.querySelector("#place-dialog").hidden);
   await page.click("#pl-delete"); await until(page, () => document.querySelector("#place-dialog").hidden);
-  out.deleted = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label")), n: JSON.parse(localStorage.getItem("piste-places")).length }));
-  // recents: a destination chosen from the suggestions comes back on an empty bar, under the saved places; they can be cleared
-  await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
-  await page.click("#to"); await page.keyboard.type("Rachel & Papineau");
-  await until(page, () => /Rachel/.test((document.querySelector("#suggest li") || {}).textContent || ""));
-  await page.keyboard.press("Enter");
+  out.deleted = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")), n: JSON.parse(localStorage.getItem("piste-places")).length, focus: document.activeElement.className }));
+  // an empty bar shows no list (2026-11-03); typing still searches, and a chosen destination becomes a recent one
   await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
   await page.click("#to");
-  await until(page, () => document.querySelectorAll("#suggest li").length > 1);
-  out.list = await page.evaluate(() => [...document.querySelectorAll("#suggest li")].map((li) => li.textContent));
-  await page.click("#suggest li:last-child");
-  out.afterClear = await page.evaluate(() => ({ recents: JSON.parse(localStorage.getItem("piste-recents")), shown: !document.querySelector("#suggest").hidden }));
+  out.emptyBar = await page.evaluate(() => ({ focus: document.activeElement.id, list: !document.querySelector("#suggest").hidden && document.querySelectorAll("#suggest li").length }));
+  await page.keyboard.type("Rachel & Papineau");
+  await until(page, () => /Rachel/.test((document.querySelector("#suggest li") || {}).textContent || ""));
+  await page.keyboard.press("Enter");
+  out.recent = await page.evaluate(() => ({ recents: JSON.parse(localStorage.getItem("piste-recents")).length, chips: [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")) }));
+  await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
+  await page.click("#to"); await page.keyboard.press("Backspace");
+  out.emptyAgain = await page.evaluate(() => !document.querySelector("#suggest").hidden && document.querySelectorAll("#suggest li").length);
+  // the list holds saved places first, then only the last two destinations; a row is used as a chip would be
+  await page.evaluate(() => {
+    localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "", ll: [-73.5745, 45.5163] }, { kind: "", name: "Atelier Bravo", ll: [-73.59, 45.53] }]));
+    localStorage.setItem("piste-recents", JSON.stringify(["Rec One", "Rec Two", "Rec Three"].map((name, i) => ({ name, ll: [-73.57 - i / 100, 45.51] }))));
+  });
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(() => { window.piste.setPoint("from", [-73.5875, 45.5231], "Start place"); });
+  await page.click("#places .star");
+  out.rows = await page.evaluate(listRows);
+  await page.click('#place-list .pl-row[data-use="recent"]');
+  await until(page, () => window.__app.state.routes.length > 0);
+  out.used = await page.evaluate(() => ({ to: window.__app.state.toLabel, closed: document.querySelector("#place-list").hidden, expanded: document.querySelector("#places .star").getAttribute("aria-expanded") }));
+  // keyboard: Enter on ★ opens it with focus on the first row, arrows move, Esc closes it and focus goes back to ★; a click outside closes it too
+  await page.focus("#places .star"); await page.keyboard.press("Enter");
+  out.kb = await page.evaluate(() => ({ open: !document.querySelector("#place-list").hidden, focus: document.activeElement.textContent.trim() }));
+  await page.keyboard.press("ArrowDown");
+  out.kb.next = await page.evaluate(() => document.activeElement.className);
+  await page.keyboard.press("Escape");
+  out.kb.esc = await page.evaluate(() => ({ closed: document.querySelector("#place-list").hidden, onStar: document.activeElement.classList.contains("star"), expanded: document.activeElement.getAttribute("aria-expanded") }));
+  await page.click("#places .star"); await page.mouse.click(900, 450);
+  out.outside = await page.evaluate(() => document.querySelector("#place-list").hidden);
+  // clearing the recent places from the list
+  await page.click("#places .star"); await page.click("#place-list .pl-clear");
+  out.cleared = await page.evaluate(() => ({ recents: JSON.parse(localStorage.getItem("piste-recents")).length, star: !!document.querySelector("#places .star") }));
+  await page.evaluate(() => window.__app.setLang("fr"));
+  out.fr = await page.evaluate(() => [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")));
   const safe = (u) => { try { return decodeURIComponent(u); } catch (e) { return u; } };
-  const leaked = seen.filter((u) => /Zorglub|Elsewhere|45\.5163|73\.5745/.test(safe(u)));
-  const ok = out.start.join() === "Set home,Set work,Save a place" && /pick a place first/i.test(out.nothingToast) && out.afterSet.join() === "Home,Set work,Save a place"
-    && out.afterReload.chips.join() === "Home,Set work,Save a place" && out.afterReload.store.length === 1 && out.afterReload.store[0].kind === "home"
-    && out.routed.to.join() === "-73.5745,45.5163" && out.routed.label === "Home" && out.routed.routes > 0
-    && out.dialog.open && out.dialog.name === "Home" && out.dialog.del && out.named.join() === "Home,Set work,Café Zorglub,Save a place"
-    && out.moved.chips.join() === "Home,Set work,Café 2,Save a place" && out.moved.ll.join() === "-73.6,45.53" && out.deleted.n === 1 && out.deleted.chips.join() === "Home,Set work,Save a place"
-    && out.list.length === 3 && /^Home\s*Saved$/.test(out.list[0]) && /Rachel/.test(out.list[1]) && /Recent/.test(out.list[1]) && /Clear recent/.test(out.list[2])
-    && out.afterClear.recents.length === 0 && !out.afterClear.shown && leaked.length === 0;
-  return { ok, ...out, requests: seen.length, leaked };
+  const leaked = seen.filter((u) => /Zorglub|Elsewhere|Bravo|45\.5163|73\.5745/.test(safe(u)));
+  const checks = {
+    firstVisit: out.start.join() === "Set home,Set work,Save a place",
+    iconOnly: out.look.every((c) => c.text === "" && c.svg && c.title === c.name && c.w >= 44 && c.h >= 44) && out.look[0].edge === "dashed" && out.look[1].edge === "dashed" && out.look[2].edge === "solid",
+    pickFirst: /pick a place first/i.test(out.nothingToast), homeSet: out.afterSet.map((c) => c.name).join() === "Home,Set work,Save a place" && out.afterSet[0].edge === "solid" && out.afterSet[0].title === "Home",
+    reload: out.afterReload.chips.join() === "Home,Set work,Save a place" && out.afterReload.store.length === 1 && out.afterReload.store[0].kind === "home",
+    homeUsed: out.routed.to.join() === "-73.5745,45.5163" && out.routed.label === "Home" && out.routed.routes > 0,
+    plusDialog: out.dialog.open && out.dialog.name === "Home" && out.dialog.del, noCustomChip: out.named.join() === "Home,Set work,Saved and recent places,Save a place",
+    starList: out.list.open && out.list.expanded === "true" && out.list.rows.length === 1 && /^Café Zorglub\s*Saved$/.test(out.list.rows[0]) && out.list.edit === "Edit Café Zorglub",
+    editFromList: out.editOpen.title === "Edit place" && out.editOpen.name === "Café Zorglub" && out.editOpen.listClosed && out.renamed.focus && out.renamed.names.join() === ",Café 2",
+    moveFromList: out.moved.join() === "-73.6,45.53", deleteFromList: out.deleted.n === 1 && out.deleted.chips.join() === "Home,Set work,Save a place",
+    noEmptyBarList: out.emptyBar.focus === "to" && !out.emptyBar.list && !out.emptyAgain, typedSearch: out.recent.recents === 1 && out.recent.chips.includes("Saved and recent places"),
+    savedThenTwoRecents: out.rows.length === 3 && /^Atelier Bravo\s*Saved$/.test(out.rows[0]) && /^Rec One\s*Recent$/.test(out.rows[1]) && /^Rec Two\s*Recent$/.test(out.rows[2]),
+    rowUsed: out.used.to === "Rec One" && out.used.closed && out.used.expanded === "false",
+    keyboard: out.kb.open && /^Atelier Bravo/.test(out.kb.focus) && out.kb.next === "pl-edit" && out.kb.esc.closed && out.kb.esc.onStar && out.kb.esc.expanded === "false", outsideCloses: out.outside,
+    clearRecents: out.cleared.recents === 0 && out.cleared.star, french: out.fr.join() === "Maison,Ajouter le travail,Lieux enregistrés et récents,Enregistrer un lieu", nothingSent: leaked.length === 0,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), ...out, requests: seen.length, leaked };
 }, { width: 1440, height: 900 });
 
-await run("saved places: phone chips scroll, long press edits, search shows saved places over the keyboard", `${APP}`, async (page) => {
-  await page.evaluate(() => { localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "", ll: [-73.5745, 45.5163] }, ...["Alpha", "Bravo place", "Charlie", "Delta", "Echo", "Foxtrot"].map((name, i) => ({ kind: "", name, ll: [-73.58 - i / 100, 45.52] }))])); });
+await run("saved places (phone): four chips fit, long press edits Home, typing shows the chips and no list, ★ works with the keyboard up", `${APP}?safe=47,34`, async (page) => {
+  await page.evaluate(() => {
+    localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "", ll: [-73.5745, 45.5163] }, ...["Alpha", "Bravo place"].map((name, i) => ({ kind: "", name, ll: [-73.58 - i / 100, 45.52] }))]));
+    localStorage.setItem("piste-recents", JSON.stringify([{ name: "Rec One", ll: [-73.57, 45.51] }]));
+  });
   await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
   await page.evaluate(() => window.__app.setSheet("half")); await page.waitForTimeout(500);
   const row = await settled(page, () => { const r = document.querySelector("#places"), chips = [...r.querySelectorAll(".place")].map((c) => c.getBoundingClientRect()), s = document.querySelector(".search");
     const withRow = s.offsetHeight; r.style.display = "none"; const without = s.offsetHeight; r.style.display = "";
-    return { scrolls: r.scrollWidth > r.clientWidth + 20, tap44: chips.every((c) => c.height >= 44 && c.width >= 43.5), added: withRow - without, pageX: document.documentElement.scrollWidth <= innerWidth,
+    return { n: chips.length, fits: r.scrollWidth <= r.clientWidth + 1, tap44: chips.every((c) => c.height >= 44 && c.width >= 43.5), added: withRow - without, pageX: document.documentElement.scrollWidth <= innerWidth,
       panelH: Math.round(document.querySelector("#panel").getBoundingClientRect().height), half: Math.round(innerHeight / 2) }; });
-  // a long press (finger held on a chip) opens the editor and does not also use the place
+  // a long press (finger held on Home) opens the editor and does not also use the place
   const hold = await page.evaluate(async () => {
-    const chip = document.querySelector('#places [data-i="1"]'), b = chip.getBoundingClientRect(), o = { bubbles: true, pointerType: "touch", pointerId: 7, isPrimary: true, clientX: b.left + 20, clientY: b.top + 22 };
+    const chip = document.querySelector('#places [data-i="0"]'), b = chip.getBoundingClientRect(), o = { bubbles: true, pointerType: "touch", pointerId: 7, isPrimary: true, clientX: b.left + 20, clientY: b.top + 22 };
     chip.dispatchEvent(new PointerEvent("pointerdown", o)); await new Promise((r) => setTimeout(r, 650));
     chip.dispatchEvent(new PointerEvent("pointerup", o)); chip.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-    return { open: !document.querySelector("#place-dialog").hidden, name: document.querySelector("#pl-name").value, usedIt: !!window.__app.state.to || !!window.__app.state.from };
+    return { open: !document.querySelector("#place-dialog").hidden, title: document.querySelector("#pl-title").textContent, usedIt: !!window.__app.state.to || !!window.__app.state.from };
   });
   await page.click("#pl-cancel"); await until(page, () => document.querySelector("#place-dialog").hidden);
-  // search mode: the chips step aside and the empty bar lists the saved places above the keyboard
-  await page.evaluate(() => document.querySelector("#to").focus());
-  await until(page, () => document.body.classList.contains("searching") && document.querySelectorAll("#suggest li").length > 0);
-  const search = await settled(page, () => { const u = document.querySelector("#suggest"), p = document.querySelector("#panel").getBoundingClientRect();
-    return { chipsHidden: getComputedStyle(document.querySelector("#places")).display === "none", items: u.querySelectorAll("li").length, first: u.querySelector("li").textContent,
-      listAbovePanel: Math.round(u.getBoundingClientRect().bottom) <= Math.round(p.top) + 1, shown: !u.hidden }; });
-  const ok = row.scrolls && row.tap44 && row.pageX && row.added <= 40 && row.panelH === row.half && hold.open && hold.name === "Alpha" && !hold.usedIt
-    && search.chipsHidden && search.items === 7 && /^Home\s*Saved$/.test(search.first) && search.shown && search.listAbovePanel;
-  return { ok, row, hold, search };
+  // tap the empty destination bar: the bar, the chips under it (just above the keyboard) and no list
+  await page.tap("#to");
+  await until(page, () => document.body.classList.contains("searching"));
+  const search = await settled(page, () => { const p = document.querySelector("#panel").getBoundingClientRect(), c = document.querySelector("#places").getBoundingClientRect(), f = document.querySelector("#to").closest(".field").getBoundingClientRect();
+    return { chips: getComputedStyle(document.querySelector("#places")).display !== "none", underBar: c.top >= f.bottom - 1, aboveKb: c.bottom - 7 <= innerHeight - Math.max(260, innerHeight * 0.47) + 1,
+      list: !document.querySelector("#suggest").hidden, focus: document.activeElement.id }; });
+  // ★ with the keyboard up: the list floats over the map just above the card, typing goes on, a row is the destination and the search ends.
+  // (Taps in the first 800 ms after the one that opened search are swallowed on purpose, app.js swallowUntil: a time window, so it is waited out.)
+  await page.waitForTimeout(900);
+  await page.tap("#places .star");
+  const star = await settled(page, () => { const l = document.querySelector("#place-list"), r = l.getBoundingClientRect(), p = document.querySelector("#panel").getBoundingClientRect();
+    return { open: !l.hidden, aboveCard: r.bottom <= p.top + 1 && r.top >= 0, focus: document.activeElement.id, searching: document.body.classList.contains("searching"), rows: [...l.querySelectorAll(".pl-row")].map((b) => b.textContent.trim()) }; });
+  await page.tap('#place-list .pl-row[data-use="saved"]');
+  await until(page, () => !document.body.classList.contains("searching"));
+  const used = await page.evaluate(() => ({ to: window.__app.state.toLabel, closed: document.querySelector("#place-list").hidden, sheet: document.querySelector("#panel").dataset.sheet }));
+  const checks = { fourFit: row.n === 4 && row.fits && row.tap44 && row.pageX && row.added <= 40 && row.panelH === row.half, holdEdits: hold.open && hold.title === "Edit place" && !hold.usedIt,
+    typingShowsChips: search.chips && search.underBar && search.aboveKb && !search.list && search.focus === "to",
+    starOverKeyboard: star.open && star.aboveCard && star.focus === "to" && star.searching && star.rows.length === 3 && /^Alpha/.test(star.rows[0]) && /^Rec One/.test(star.rows[2]),
+    rowUsed: used.to === "Alpha" && used.closed && used.sheet === "half" };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), row, hold, search, star, used };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ---- a place's pop-up (2026-11-03): "More info" opens a web search for its name + Montréal in a new tab; named places only ----
+await run("place pop-up: More info searches the name + Montréal in a new tab (named places only, EN and FR)", APP, async (page) => {
+  await page.evaluate(() => window.__app.map.jumpTo({ center: [-73.5865, 45.5232], zoom: 17.3 }));   // the Plateau: cafés, bakeries, restaurants
+  const layers = ["poi-cafe", "poi-food", "poi-bakery"];
+  await until(page, (ls) => window.__app.map.queryRenderedFeatures({ layers: ls }).some((f) => f.properties.name), layers, 40000);
+  const pt = await page.evaluate((ls) => { const m = window.__app.map, f = m.queryRenderedFeatures({ layers: ls }).find((x) => x.properties.name), p = m.project(f.geometry.coordinates), r = m.getContainer().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y }; }, layers);
+  await page.mouse.click(pt.x, pt.y);   // a real click on a business, as a rider would
+  await until(page, () => !!document.querySelector(".maplibregl-popup .pop-more"));
+  const link = () => page.evaluate(() => { const pop = document.querySelector(".maplibregl-popup"), a = pop && pop.querySelector(".pop-more");
+    return { name: pop ? pop.querySelector("b").textContent : null, href: a && a.getAttribute("href"), target: a && a.target, rel: a && a.rel, text: a && a.textContent.trim(), h: a ? Math.round(a.getBoundingClientRect().height) : 0 }; });
+  const clicked = await link();
+  // the same pop-up made directly for other kinds: an unnamed restroom and a BIXI station get no link; French words it
+  const make = (props, layer = "poi-cafe") => page.evaluate(([props, layer]) => { document.querySelectorAll(".maplibregl-popup").forEach((p) => p.remove());
+    window.__app.poiPopup({ layer: { id: layer }, properties: props, geometry: { coordinates: [-73.5865, 45.5232] } }); }, [props, layer]);
+  await make({ k: "toilets", name: "" }); const unnamed = await link();
+  await make({ name: "de la Commune / Place Jacques-Cartier", bikes: 3, docks: 5, renting: true }, "bixi-live"); const bixi = await link();
+  await page.evaluate(() => window.__app.setLang("fr"));
+  await make({ k: "bakery", name: "Boulangerie Ange & Fils" }); const fr = await link();
+  const want = (name) => `https://www.google.com/search?q=${encodeURIComponent(name + " Montréal")}`;
+  const checks = { search: !!clicked.name && clicked.href === want(clicked.name), newTab: clicked.target === "_blank" && /noopener/.test(clicked.rel), words: /^More info/.test(clicked.text) && /new tab/.test(clicked.text),
+    tap44: clicked.h >= 44, unnamedNone: unnamed.name !== null && unnamed.href === null, bixiNone: bixi.name !== null && bixi.href === null,
+    french: /^Plus d'infos/.test(fr.text) && fr.href === want("Boulangerie Ange & Fils") && /%26/.test(fr.href) };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), clicked, unnamed, bixi, fr };
+});
 
 // ---- REM (2026-11-02): light-rail tracks and stations next to the metro, with their own Layers checkbox and credit ----
 await run("REM: tracks and stations on the map, a Layers checkbox, the credit", `${APP}?trip=montroyal`, async (page) => {
@@ -1807,7 +2075,7 @@ await run("REM: tracks and stations on the map, a Layers checkbox, the credit", 
     cb.click(); await new Promise((r) => setTimeout(r, 300));
     const found = (await BikeCommon.makeGeocoder(window.__app.router).search("Gare Centrale")).some((r) => r.kind === "rem");
     return { before, stationCount: names.length, hasGare: names.includes("Gare Centrale"), lineColor: m.getPaintProperty("rem-line", "line-color"), image: m.hasImage("poi-rem"), off, found,
-      credit: document.querySelector(".credits p").textContent.includes("REM"), label: cb.parentElement.textContent.trim() };
+      credit: document.querySelector(".maplibregl-ctrl-attrib-inner").textContent.includes("REM (OpenStreetMap)"), label: cb.parentElement.textContent.trim() };
   });
   const ok = out.before.line > 0 && out.before.stations > 0 && out.before.visible && out.stationCount >= 20 && out.hasGare && out.lineColor === "#84BD00" && out.image
     && out.off.every((v) => v === "none") && out.found && out.credit && out.label === "REM";

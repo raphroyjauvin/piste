@@ -115,9 +115,13 @@
       layers: [{ id: "background", type: "background", paint: { "background-color": "#f2f3f0" } }] };
     toast(t("offline"));
   }
+  // The "i" lists every data source (with About & terms). The basemap adds "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" itself;
+  // without it (offline), our own OpenStreetMap layers (places, buildings, paths) still need their credit.
+  const basemapCredit = !!style.sources.openmaptiles;
   const map = new maplibregl.Map({
     container: "map", style, center: [-73.585, 45.522], zoom: 12.8, maxPitch: 80,
-    attributionControl: { compact: true, customAttribution: "© 2026 Piste Montréal · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo · ECCC" },
+    attributionControl: { compact: true, customAttribution: "© 2026 Piste Montréal · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo · ECCC"
+      + (basemapCredit ? "" : " · © OpenStreetMap contributors") },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
@@ -563,6 +567,8 @@
     worksPen ??= router.worksPenalty(activeWorks(window.PLANNED.features, new Date().toLocaleDateString("en-CA")));
     return { worksPen };
   }
+  // Go somewhere follows the route-style slider; made-to-order rides (Suggest a ride) always take the most bike paths (2026-11-03)
+  const strictness = () => (state.tab === "suggest" ? 1 : +strict.value / 100);
   function strictLabel(v) { return t(v < 20 ? "mostDirect" : v < 45 ? "mostlyDirect" : v < 70 ? "balanced" : v < 92 ? "lanesFirst" : "lanesAlways"); }
   strict.addEventListener("input", () => { strictOut.textContent = strictLabel(+strict.value); recompute(false); });
   hills.addEventListener("change", () => recompute(false));
@@ -626,15 +632,15 @@
   for (const el of [fromEl, toEl]) {
     el.addEventListener("input", () => {
       if (!el.value.trim() && state[el.id]) { clearPoint(el.id); recompute(true); }   // all the text deleted: that place, and the route, go
-      sugTarget = el.id; clearTimeout(sugTimer);
-      sugTimer = setTimeout(async () => { sugItems = el.value.trim() ? await geocoder.search(el.value) : emptyItems(); sugOffline = sugItems.offline; sugActive = -1; renderSuggest(); }, 160);
+      sugTarget = el.id; clearTimeout(sugTimer); closeList(false);
+      sugTimer = setTimeout(async () => { sugItems = el.value.trim() ? await geocoder.search(el.value) : []; sugOffline = !!sugItems.offline; sugActive = -1; renderSuggest(); }, 160);
     });
     el.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown" && !sug.hidden) { sugActive = Math.min(sugItems.length - 1, sugActive + 1); renderSuggest(); e.preventDefault(); }
       if (e.key === "ArrowUp" && !sug.hidden) { sugActive = Math.max(0, sugActive - 1); renderSuggest(); e.preventDefault(); }
       if (e.key === "Enter") {   // the keyboard's return key: the highlighted (or top) suggestion, or the place as it is
         e.preventDefault(); sugTarget = el.id;
-        if (sugItems.length && !sug.hidden && (sugActive >= 0 || el.value.trim())) choose(sugItems[Math.max(0, sugActive)]);   // an empty bar's list needs an arrow first
+        if (sugItems.length && !sug.hidden && (sugActive >= 0 || el.value.trim())) choose(sugItems[Math.max(0, sugActive)]);
         else if (el.value === (state[el.id + "Label"] || "")) placeDone(el.id);
       }
       if (e.key === "Escape") { if (search.which) cancelSearch(); else sug.hidden = true; }
@@ -656,7 +662,6 @@
   }
   function choose(it) {
     sug.hidden = true; sugItems = [];
-    if (it.clear) { recents = []; writeList("recents", recents); return; }
     const which = sugTarget;
     setPoint(which, [it.lon, it.lat], it.label);
     if (which === "to") remember(it.label, [it.lon, it.lat]);
@@ -746,14 +751,14 @@
   function keyboardTop() {   // page coordinates; until the keyboard is up, a guess (iPhone keyboards take 40-46% of the screen)
     return kbOpen() ? visualViewport.offsetTop + visualViewport.height : innerHeight - Math.round(Math.max(260, innerHeight * 0.47));
   }
-  function dock(animate) {   // card height that leaves the search bars just above the keyboard
+  function dock(animate) {   // card height that leaves the search bars, and the place chips under them, just above the keyboard
     if (!search.which) return;
-    const last = (state.tab === "go" ? toEl : fromEl).closest(".field");
-    const block = last.getBoundingClientRect().bottom - panel.getBoundingClientRect().top + 12;
+    const field = (state.tab === "go" ? toEl : fromEl).closest(".field"), chips = placeBox.getClientRects().length > 0;
+    const block = (chips ? placeBox : field).getBoundingClientRect().bottom - panel.getBoundingClientRect().top + (chips ? 4 : 12);   // the chips' 44 px rows end 7 px under their circles
     const h = Math.round(innerHeight - keyboardTop() + block);
     panel.classList.toggle("dragging", !animate);
     panel.style.height = h + "px";
-    placeSuggest(h);
+    placeSuggest(h); placeList();
   }
   function placeSuggest(h = panel.getBoundingClientRect().height) {   // the list floats over the map, just above the card
     if (sug.parentElement !== document.body) document.body.appendChild(sug);
@@ -776,7 +781,7 @@
   }
   function leaveSearch(sheetAfter) {
     search.which = null; search.prev = {};
-    document.body.classList.remove("searching");
+    document.body.classList.remove("searching"); closeList(false);
     sug.hidden = true; sugItems = [];
     if (sug.parentElement !== sugHome) { sugHome.appendChild(sug); sug.style.bottom = ""; sug.style.maxHeight = ""; }
     const a = document.activeElement; if (a === fromEl || a === toEl) a.blur();
@@ -824,9 +829,9 @@
     });
     el.addEventListener("touchend", (e) => { if (tapOpenedSearch) { tapOpenedSearch = false; e.preventDefault(); } }, { passive: false });
     el.addEventListener("touchcancel", () => { tapOpenedSearch = false; });
-    el.addEventListener("focus", () => {
+    el.addEventListener("focus", () => {   // an empty bar shows no list (2026-11-03): the place chips sit right under it
       if (isPhone() && state.mode !== "ride") enterSearch(el.id);
-      if (!el.value.trim()) { sugTarget = el.id; sugItems = emptyItems(); sugOffline = false; sugActive = -1; renderSuggest(); }   // an empty bar offers saved places and recent destinations
+      sugTarget = el.id;
     });
   }
   document.querySelectorAll(".clear").forEach((b) => onPress(b, () => clearField(b.dataset.target)));
@@ -840,23 +845,72 @@
     const m = 0.01;   // about 1 km of slack
     return lon > islandBox[0] - m && lon < islandBox[2] + m && lat > islandBox[1] - m && lat < islandBox[3] + m;
   };
+  // where you are, as a blue dot on the map (from "Use my location" or on opening the app; kept in memory only)
+  let meDot = null;
+  function showMe(ll) {
+    if (!meDot) {
+      const el = document.createElement("div"); el.className = "me-dot"; el.setAttribute("aria-hidden", "true");   // the start bar says it in words
+      meDot = new maplibregl.Marker({ element: el, ...MARKER_SHOW }).setLngLat(ll).addTo(map);
+    } else meDot.setLngLat(ll);
+  }
+  // the map moves to a place: on phones, centred in the part above the card (a desktop's centre is clear of the panel already)
+  function showPlace(ll) {
+    const offset = isPhone() ? [0, -Math.round($("#panel").getBoundingClientRect().height / 2)] : [0, 0];
+    map.easeTo({ center: ll, zoom: Math.max(map.getZoom(), 14.5), offset, duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 600 });
+  }
+  // One position from the browser; onFix gets it only when it is on or near the island. quiet (on opening the app): no busy
+  // state and no messages, so a refusal or a failure just leaves the map as it was (noted in the console).
+  function locate(onFix, quiet = false) {
+    if (!navigator.geolocation) { if (quiet) console.info("location: not available here"); else toast(t("locUnavailable")); return; }
+    if (!quiet) locateBtn.setAttribute("aria-busy", "true");
+    const slow = quiet ? 0 : setTimeout(() => toast(t("locating")), 1200);
+    const done = () => { clearTimeout(slow); if (!quiet) locateBtn.removeAttribute("aria-busy"); };
+    navigator.geolocation.getCurrentPosition((pos) => {
+      done();
+      const ll = [pos.coords.longitude, pos.coords.latitude];
+      if (!insideMap(ll[0], ll[1])) { if (quiet) console.info("location: off the island, map left as it was"); else toast(t("locOutside")); return; }
+      showMe(ll); onFix(ll);
+    }, (err) => {
+      done();
+      if (quiet) console.info("location on open:", err && err.message);
+      else toast(t(err && err.code === 1 ? "locDenied" : "locUnavailable"));
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }
   function useMyLocation() {
     if (state.mode === "ride" || locateBtn.getAttribute("aria-busy") === "true") return;
     if (search.which) abandonSearch(search.before);   // typing: keep the places as they were, drop the keyboard
-    if (!navigator.geolocation) { toast(t("locUnavailable")); return; }
-    locateBtn.setAttribute("aria-busy", "true");
-    const slow = setTimeout(() => toast(t("locating")), 1200);
-    const done = () => { clearTimeout(slow); locateBtn.removeAttribute("aria-busy"); };
-    navigator.geolocation.getCurrentPosition((pos) => {
-      done();
-      const { longitude: lon, latitude: lat } = pos.coords;
-      if (!insideMap(lon, lat)) { toast(t("locOutside")); return; }
-      setPoint("from", [lon, lat], t("myLocation"));
+    locate((ll) => {
+      setPoint("from", ll, t("myLocation"));
       if (state.tab !== "go" || state.to) recompute(true);   // a destination is set: route now
-      else map.easeTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 14.5), duration: 600 });
-    }, (err) => { done(); toast(t(err && err.code === 1 ? "locDenied" : "locUnavailable")); }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+      else showPlace(ll);
+    });
   }
   onPress(locateBtn, useMyLocation);
+
+  // Locate on open (2026-11-03). Location already allowed: the map centres on you and the start bar says "My location" (on or near
+  // the island only). First visit: ask once, right after the welcome card closes (after the tour, if that was the choice), and remember
+  // that we asked (localStorage "piste-locate-asked"), so a refusal never brings it back. Refused, or a shared link: nothing.
+  async function geoPermission() {   // "granted", "prompt" or "denied"; null where the browser can't say
+    try { return navigator.permissions && navigator.permissions.query ? (await navigator.permissions.query({ name: "geolocation" })).state : null; }
+    catch (e) { return null; }
+  }
+  const untouched = () => state.mode === "explore" && state.tab === "go" && !state.from && !state.to && !search.which && !state.pick && !touring();
+  function locateOnOpen() {
+    locate((ll) => {
+      if (!untouched()) return;   // the rider started planning meanwhile: just the dot
+      setPoint("from", ll, t("myLocation"));
+      showPlace(ll);
+    }, true);
+  }
+  async function startLocate() {
+    const perm = await geoPermission();
+    if (perm === "granted") { locateOnOpen(); return; }
+    if (perm === "denied" || store.get("locate-asked", "") === "1") return;
+    document.addEventListener("piste:welcome-closed", (e) => {   // tour.js: only on a first visit
+      const ask = () => { store.set("locate-asked", "1"); locateOnOpen(); };
+      if (e.detail && e.detail.tour) document.addEventListener("piste:tour-ended", ask, { once: true }); else ask();
+    }, { once: true });
+  }
   if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, () => { if (search.which && kbOpen()) dock(true); });
 
   // ------------------------------------------------------------------ saved places (2026-11-02): Home, Work and others, and the last 5 destinations
@@ -867,20 +921,30 @@
   };
   const writeList = (key, list) => store.set(key, JSON.stringify(list));
   let places = readList("places"), recents = readList("recents").slice(0, 5);   // places: { kind: "home" | "work" | "", name, ll }; recents: { name, ll }
-  const placeBox = $("#places"), pl = { layer: $("#place-dialog"), name: $("#pl-name"), status: $("#pl-status"), i: -1 };
+  const placeBox = $("#places"), listEl = $("#place-list"), pl = { layer: $("#place-dialog"), name: $("#pl-name"), status: $("#pl-status"), i: -1 };
   const placeName = (p) => (p.kind ? t(p.kind === "home" ? "placeHome" : "placeWork") : p.name);
   const placeIcon = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const PLACE_ICON = { home: placeIcon('<path d="M4 11 12 4l8 7M6 9.5V20h12V9.5M10 20v-5.5h4V20"/>'),
-    work: placeIcon('<rect x="3.5" y="7.5" width="17" height="12" rx="2"/><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5M3.5 13h17"/>'), add: placeIcon('<path d="M12 5v14M5 12h14"/>') };
+    work: placeIcon('<rect x="3.5" y="7.5" width="17" height="12" rx="2"/><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5M3.5 13h17"/>'), add: placeIcon('<path d="M12 5v14M5 12h14"/>'),
+    star: placeIcon('<path d="m12 4.6 2.2 4.5 4.9.7-3.6 3.5.9 4.9-4.4-2.3-4.4 2.3.9-4.9-3.6-3.5 4.9-.7z"/>'),
+    edit: placeIcon('<path d="M14.5 5.5l4 4M4.5 19.5l1-4.5 10-10 3.5 3.5-10 10z"/>') };
+  // The chip row (2026-11-03): Home, Work, ★ and +, all round icon chips (their names in aria-label and title). ★ shows once there is
+  // a saved place or a recent destination, and opens the list of both (placeList below); unset Home and Work have a dashed edge.
+  const custom = () => places.map((p, i) => ({ p, i })).filter((x) => !x.p.kind);
+  const hasList = () => custom().length > 0 || recents.length > 0;
   function renderPlaces() {
-    const chip = (attr, icon, text, cls = "") => `<button type="button" class="place ${cls}" ${attr}>${icon}<span>${C.esc(text)}</span></button>`;
+    const chip = (attr, icon, name, cls = "") => `<button type="button" class="place round ${cls}" ${attr} aria-label="${C.esc(name)}" title="${C.esc(name)}">${icon}</button>`;
     const fixed = ["home", "work"].map((k) => {
       const i = places.findIndex((p) => p.kind === k);
-      return i < 0 ? chip(`data-kind="${k}"`, PLACE_ICON[k], t(k === "home" ? "setHome" : "setWork"), "unset") : chip(`data-i="${i}" title="${t("placeHold")}"`, PLACE_ICON[k], placeName(places[i]));
+      return i < 0 ? chip(`data-kind="${k}"`, PLACE_ICON[k], t(k === "home" ? "setHome" : "setWork"), "unset") : chip(`data-i="${i}"`, PLACE_ICON[k], placeName(places[i]));
     });
-    const more = places.map((p, i) => (p.kind ? "" : chip(`data-i="${i}" title="${t("placeHold")}"`, "", p.name)));
+    const star = hasList() ? chip(`aria-expanded="${!listEl.hidden}" aria-controls="place-list"`, PLACE_ICON.star, t("placeList"), "star") : "";
     placeBox.setAttribute("aria-label", t("placesLabel"));
-    placeBox.innerHTML = fixed.join("") + more.join("") + `<button type="button" class="place add" aria-label="${t("placeAdd")}" title="${t("placeAdd")}">${PLACE_ICON.add}</button>`;
+    placeBox.after(listEl);   // out of the way while the chips are redrawn; it goes back right after ★, so Tab reaches its rows next
+    placeBox.innerHTML = fixed.join("") + star + chip("", PLACE_ICON.add, t("placeAdd"), "add");
+    const starChip = placeBox.querySelector(".star");
+    if (starChip) { starChip.after(listEl); if (!listEl.hidden) { renderPlaceList(); placeList(); } }
+    else closeList(false);
   }
   const commitPlaces = () => { writeList("places", places); renderPlaces(); };
   // the place on the bars: the destination, or the start when there is no destination
@@ -892,9 +956,12 @@
     return state.to && !state.from ? "from" : "to";
   }
   function usePlace(p) {
-    setPoint(placeTarget(), p.ll, placeName(p));
+    const which = placeTarget();
+    sug.hidden = true; sugItems = [];
+    setPoint(which, p.ll, placeName(p));
+    if (search.which) { placeDone(which); return; }   // phones, typing: as if picked from the suggestions (on to the destination, or done)
     if (state.tab !== "go" || (state.from && state.to)) recompute(true);
-    else map.easeTo({ center: p.ll, zoom: Math.max(map.getZoom(), 14.5), duration: 600 });   // one end only: show where it is
+    else showPlace(p.ll);   // one end only: show where it is
   }
   function setHomeOrWork(kind) {
     const cur = currentPlace();
@@ -906,12 +973,75 @@
     const same = (r) => r.ll.every((v, k) => Math.abs(v - ll[k]) < 1e-4);
     recents = [{ name, ll }, ...recents.filter((r) => !same(r))].slice(0, 5);
     writeList("recents", recents);
+    renderPlaces();   // ★ shows from the first recent destination
   }
-  function emptyItems() {   // an empty search bar offers the saved places, then the recent destinations (with a way to clear them)
-    const item = (p, tag) => ({ label: placeName(p), sub: t(tag), lon: p.ll[0], lat: p.ll[1] });
-    const rows = [...places.map((p) => item(p, "savedTag")), ...recents.map((p) => item(p, "recentTag"))];
-    return recents.length ? [...rows, { label: t("clearRecents"), clear: true }] : rows;
+
+  // ---- the ★ list (2026-11-03): saved places first, then the last two destinations. A row uses its place as a chip does; a saved
+  // row's pencil opens the place form. A popover: aria-expanded on ★, Esc or a tap outside closes it, and focus goes back to ★ when
+  // it was inside. It floats (position: fixed) just below ★, or above it when there is no room below; while typing on a phone, over the map above the card.
+  function renderPlaceList() {
+    const row = (attr, name, tag, edit) => `<li><button type="button" class="pl-row" ${attr}><span>${C.esc(name)}</span><small>${t(tag)}</small></button>${edit}</li>`;
+    const saved = custom().map(({ p, i }) => row(`data-use="saved" data-p="${i}"`, p.name, "savedTag",
+      `<button type="button" class="pl-edit" data-edit="${i}" aria-label="${C.esc(t("placeEditOne", { name: p.name }))}" title="${C.esc(t("placeEditT"))}">${PLACE_ICON.edit}</button>`));
+    const recent = recents.slice(0, 2).map((p, k) => row(`data-use="recent" data-r="${k}"`, p.name, "recentTag", ""));
+    listEl.setAttribute("aria-label", t("placeList"));
+    listEl.innerHTML = `<ul>${saved.join("")}${recent.join("")}</ul>` + (recents.length ? `<button type="button" class="pl-clear">${t("clearRecents")}</button>` : "");
   }
+  const starBtn = () => placeBox.querySelector(".star");
+  function placeList() {   // put the open list next to ★, inside what the screen shows (above a phone keyboard)
+    const b = starBtn(); if (!b || listEl.hidden) return;
+    const r = b.getBoundingClientRect(), inset = 7;   // the chip's drawn circle sits 7 px inside its 44 px button
+    const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
+    const typing = !!search.which || kbOpen();   // phones, typing: the keyboard is (or is about to be) right under the chips
+    const top = (window.visualViewport ? visualViewport.offsetTop : 0) + safeTop + 8, bottom = (typing ? keyboardTop() : innerHeight) - 8;
+    // typing: over the map just above the card, like the suggestions, so the bars stay in view
+    const upTo = typing ? $("#panel").getBoundingClientRect().top - 2 : r.top + inset;
+    const below = bottom - (r.bottom - inset) - 6, above = upTo - top - 6;
+    listEl.style.maxHeight = ""; const want = listEl.scrollHeight;
+    const down = !typing && (below >= want || below >= above);
+    const room = Math.max(96, down ? below : above), h = Math.min(want, room);
+    const w = listEl.offsetWidth, left = Math.max(10, Math.min(innerWidth - w - 10, r.left + inset - 4));
+    Object.assign(listEl.style, { maxHeight: room + "px", left: left + "px", top: (down ? r.bottom - inset + 6 : upTo - 6 - h) + "px" });
+  }
+  function openList(focusFirst) {
+    renderPlaceList();
+    sug.hidden = true;   // not both lists at once
+    listEl.hidden = false;
+    const b = starBtn(); if (b) b.setAttribute("aria-expanded", "true");
+    placeList();
+    if (focusFirst) { const first = listEl.querySelector("button"); if (first) first.focus({ preventScroll: true }); }
+  }
+  function closeList(refocus) {
+    if (listEl.hidden) return;
+    const inside = listEl.contains(document.activeElement);
+    listEl.hidden = true;
+    const b = starBtn(); if (b) b.setAttribute("aria-expanded", "false");
+    if (b && (refocus || inside)) b.focus({ preventScroll: true });
+  }
+  function listChoice(btn) {
+    if (btn.classList.contains("pl-clear")) {
+      const hadFocus = listEl.contains(document.activeElement);
+      recents = []; writeList("recents", recents); closeList(false); renderPlaces();
+      if (hadFocus) (starBtn() || placeBox.querySelector(".add")).focus({ preventScroll: true });
+      return;
+    }
+    if (btn.dataset.edit) { const i = +btn.dataset.edit; closeList(false); openPlace(i, starBtn()); return; }
+    const p = btn.dataset.use === "saved" ? places[+btn.dataset.p] : recents[+btn.dataset.r];
+    closeList(false);
+    if (p) usePlace(p);
+  }
+  listEl.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) listChoice(b); });
+  listEl.addEventListener("keydown", (e) => {   // arrows move between the rows (Tab works too)
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const all = [...listEl.querySelectorAll("button")], i = all.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault(); all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length].focus();
+  });
+  listEl.addEventListener("focusout", (e) => { if (!listEl.hidden && e.relatedTarget && !listEl.contains(e.relatedTarget) && e.relatedTarget !== starBtn()) closeList(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !listEl.hidden) { e.preventDefault(); e.stopPropagation(); closeList(listEl.contains(document.activeElement) || document.activeElement === starBtn()); } }, true);
+  document.addEventListener("pointerdown", (e) => { if (!listEl.hidden && !listEl.contains(e.target) && !(starBtn() && starBtn().contains(e.target))) closeList(false); }, true);
+  addEventListener("resize", placeList);
+  if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, placeList);
   // The small form: name the current place (new), or rename, move to the current place, or delete a saved one
   function openPlace(i, opener) {
     const p = places[i], cur = currentPlace();
@@ -922,7 +1052,10 @@
     $("#pl-name-field").hidden = !!(p && p.kind);   // Home and Work keep their names
     $("#pl-delete").hidden = !p; $("#pl-use").hidden = !(p && cur);
     const first = !isPhone() && !(p && p.kind) ? pl.name : null;   // phones: no keyboard until the field is tapped
-    const back = () => { const chip = placeBox.querySelector(pl.i >= 0 && places[pl.i] ? `[data-i="${pl.i}"]` : ".add"); if (chip) chip.focus({ preventScroll: true }); };
+    const back = () => {   // when the opener has gone: Home or Work's chip, else ★ (saved places live in its list), else +
+      const q = places[pl.i] && places[pl.i].kind ? `[data-i="${pl.i}"]` : ".star";
+      const chip = placeBox.querySelector(q) || placeBox.querySelector(".add"); if (chip) chip.focus({ preventScroll: true });
+    };
     if (window.pisteDialog.open(pl.layer, opener, first, back) && first) pl.name.select();
   }
   const closePlace = () => window.pisteDialog.close();
@@ -950,12 +1083,14 @@
   placeBox.addEventListener("keydown", (e) => { if (e.key === "F2" && editFrom(e)) e.preventDefault(); });
   placeBox.addEventListener("mousedown", (e) => e.preventDefault());   // a click keeps the focus on the search bar it fills
   placeBox.addEventListener("click", (e) => {
-    const b = e.target.closest("button"); if (!b) return;
+    const b = e.target.closest("button"); if (!b || listEl.contains(b)) return;   // the ★ list handles its own rows
     if (held) { held = false; return; }   // the press that opened the editor
-    if (b.dataset.i) usePlace(places[+b.dataset.i]);
+    if (b.classList.contains("star")) { if (listEl.hidden) openList(e.detail === 0); else closeList(e.detail === 0); }   // keyboard: focus moves into the list
+    else if (b.dataset.i) usePlace(places[+b.dataset.i]);
     else if (b.dataset.kind) setHomeOrWork(b.dataset.kind);
     else openPlace(-1, b);
   });
+  for (const ev of ["scroll", "transitionend"]) $("#panel").addEventListener(ev, placeList, { passive: true });   // ★ moves with the card
   renderPlaces();
 
   // ------------------------------------------------------------------ map clicks
@@ -983,8 +1118,11 @@
     const kind = isBixi ? "bixi" : f.properties.k;
     const name = f.properties.name || C.poiLabel(kind);
     const extra = isBixi ? `<div class="pop-bixi"><b>${bixiText(f.properties)}</b> · ${t("bixiLive")}</div>` : "";
+    // "More info": a web search for a named place (not for BIXI stations or the water, repair and parking spots, whose names only say where they are)
+    const more = f.properties.name && !["bixi", "water", "repair", "parking", "toilets"].includes(kind)
+      ? `<a class="pop-more" href="https://www.google.com/search?q=${encodeURIComponent(`${f.properties.name} Montréal`)}" target="_blank" rel="noopener">${t("moreInfo")}<span class="sr-only"> (${t("newTab")})</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M17 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 18.5v-10A1.5 1.5 0 0 1 5.5 7H10"/></svg></a>` : "";
     const html = `<div class="pop"><b>${C.esc(name)}</b><div class="pop-kind">${C.esc(C.poiLabel(kind))}</div>${extra}
-      <button type="button" class="primary pop-go">${t("rideHere")}</button></div>`;
+      <div class="pop-actions"><button type="button" class="primary pop-go">${t("rideHere")}</button>${more}</div></div>`;
     const pop = new maplibregl.Popup({ offset: 14 }).setLngLat(f.geometry.coordinates).setHTML(html).addTo(map);
     pop.getElement().querySelector(".pop-go").onclick = () => {
       pop.remove();
@@ -1001,7 +1139,7 @@
   function overlap(a, b) { let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++; return c / Math.max(a.sig.size, b.sig.size); }
   // the router settings behind each kind of route (a GPS reroute uses the same ones as the route you started)
   // What the panel says now (slider, hills, wind), in the form the router takes (see routeSettings in shared/router.js).
-  function planSettings() { return { strictness: +strict.value / 100, avoidHills: hills.checked, wind: windWeights(), works: worksWeights() }; }
+  function planSettings() { return { strictness: strictness(), avoidHills: hills.checked, wind: windWeights(), works: worksWeights() }; }
   function routeWeights(key) { return routeSettings(key, planSettings()); }   // "Your route" and suggested rides use "yourRoute"
   function selWeights(sel) {
     if (sel.classic) return { w: PROFILES.bikemax.w, hill: 4 };   // as classicRoute()
@@ -1046,7 +1184,7 @@
     const t1 = performance.now();
     const wx = state.avoidWind ? state.wxData || (await loadWeather()) : null;
     const picks = await suggester.suggest({ start: state.from, km: state.sugg.km, loop: state.sugg.loop, stop: state.sugg.stop,
-      weights: Object.assign({}, weightsFor(+strict.value / 100, hills.checked), windWeights(), worksWeights()), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
+      weights: Object.assign({}, weightsFor(strictness(), hills.checked), windWeights(), worksWeights()), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
     if (token !== suggToken) return;   // a newer request started meanwhile
     state.lastMs = performance.now() - t1;
     state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), end: c.end, loop: c.loop }));
@@ -2002,6 +2140,7 @@
   if (state.tab === "suggest" && state.smode === "classics") requestAnimationFrame(() => { const el = track.children[state.classic]; if (el) track.scrollLeft = el.offsetLeft - (track.clientWidth - el.offsetWidth) / 2; });
   renderClassicCards();
   if (params.get("view") === "3d") set3d(true);
+  if (!["from", "to", "trip", "suggest", "classic", "ride"].some((k) => params.has(k))) startLocate();   // a link that shows something wins
   if (params.get("ride") === "gps" && state.routes.length) startGpsRide();
   else if (params.get("ride") && state.routes.length) {
     startRide(params.get("ride") === "top" ? "topdown" : "birdseye");
@@ -2010,7 +2149,7 @@
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
-    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees };
+    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup };
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
     computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };
