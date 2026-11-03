@@ -32,7 +32,8 @@ for (const base of bases) {
   check(new URL(page.url()).pathname === new URL(base).pathname, `it stays at the root (${new URL(page.url()).pathname})`);
 
   // Offline: no service worker on a plain visit here (it registers on pistemtl.ca only); with ?sw=1 it installs at the site's root with a stamped version
-  check(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length === 0), "no service worker on a plain visit to this host");
+  const published = /(^|\.)pistemtl\.ca$/.test(new URL(base).hostname);   // the live site registers its worker on every visit
+  check(await page.evaluate(async (pub) => ((await navigator.serviceWorker.getRegistrations()).length > 0) === pub, published), published ? "the offline worker registers on the published site" : "no service worker on a plain visit to this host");
   await page.goto(base + "?sw=1", { waitUntil: "load" });
   const sw = await page.evaluate(async () => {
     const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 60000))]);
