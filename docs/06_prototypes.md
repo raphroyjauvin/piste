@@ -275,3 +275,11 @@ Raph bought pistemtl.ca at Porkbun on 2026-10-30, with email forwarding for supp
 - **Online sources:** basemap tiles (OpenFreeMap), terrain tiles beyond our own (AWS, a fallback), address search (Ville de Montréal API), the forecast (Open-Meteo), radar (Environment Canada) and live BIXI. The PMTiles layers, the terrain tiles, the classic-ride photos and all other data ship with the site.
 - **Voice:** voice prompts use the browser's speech synthesis. Voice commands (speech recognition) were on the old "Before you ride" sheet and aren't offered now; the code is still in `shared/common.js`.
 - **Phone layout:** the panel is a swipeable sheet, and while you type in a search bar the card slides up above the keyboard. More design work is possible.
+
+## Morning batch (2026-11-03)
+- **Stops:** `tools/island_tiles.py pois` (shares `poi_tail` with build_layers.py) adds a flag and compact opening hours to food and shop entries in `pois.js`; `shared/suggest.js` skips chains, fast food and big-box shops, ranks places with hours / website / cuisine higher, and drops places closed 15 min after arrival (2068 of 2116 stored hours parse).
+- **Card:** one Avoid chip row; no route-style slider in Design your own ride (strictness 1.0); no credits paragraph; icon-only Home / Work; no list on an empty bar; ★ popover with saved places, the last 2 destinations and "Clear recent places"; locate on open when permission is granted, asked once after the welcome card (or the tour) otherwise.
+- **Classic rides with GPS:** join within 50 m (inside the ride's 60 m start tolerance), else a lead-in chosen by riding distance among candidate points (2–25 ms); rerouting during the lead-in goes to the join point; out-and-back joins at its nearest end; no GPS or the preview starts as before.
+- **Trees:** `shared/trees3d.js`, a MapLibre custom 3D layer (camera-facing quads, depth-tested, cutout discard, 0.85 opacity); points from `querySourceFeatures` with an invisible circle layer keeping tiles loaded; ground from the terrain. Falls back to the sprite layer if WebGL fails. Frame time about the same as the sprites. Routes still draw over trees.
+- **Weather:** `PrecipLayer` in `shared/weather.js` on a `#precip` canvas, following the wind canvas's on/off rule; rain rings and snow dots only when it's falling now; wind & snow button in winter mode.
+
