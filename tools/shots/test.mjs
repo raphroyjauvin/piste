@@ -134,6 +134,8 @@ const wait = (ms) => `new Promise((r) => setTimeout(r, ${ms}))`;
 // never happens still fails the check, but a slow machine gets the time it needs instead of a fixed pause.
 const until = (page, fn, arg, ms = 15000) => page.waitForFunction(fn, arg, { timeout: ms }).catch(() => {});
 // Read a layout measurement after it has stopped moving (two equal readings 100 ms apart, up to 10 s), for panels that slide into place.
+// the card's height slides (a CSS transition): wait for it to end before measuring, as a slow machine is still mid-slide after 400 ms
+const panelStill = (page) => page.evaluate(() => Promise.all(document.querySelector("#panel").getAnimations().map((a) => a.finished.catch(() => {}))));
 async function settled(page, fn) {
   let prev, same = 0;
   for (let i = 0; i < 100 && same < 2; i++) { const v = JSON.stringify(await page.evaluate(fn)); same = v === prev ? same + 1 : 0; prev = v; if (same < 2) await page.waitForTimeout(100); }
@@ -531,7 +533,7 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   const H = 874;
   const panelH = () => Math.round(document.querySelector("#panel").getBoundingClientRect().height);
   const half = await page.evaluate(panelH);
-  await page.evaluate(() => window.__app.setSheet("full")); await page.waitForTimeout(400);
+  await page.evaluate(() => window.__app.setSheet("full")); await page.waitForTimeout(400); await panelStill(page);
   const full = await settled(page, panelH);
   // drag the grabber down a long way: the panel should drop to the small "peek" size
   const g = await page.locator("#grabber").boundingBox();
@@ -1316,7 +1318,7 @@ await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
   await page.setViewportSize({ width: 360, height: 640 });
   await page.goto(BASE + APP + "?safe=20,0", { waitUntil: "load" });
   await page.waitForFunction(() => !!window.pisteTour, null, { timeout: 90000 });
-  await page.evaluate(() => window.__app.setSheet("full"));
+  await page.evaluate(() => window.__app.setSheet("full")); await panelStill(page);
   const foot = await settled(page, () => { const p = document.querySelector("#panel"); p.scrollTop = p.scrollHeight; const r = p.getBoundingClientRect();
     return ["#feedback-link", "#tour-again"].map((s) => { const b = document.querySelector(s).getBoundingClientRect(); return b.top >= r.top && b.bottom <= r.bottom && b.height >= 44; }); });
   const before2 = await page.evaluate(appSnapshot);
