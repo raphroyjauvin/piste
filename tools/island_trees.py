@@ -1,17 +1,19 @@
-"""Tree positions for the app's 3D view, from the LiDAR canopy: tree tops found in the NRCan HRDEM canopy height, one point per
-top, written to prototypes/shared/tiles/trees.pmtiles (z15 and z16). The app draws each point as an upright illustrated tree.
+"""Stylised 3D trees for the app's 3D view, from the LiDAR canopy: tree tops found in the NRCan HRDEM canopy height, one
+low-poly tree (a thin trunk and an octagon crown) per top, written to prototypes/shared/tiles/trees.pmtiles (z15 and z16).
 
   canopy height  = LiDAR surface (DSM) - ground (DTM), NRCan HRDEM CMM 2023, 1 m (data/raw/nrcan_hrdem_cmm2023/*_study_area_32188_1m.tif)
   tree mask      = the City's Canopée 2019 polygons (CC BY 4.0), minus the building footprints (data/build/island_buildings/buildings.pkl)
   tree top       = a local maximum of the canopy height (3 x 3 smoothed) in a 5 m window, at least 3 m tall, inside the mask
+  crown          = an octagon of radius 0.25 x height, kept between 1.5 and 6 m; it spans 0.35 x height to the top
+  trunk          = a 0.7 m square from the ground to 0.35 x height (z16 tiles only)
 
 Area: the 1 m LiDAR cut of the study area (Plateau, Mont-Royal, Outremont, Rosemont, Villeray, downtown: build_layers.BBOX). The island has
 only the 5 m models, too coarse for single trees; to extend the trees, cut 1 m DSM/DTM windows (see fetch_data.task_dem) and add them to AREAS.
 
   C:\\bikeapp\\.venv\\Scripts\\python.exe -I C:\\bikeapp\\tools\\island_trees.py all      (stages: fetch, trees, tiles; each re-runs with --refresh)
 
-Tiles: one point layer "trees" (h = tree height in m, s = 0-255 seed that picks the picture, stable per place). A tile keeps its 4,000 (z15)
-or 6,000 (z16) tallest trees. Credit: NRCan HRDEM (OGL-Canada), Ville de Montréal Canopée (CC BY 4.0).
+Tiles: layers "crowns" (h = tree height in m, s = 0-255 colour seed, stable per place) and "trunks" (h). A tile keeps its 4,000 (z15) or
+6,000 (z16) tallest trees. Credit: NRCan HRDEM (OGL-Canada), Ville de Montréal Canopée (CC BY 4.0).
 """
 import argparse
 import gzip
@@ -46,6 +48,9 @@ TILES_OUT = ROOT / "prototypes" / "shared" / "tiles" / "trees.pmtiles"
 DSM, DTM = HRDEM / "dsm_study_area_32188_1m.tif", HRDEM / "dtm_study_area_32188_1m.tif"
 
 MIN_H, WINDOW_R = 3.0, 2            # a tree is at least 3 m tall; a top is the highest point within 2 px (a 5 m window at 1 m)
+CROWN_K, CROWN_MIN, CROWN_MAX = 0.25, 1.5, 6.0
+CROWN_BASE = 0.35                   # the crown starts at 0.35 x height
+TRUNK_HALF = 0.35                   # m
 BLOCK, MARGIN = 2000, 8             # pixels processed at a time, and the overlap that keeps tops at block edges right
 TILE_CAP = {15: 4000, 16: 6000}     # trees kept per tile (the tallest)
 HALF = 20037508.342789244           # half the Web Mercator world, m
@@ -159,39 +164,54 @@ def to_mercator(x, y):
     return np.radians(lon) * 6378137.0, np.log(np.tan(math.pi / 4 + np.radians(lat) / 2)) * 6378137.0, 1.0 / np.cos(np.radians(lat))
 
 
+def polygons(cx, cy, r, n):
+    """n-gons (r in the same units as cx, cy; r is an array), flat sides first: a vectorised ring per tree."""
+    a = (np.arange(n) + 0.5) * 2 * math.pi / n
+    ring = np.stack([cx[:, None] + r[:, None] * np.cos(a), cy[:, None] + r[:, None] * np.sin(a)], axis=2)
+    return shapely.polygons(np.concatenate([ring, ring[:, :1]], axis=1))
+
+
 def stage_tiles(refresh):
     import mapbox_vector_tile
     from pmtiles.tile import Compression, TileType, zxy_to_tileid
     from pmtiles.writer import Writer
     t0 = time.time()
     d = np.load(BUILD / "trees.npz")
-    mx, my, _ = to_mercator(d["x"], d["y"])
+    mx, my, k = to_mercator(d["x"], d["y"])
     h, s = d["h"].astype(np.float64), d["s"]
-    pts = shapely.points(mx, my)
+    rm = np.clip(CROWN_K * h, CROWN_MIN, CROWN_MAX) * k                             # crown radius, Web Mercator metres
+    crowns = polygons(mx, my, rm, 8)
+    trunks = polygons(mx, my, np.full(len(h), TRUNK_HALF * math.sqrt(2)) * k, 4)
     tiles = {}
     for z in sorted(TILE_CAP):
         size = 2 * HALF / 2 ** z
-        tx, ty = np.floor((mx + HALF) / size).astype(np.int64), np.floor((HALF - my) / size).astype(np.int64)   # a tree sits in one tile; icons are not clipped
-        order = np.lexsort((-h, ty, tx))                                                                          # by tile, tallest first
-        key = tx[order] * 1_000_000 + ty[order]
-        groups = np.split(order, np.flatnonzero(np.diff(key)) + 1)
+        # every tile a crown touches gets the tree, so crowns are not cut at tile edges: rows of (tile x, tile y, tree)
+        rows = []
+        for dx, dy in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+            rows.append(np.stack([np.floor((mx + dx * rm + HALF) / size), np.floor((HALF - (my + dy * rm)) / size), np.arange(len(h))], axis=1))
+        T = np.unique(np.concatenate(rows).astype(np.int64), axis=0)
+        groups = np.split(T, np.flatnonzero(np.any(np.diff(T[:, :2], axis=0) != 0, axis=1)) + 1)
         n_trees = 0
         for grp in groups:
-            idx = grp[: TILE_CAP[z]]
-            x0, y0 = int(tx[idx[0]]), int(ty[idx[0]])
-            bounds = (-HALF + x0 * size, HALF - (y0 + 1) * size, -HALF + (x0 + 1) * size, HALF - y0 * size)
-            layer = {"name": "trees", "features": [{"geometry": pts[i], "properties": {"h": round(float(h[i]), 1), "s": int(s[i])}} for i in idx]}
-            raw = mapbox_vector_tile.encode([layer], default_options={"quantize_bounds": bounds, "y_coord_down": False, "extents": 4096})
-            tiles[zxy_to_tileid(z, x0, y0)] = gzip.compress(raw, compresslevel=9, mtime=0)
+            tx, ty = int(grp[0, 0]), int(grp[0, 1])
+            idx = grp[:, 2]
+            idx = idx[np.argsort(-h[idx], kind="stable")][: TILE_CAP[z]]
+            bounds = (-HALF + tx * size, HALF - (ty + 1) * size, -HALF + (tx + 1) * size, HALF - ty * size)
+            layers = [{"name": "crowns", "features": [{"geometry": crowns[i], "properties": {"h": round(float(h[i]), 1), "s": int(s[i])}} for i in idx]}]
+            if z >= 16:
+                layers.append({"name": "trunks", "features": [{"geometry": trunks[i], "properties": {"h": round(float(h[i]), 1)}} for i in idx]})
+            raw = mapbox_vector_tile.encode(layers, default_options={"quantize_bounds": bounds, "y_coord_down": False, "extents": 4096})
+            tiles[zxy_to_tileid(z, tx, ty)] = gzip.compress(raw, compresslevel=9, mtime=0)
             n_trees += len(idx)
         say(f"   z{z}: {len(groups)} tiles, {n_trees} trees, {sum(map(len, tiles.values())) / 1e6:.1f} MB so far, {time.time() - t0:.0f}s")
     lon0, lat0 = TO_LL.transform(d["x"].min(), d["y"].min())
     lon1, lat1 = TO_LL.transform(d["x"].max(), d["y"].max())
     bounds = [round(lon0, 4), round(lat0, 4), round(lon1, 4), round(lat1, 4)]
-    meta = {"name": "Piste trees", "description": "Tree tops from the NRCan HRDEM canopy height inside the City's Canopee 2019 (h = height in m, s = picture seed)",
+    meta = {"name": "Piste trees", "description": "Tree tops from the NRCan HRDEM canopy height inside the City's Canopee 2019 (h = height in m, s = colour seed)",
             "attribution": "NRCan HRDEM CMM 2023 (OGL-Canada); Canopée 2019, Ville de Montréal (CC BY 4.0)", "version": "1", "type": "overlay", "format": "pbf",
             "minzoom": min(TILE_CAP), "maxzoom": max(TILE_CAP), "bounds": bounds, "center": [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2, 15],
-            "vector_layers": [{"id": "trees", "fields": {"h": "Number", "s": "Number"}, "minzoom": 15, "maxzoom": 16}],
+            "vector_layers": [{"id": "crowns", "fields": {"h": "Number", "s": "Number"}, "minzoom": 15, "maxzoom": 16},
+                              {"id": "trunks", "fields": {"h": "Number"}, "minzoom": 16, "maxzoom": 16}],
             "generator": "tools/island_trees.py"}
     header = {"tile_type": TileType.MVT, "tile_compression": Compression.GZIP, "center_zoom": 15,
               "min_lon_e7": round(bounds[0] * 1e7), "min_lat_e7": round(bounds[1] * 1e7), "max_lon_e7": round(bounds[2] * 1e7), "max_lat_e7": round(bounds[3] * 1e7),

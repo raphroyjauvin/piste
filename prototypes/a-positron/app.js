@@ -206,15 +206,14 @@
   add({ id: "bld-3d", type: "fill-extrusion", source: "bld", "source-layer": "buildings", minzoom: 14, layout: { visibility: "none" },
     paint: { "fill-extrusion-color": ["interpolate", ["linear"], ["get", "h"], 0, "#f1eee8", 25, "#e6e2db", 90, "#d9d3ca"],
       "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.82, "fill-extrusion-vertical-gradient": true } });
-  // 3D trees (tools/island_trees.py: one point per LiDAR tree top, h = height in m, s = seed): flat illustrated trees (see "tree pictures" below),
-  // upright to the screen, drawn only in the 3D view from zoom 15.5. Picture: paintTrees(). Size: the picture's tree is 90 px tall at icon-size 1, a metre
-  // is 1 / 0.4186 px at zoom 17 (Montréal) and the size doubles every zoom, so 0.0265 x h at zoom 17; the seed adds up to 16% either way.
-  const TREE_PX = ["*", ["+", 0.92, ["*", 0.04, ["%", ["get", "s"], 5]]], ["min", 30, ["get", "h"]]];
-  add({ id: "trees", type: "symbol", source: "trees", "source-layer": "trees", minzoom: 15.5,
-    layout: { visibility: "none", "icon-image": "tree-summer-0", "icon-anchor": "bottom", "icon-pitch-alignment": "viewport", "icon-rotation-alignment": "viewport",
-      "icon-allow-overlap": true, "icon-ignore-placement": true, "symbol-z-order": "viewport-y",
-      "icon-size": ["interpolate", ["exponential", 2], ["zoom"], 15.5, ["*", 0.0094, TREE_PX], 19, ["*", 0.106, TREE_PX]] },
-    paint: { "icon-opacity": ["interpolate", ["linear"], ["zoom"], 15.5, 0, 16.3, 1] } });
+  const TREES_ON = false;   // 2026-11-02: off until Raph picks a new tree design (the octagon prisms read as cylinders)
+  // 3D trees (tools/island_trees.py): from the LiDAR canopy, a thin trunk and an octagon crown per tree top. 3D view only, from zoom 15.5;
+  // the crown is the top half of the tree's height (shorter reads as a tree, not a column); the trunk reaches a little into it.
+  // Colours by season and night: paintTrees().
+  add({ id: "trees-trunk", type: "fill-extrusion", source: "trees", "source-layer": "trunks", minzoom: 16, layout: { visibility: "none" },
+    paint: { "fill-extrusion-height": ["*", 0.55, ["get", "h"]], "fill-extrusion-base": 0, "fill-extrusion-color": "#6a5d52", "fill-extrusion-opacity": 0.9 } });
+  add({ id: "trees-crown", type: "fill-extrusion", source: "trees", "source-layer": "crowns", minzoom: 15.5, layout: { visibility: "none" },
+    paint: { "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": ["*", 0.5, ["get", "h"]], "fill-extrusion-color": "#6f9a5d", "fill-extrusion-opacity": 0.88 } });
   add({ id: "radar", type: "raster", source: "radar", layout: { visibility: "none" }, paint: { "raster-opacity": 0.5, "raster-fade-duration": 300 } });
   // bike network (winter: 4-season lanes stay green, the rest turns grey and dashed)
   add({ id: "net-casing", type: "line", source: "network", layout: { "line-cap": "round", "line-join": "round" },
@@ -334,61 +333,27 @@
     recompute(true);
   }
 
-  // ------------------------------------------------------------------ tree pictures (2026-11-02)
-  // Each tree is a small flat picture drawn here as SVG (no image files): a slim tapering trunk with a few forks, a leafy crown of overlapping soft
-  // blobs with darker and lighter patches and a few leaf dabs, and a faint shadow on the ground. Rasterised once at 2x. Winter: fine bare branches.
-  // The picture is 72 x 96 with the tree's foot at (36, 90): the layer anchors the picture's bottom at the tree, upright to the screen.
-  const TREE_SET = {   // muted on purpose: soft sage greens and dusty autumn tones keep the map calm under the route colours
-    summer: [{ base: "#7ea868", dark: "#4f7a50", light: "#a6c78c" }, { base: "#6f9d62", dark: "#46714c", light: "#9bbd86" }, { base: "#8db070", dark: "#5a8455", light: "#b4cf98" }],
-    fall: [{ base: "#d58f4c", dark: "#a8582f", light: "#eebb78" }, { base: "#c0644d", dark: "#8c3a38", light: "#dc9078" }, { base: "#dcb458", dark: "#b0832e", light: "#f0d58c" },
-      { base: "#9dac62", dark: "#6c7e44", light: "#c3cb86", alt: "#d58f4c" }],
-    winter: [{ wood: "#7a6c5f" }, { wood: "#6f6359" }],
+  // ------------------------------------------------------------------ tree colours (2026-11-02)
+  // Each crown takes one colour of its season's set by its seed (s, stable per place). Summer: three greens. Fall (20 Sep to 15 Nov): orange, red,
+  // yellow and some green. Winter mode: leafless, a faint grey-brown crown over the trunks. Night: the same colours, darker.
+  const TREE_COLORS = {
+    // muted on purpose (2026-11-02): soft sage greens and dusty autumn tones keep the map calm under the route colours
+    summer: { day: ["#6f9a5d", "#5f8c52", "#82a86d"], night: ["#2a4a3e", "#24423a", "#30523f"], trunk: ["#6a5d52", "#2f2a30"], crown: 0.88, trunkOpacity: 0.9 },
+    fall: { day: ["#c98a4b", "#b5654a", "#d2b060", "#8fa266", "#c98a4b", "#a9705a"], night: ["#6b4a30", "#5e3a30", "#6e5e36", "#43503a", "#6b4a30", "#5a3f35"],
+      trunk: ["#6a5d52", "#2f2a30"], crown: 0.88, trunkOpacity: 0.9 },
+    winter: { day: ["#8b7d70"], night: ["#4a4553"], trunk: ["#6b5d52", "#3b343a"], crown: 0.22, trunkOpacity: 1 },
   };
-  const treeSeason = (date = new Date()) => {
+  function treeSeason(date = new Date()) {
     const md = (date.getMonth() + 1) * 100 + date.getDate();
     return state.winter ? "winter" : md >= 920 && md <= 1115 ? "fall" : "summer";
-  };
-  function treeSVG(kind, i, night) {
-    const p = TREE_SET[kind][i], dim = (c) => (night ? "#" + [1, 3, 5].map((k) => Math.round(parseInt(c.slice(k, k + 2), 16) * 0.4 + [14, 22, 40][(k - 1) / 2] * 0.6).toString(16).padStart(2, "0")).join("") : c);
-    let seed = 40 * Object.keys(TREE_SET).indexOf(kind) + 7 * i + 11;
-    const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-    const f = (n) => Math.round(n * 10) / 10, wood = dim(p.wood || "#74675b");
-    const out = [`<defs><radialGradient id="g"><stop offset="0" stop-color="${night ? "#03060c" : "#26311f"}" stop-opacity="${night ? 0.5 : 0.3}"/><stop offset="1" stop-opacity="0"/></radialGradient></defs>`,
-      `<ellipse cx="36" cy="90" rx="25" ry="4.6" fill="url(#g)"/>`,
-      `<path d="M33.2 90.5C34.6 84 34.4 72 34.9 58h2.3c.5 14 .3 26 2.5 32.5z" fill="${wood}"/>`];
-    const stroke = (d, w) => `<path d="${d}" fill="none" stroke="${wood}" stroke-width="${w}" stroke-linecap="round"/>`;
-    if (p.wood) {   // bare branches: a few forks, each forking again, thinner and shorter each time
-      const grow = (x, y, a, len, w, depth) => {
-        const x2 = x + Math.sin(a) * len, y2 = y - Math.cos(a) * len, bend = (rnd() - 0.5) * len * 0.35;
-        out.push(stroke(`M${f(x)} ${f(y)}Q${f((x + x2) / 2 + bend)} ${f((y + y2) / 2)} ${f(x2)} ${f(y2)}`, w));
-        if (depth) for (const da of depth > 2 ? [-0.5, 0.05, 0.55] : [-0.45, 0.5]) grow(x2, y2, a + da + (rnd() - 0.5) * 0.3, len * (0.66 + rnd() * 0.12), Math.max(w * 0.62, 0.7), depth - 1);
-      };
-      grow(36, 62, 0, 14, 2.2, 4);
-    } else {
-      for (const [x, y] of [[23, 49], [49, 45], [37, 50]]) out.push(stroke(`M36 ${f(68 - rnd() * 4)}L${x} ${y}`, 1.8));   // forks, mostly under the crown
-      const cx = 36, cy = 31, n = 8 + (i % 3), blob = (x, y, r, c, o) => `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="${dim(c)}" opacity="${o}"/>`;
-      const lobes = [[cx, cy, 17], [cx + (rnd() - 0.5) * 8, cy - 2, 15]];
-      for (let k = 0; k < n; k++) {
-        const a = (k + rnd() * 0.6) * 2 * Math.PI / n, d = 0.58 + rnd() * 0.14;
-        lobes.push([cx + Math.cos(a) * 27 * d, cy + Math.sin(a) * (Math.sin(a) > 0 ? 19 : 25) * d, 9 + rnd() * 5]);
-      }
-      out.push(...lobes.map(([x, y, r]) => blob(x + 1, y + 1.6, r + 0.8, p.dark, 0.55)));                           // darker rim, slipping to the lower right
-      out.push(...lobes.map(([x, y, r], k) => blob(x, y, r, p.alt && k % 3 === 0 ? p.alt : p.base, 0.94)));
-      for (const [x, y, r] of [[8, 11, 9], [-7, 15, 7], [15, 1, 6], [-15, 7, 5]]) out.push(blob(cx + x + rnd() * 3, cy + y, r, p.dark, 0.34));   // shade, lower right
-      for (const [x, y, r] of [[-9, -11, 8], [0, -17, 6], [-16, -3, 5]]) out.push(blob(cx + x + rnd() * 3, cy + y, r, p.light, 0.5));            // light, upper left
-      for (let c = 0; c < 5; c++) {                                                                                  // darker leaf clusters
-        const a = rnd() * 6.28, d = 0.15 + Math.sqrt(rnd()) * 0.5, x = cx + Math.cos(a) * 25 * d, y = cy + Math.sin(a) * 22 * d;
-        for (let l = 0; l < 3; l++) out.push(`<ellipse cx="${f(x + (l - 1) * 3.4)}" cy="${f(y + (rnd() - 0.5) * 4)}" rx="3" ry="1.6" transform="rotate(${f(rnd() * 90 - 45)} ${f(x + (l - 1) * 3.4)} ${f(y)})" fill="${dim(p.dark)}" opacity="0.42"/>`);
-      }
-    }
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="192" viewBox="0 0 72 96">${out.join("")}</svg>`;
   }
-  // Picture by season and night: summer (3), fall (20 Sep to 15 Nov, by date; 4) or winter mode (bare, 2); the tree's seed picks one of them.
-  await Promise.all(Object.entries(TREE_SET).flatMap(([kind, set]) => set.flatMap((_, i) => [false, true].map(async (night) =>
-    map.addImage(`tree-${kind}-${i}${night ? "-n" : ""}`, await C.svgToImage(treeSVG(kind, i, night)), { pixelRatio: 2 })))));
   function paintTrees(date) {
-    const kind = treeSeason(date);
-    map.setLayoutProperty("trees", "icon-image", ["concat", `tree-${kind}-`, ["%", ["get", "s"], TREE_SET[kind].length], state.night ? "-n" : ""]);
+    const set = TREE_COLORS[treeSeason(date)], cols = state.night ? set.night : set.day, i = state.night ? 1 : 0;
+    const crown = cols.length === 1 ? cols[0] : ["match", ["%", ["get", "s"], cols.length], ...cols.slice(0, -1).flatMap((c, k) => [k, c]), cols.at(-1)];
+    map.setPaintProperty("trees-crown", "fill-extrusion-color", crown);
+    map.setPaintProperty("trees-crown", "fill-extrusion-opacity", set.crown);
+    map.setPaintProperty("trees-trunk", "fill-extrusion-color", set.trunk[i]);
+    map.setPaintProperty("trees-trunk", "fill-extrusion-opacity", set.trunkOpacity);
   }
 
   // ------------------------------------------------------------------ night map (2026-11-02)
@@ -1256,7 +1221,7 @@
     vis("tint", toggles.tint); vis("relief", toggles.relief);
     ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
     vis("bld-flat", toggles.buildings && !state.is3d); vis("bld-3d", toggles.buildings && state.is3d);
-    vis("trees", state.is3d);
+    vis("trees-crown", TREES_ON && state.is3d); vis("trees-trunk", TREES_ON && state.is3d);
     vis("radar", state.wx);
     setTerrain(toggles.terrain && state.is3d);
     // with a route on screen, keep only the POIs and works along it (plus metro and REM stations) to cut clutter
