@@ -884,6 +884,8 @@ def poi_kind(t):
 
 def task_pois():
     els = json.loads((RAW / "osm_overpass" / "pois_island.json").read_text(encoding="utf-8"))["elements"]
+    shop_els = json.loads((RAW / "osm_overpass" / "shops_island.json").read_text(encoding="utf-8"))["elements"]
+    chains = bl.poi_chain_names([el.get("tags", {}) for el in els + shop_els])   # a chain's branches without a brand tag
     out, n_parking_dropped = [], 0
     for el in els:
         t = el.get("tags", {})
@@ -898,14 +900,14 @@ def task_pois():
         if k == "parking" and not in_box(c["lon"], c["lat"], STUDY):      # bike racks only inside the old study area (file size)
             n_parking_dropped += 1
             continue
-        out.append([k, t.get("name", ""), round(c["lon"], 6), round(c["lat"], 6)])
+        out.append([k, t.get("name", ""), round(c["lon"], 6), round(c["lat"], 6)] + bl.poi_tail(k, t, chains))   # + the suggester's flags and hours
     # named shops (separate download)
-    for el in json.loads((RAW / "osm_overpass" / "shops_island.json").read_text(encoding="utf-8"))["elements"]:
+    for el in shop_els:
         t = el.get("tags", {})
         c = el.get("center") or {"lon": el.get("lon"), "lat": el.get("lat")}
         if c["lon"] is None or not t.get("name") or not in_box(c["lon"], c["lat"], ISLAND):
             continue
-        out.append(["shop", t["name"], round(c["lon"], 6), round(c["lat"], 6)])
+        out.append(["shop", t["name"], round(c["lon"], 6), round(c["lat"], 6)] + bl.poi_tail("shop", t, chains))
     # City fountains (dedupe with OSM water within ~12 m)
     water = [(p[2], p[3]) for p in out if p[0] == "water"]
     with open(RAW / "mtl_fontaines_a_boire" / "fontaine_eau_potable_v2018.csv", encoding="utf-8-sig") as fh:
@@ -930,6 +932,9 @@ def task_pois():
             out.append(["metro", name, lon, lat, lines])
     c = collections.Counter(p[0] for p in out)
     print("  POIs:", dict(c.most_common()), f"(bike racks outside the study area left out: {n_parking_dropped})")
+    tails = [p[4:] for p in out if p[0] not in ("bixi", "metro") and len(p) > 4]
+    print(f"  suggester: {sum(t[0] == bl.POI_SKIP for t in tails)} skipped (chains, fast food, big-box shops), "
+          f"{sum(t[0] == bl.POI_REAL for t in tails)} real destinations, {sum(len(t) > 1 for t in tails)} with opening hours")
     bl.write_js("pois.js", "POIS", out)
     return c
 

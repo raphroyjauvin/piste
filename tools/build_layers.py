@@ -17,9 +17,11 @@ import io
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
+import unicodedata
 import zipfile
 from pathlib import Path
 
@@ -148,8 +150,56 @@ def layer_planned():
 
 
 # ---------------------------------------------------------------- POIs
+# The tail of a POI row that the ride suggester reads (shared/suggest.js, "local first", 2026-11-03):
+#   [kind, name, lon, lat]                    nothing known
+#   [kind, name, lon, lat, 1]                 SKIP: a chain (brand / brand:wikidata, or the name of 2+ branded places), fast food,
+#                                             or a big-box / low-appeal shop
+#   [kind, name, lon, lat, 2]                 REAL: a real destination (opening hours, a website or a cuisine)
+#   [kind, name, lon, lat, 2, "Mo-Fr 07:00-18:00;Sa,Su 08:00-17:00"]   REAL, with its OSM opening_hours (spaces trimmed)
+# Every place stays on the map; only the suggester skips. BIXI and metro rows keep their own 5th element (capacity, lines).
+POI_SKIP, POI_REAL = 1, 2
+POI_BUSINESS_AMENITY = {"cafe", "restaurant", "fast_food", "ice_cream", "bar", "pub", "biergarten", "marketplace"}   # public amenities (toilets, libraries, repair stands) are never "chains"
+POI_SKIP_SHOPS = {"variety_store", "department_store", "mall", "wholesale", "supermarket", "convenience", "chemist", "electronics", "mobile_phone", "cosmetics", "perfumery"}
+POI_STOP_KINDS = {"cafe", "food", "bakery", "icecream", "bar", "toilets", "park", "viewpoint", "culture", "bikeshop", "repair"}   # kinds shared/suggest.js STOP_KINDS can pick
+POI_HOURS_MAX = 120   # longer opening_hours are seasonal or conditional, which the app does not read anyway (it counts them as unknown)
+
+
+def _is_business(tags):
+    return tags.get("amenity") in POI_BUSINESS_AMENITY or "shop" in tags
+
+
+def _name_key(name):
+    """Name for spotting a chain's untagged branches: no accents, case, curly quotes or extra spaces ("Cafe Depot" = "Café Dépôt")."""
+    n = unicodedata.normalize("NFKD", (name or "").replace("’", "'"))
+    return " ".join("".join(c for c in n if not unicodedata.combining(c)).casefold().split())
+
+
+def poi_chain_names(tag_lists):
+    """Names that two or more branded businesses carry: a branch of the same name with no brand tag is that chain too."""
+    names = collections.Counter(_name_key(t.get("name")) for t in tag_lists if _is_business(t) and ("brand" in t or "brand:wikidata" in t) and t.get("name"))
+    return {n for n, k in names.items() if k >= 2}
+
+
+def poi_tail(kind, tags, chain_names=frozenset()):
+    """Flags (and opening hours) for one OSM place, as the list to append to its POI row (see above)."""
+    if _is_business(tags) and ("brand" in tags or "brand:wikidata" in tags or _name_key(tags.get("name")) in chain_names
+                               or tags.get("amenity") == "fast_food" or tags.get("shop") in POI_SKIP_SHOPS):
+        return [POI_SKIP]
+    if kind not in POI_STOP_KINDS:
+        return []
+    hours = " ".join(tags.get("opening_hours", "").split())
+    hours = re.sub(r"\s*([;,])\s*", r"\1", hours)
+    real = bool(hours or tags.get("website") or tags.get("contact:website") or tags.get("cuisine"))
+    if not real:
+        return []
+    return [POI_REAL, hours] if hours and len(hours) <= POI_HOURS_MAX else [POI_REAL]
+
+
 def layer_pois():
     els = json.loads((RAW / "osm_overpass" / "pois.json").read_text(encoding="utf-8"))["elements"]
+    shops = RAW / "osm_overpass" / "shops.json"
+    shop_els = json.loads(shops.read_text(encoding="utf-8"))["elements"] if shops.exists() else []
+    chains = poi_chain_names([el.get("tags", {}) for el in els + shop_els])
     out = []
 
     def kind(t):
@@ -180,16 +230,14 @@ def layer_pois():
             continue
         if k == "park" and not t.get("name"):
             continue
-        out.append([k, t.get("name", ""), round(c["lon"], 6), round(c["lat"], 6)])
+        out.append([k, t.get("name", ""), round(c["lon"], 6), round(c["lat"], 6)] + poi_tail(k, t, chains))
     # named shops (separate download, 2026-10-28)
-    shops = RAW / "osm_overpass" / "shops.json"
-    if shops.exists():
-        for el in json.loads(shops.read_text(encoding="utf-8"))["elements"]:
-            t = el.get("tags", {})
-            c = el.get("center") or {"lon": el.get("lon"), "lat": el.get("lat")}
-            if c["lon"] is None or not t.get("name") or not in_bbox(c["lon"], c["lat"]):
-                continue
-            out.append(["shop", t["name"], round(c["lon"], 6), round(c["lat"], 6)])
+    for el in shop_els:
+        t = el.get("tags", {})
+        c = el.get("center") or {"lon": el.get("lon"), "lat": el.get("lat")}
+        if c["lon"] is None or not t.get("name") or not in_bbox(c["lon"], c["lat"]):
+            continue
+        out.append(["shop", t["name"], round(c["lon"], 6), round(c["lat"], 6)] + poi_tail("shop", t, chains))
     # City fountains (dedupe with OSM water within ~12 m)
     water = [(p[2], p[3]) for p in out if p[0] == "water"]
     with open(RAW / "mtl_fontaines_a_boire" / "fontaine_eau_potable_v2018.csv", encoding="utf-8-sig") as fh:

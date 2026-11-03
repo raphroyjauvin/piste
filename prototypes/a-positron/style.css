@@ -135,8 +135,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .pref-row > output { color: var(--blue-deep); font-weight: 700; font-size: 14px; }
 .prefs input[type=range] { width: 100%; accent-color: var(--blue); }
 .ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
-.check { display: flex; gap: 8px; align-items: center; min-height: 44px; font-size: 14px; color: var(--ink-2); }   /* the whole label is the 44 px tap target */
-.pref-checks { display: flex; flex-wrap: wrap; gap: 0 22px; margin-top: -4px; }
+/* "Avoid" (2026-11-03): a small label, then real checkboxes drawn as chips on one line (32 px chips inside 44 px labels) */
+.avoid { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: -4px 0; }
+.avoid-label { font-size: 13px; font-weight: 700; color: var(--ink-2); margin-right: 2px; }
+.toggle { position: relative; display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; }
+.toggle input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.toggle span { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper);
+  font-size: 13px; font-weight: 500; color: var(--ink-2); white-space: nowrap; transition: background .15s, border-color .15s, color .15s; }
+/* on: blue, with a small check mark (so the state never rests on colour alone) */
+.toggle span::before { content: ""; flex: none; box-sizing: border-box; width: 0; height: 6px; margin: -3px -4px 0 0; border: solid currentColor; border-width: 0 0 2px 2px; transform: rotate(-45deg);
+  opacity: 0; transition: width .15s, margin .15s, opacity .15s; }
+.toggle:hover span { border-color: var(--blue); }
+.toggle input:checked + span { border-color: var(--blue); background: var(--blue-soft); color: var(--blue-deep); }
+.toggle input:checked + span::before { width: 10px; margin-right: 0; opacity: 1; }
+.toggle input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 .routes { display: flex; flex-direction: column; gap: 8px; }
 .routes:empty { display: none; }
@@ -169,8 +181,7 @@ details.turns li { margin: 3px 0; }
 .turn-at { color: var(--ink-3); }
 .ride-go { border: 0; background: var(--blue); color: #fff; font: 800 16px/1 var(--font-display); letter-spacing: .02em; padding: 14px; border-radius: 12px; }
 .ride-go:hover { background: var(--blue-deep); }
-.credits { font-size: 11px; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 10px; }
-.credits p { margin: 0; }
+.panel-foot { font-size: 11px; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 4px; }   /* the data credits live in the map's "i" and in About */
 /* the panel's last row: feedback (mail) and a faint "Take the tour" */
 .foot-links { display: flex; align-items: center; gap: 4px 16px; flex-wrap: wrap; margin: 4px 0 -6px; }
 .feedback-link { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13.5px; font-weight: 700; text-decoration: none; }
@@ -249,7 +260,12 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .pop { font: 14px/1.35 var(--font-ui); min-width: 170px; display: flex; flex-direction: column; gap: 2px; }
 .pop-kind { color: var(--ink-3); font-size: 12px; }
 .pop-bixi { font-size: 13px; color: var(--green-ink); margin-top: 2px; }
-.pop-go { margin-top: 8px; padding: 7px 10px; font-size: 13px; align-self: flex-start; }
+.pop-actions { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; margin-top: 4px; }
+.pop-go { padding: 7px 10px; font-size: 13px; }
+.pop-more { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; color: var(--blue-deep); font-size: 13px; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }   /* a 44 px tap area */
+.pop-more svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pop-more:hover { color: var(--ink); }
+.pop-more:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
 
 /* ---------- ride HUD ---------- */
 .ride-hud { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
@@ -449,11 +465,29 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
 .place:hover::before { border-color: var(--blue); }
 .place:focus-visible { outline: none; }
 .place:focus-visible::before { outline: 2px solid var(--blue); outline-offset: 2px; }
-.place.unset { color: var(--ink-2); }
-.place.unset::before { border-style: dashed; }
-.place.add { min-width: 44px; padding: 0; }
-.place.add::before { inset: 7px; }
-.place svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* Home, Work, ★ and +: round icon chips (2026-11-03), a 30 px circle in a 44 px button; an unset Home or Work is dashed and paler */
+.place.round { min-width: 44px; padding: 0; color: var(--blue-deep); }
+.place.round::before { inset: 7px; }
+.place.unset { color: var(--ink-3); }
+.place.unset::before { border-style: dashed; border-color: #a9b1b8; }
+.place.add { color: var(--ink-2); }
+.place[aria-expanded="true"]::before { border-color: var(--blue); background: var(--blue-soft); }
+.place svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* the ★ list: floats over the card or the map (app.js placeList sets top, left and max-height) */
+.place-list { position: fixed; z-index: 15; width: min(300px, calc(100vw - 20px)); overflow: auto; overscroll-behavior: contain; background: var(--paper); border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(25, 30, 36, .06), var(--shadow); padding: 4px; -webkit-user-select: none; user-select: none; }
+.place-list ul { list-style: none; margin: 0; padding: 0; }
+.place-list li { display: flex; align-items: center; }
+.pl-row { flex: 1; min-width: 0; min-height: 48px; display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 6px 10px; border: 0; border-radius: 10px; background: none; text-align: left; }
+.pl-row span { font-size: 15px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-row small { font-size: 12px; color: var(--ink-3); }
+.pl-row:hover, .pl-edit:hover, .pl-clear:hover { background: var(--blue-soft); }
+.pl-edit { flex: none; width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--ink-2); }
+.pl-edit svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.pl-clear { display: block; width: 100%; min-height: 44px; padding: 0 10px; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; background: none; color: var(--ink-2); font-size: 13px; text-align: left; }
+/* you are here (Use my location, or on opening the app) */
+.me-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--blue); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(0, 149, 230, .18), 0 1px 4px rgba(0, 40, 70, .35); pointer-events: none; }
+body.riding .me-dot { display: none; }
 .det-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -10px 0; }   /* the 44 px button lends its height to the gaps around it */
 .share-btn { flex: none; width: 44px; height: 44px; margin-right: -12px; padding: 0; border: 0; border-radius: 50%; background: none; display: grid; place-items: center; color: var(--ink-3); }
 .share-btn:hover { color: var(--blue-deep); }
@@ -479,7 +513,7 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .field input { font-size: 16px; }   /* 16 px stops iPhone Safari from zooming in when you tap a search bar */
   /* typing a place: only the search bars show, sitting on the keyboard; suggestions float over the map above */
   body.searching #panel > :not(.grabber):not(.search) { display: none !important; }
-  body.searching .map-controls, body.searching .wx-card, body.searching .legend, body.searching .places { display: none !important; }
+  body.searching .map-controls, body.searching .wx-card, body.searching .legend { display: none !important; }   /* the place chips stay, under the bars */
   body > .suggest { position: fixed; left: 10px; right: 10px; top: auto; z-index: 20; overflow: auto; box-shadow: var(--shadow); }
   .brand { touch-action: none; }
   .brand .mark { width: 28px; height: 28px; }
