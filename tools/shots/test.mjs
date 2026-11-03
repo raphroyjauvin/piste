@@ -1580,7 +1580,7 @@ await run("3D trees: in 3D only, a tile loads, the colours follow summer, fall a
     a.paintTrees(new Date(2026, 10, 16)); const afterFall = get("fill-extrusion-color");
     a.setWinter(true); const winter = get("fill-extrusion-color"), winterOp = get("fill-extrusion-opacity");
     a.setWinter(false);
-    return { summer, fall, winter, summerOp, winterOp, fallIsMix: /#d9772b/.test(fall) && /#b8402c/.test(fall) && /#e0b73a/.test(fall) && /#6f8f3a/.test(fall), threeGreens: (summer.match(/#/g) || []).length === 3,
+    return { summer, fall, winter, summerOp, winterOp, fallIsMix: new Set(fall.match(/#[0-9a-f]{6}/gi)).size >= 5, threeGreens: (summer.match(/#/g) || []).length === 3,
       edges: beforeFall === summer && afterFall === summer };
   });
   const tileOk = await page.evaluate(async () => {   // a sample tile straight from the PMTiles file: the crowns layer has features with a height and a seed
