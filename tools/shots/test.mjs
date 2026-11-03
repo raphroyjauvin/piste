@@ -1562,7 +1562,7 @@ await run("REM: tracks and stations on the map, a Layers checkbox, the credit", 
 });
 
 // ---- 3D trees (2026-11-02): from the LiDAR canopy (tools/island_trees.py); in the 3D view only, from zoom 15.5; coloured by season ----
-await run("3D trees: in 3D only, a tile loads, the colours follow summer, fall and winter", `${APP}?trip=montroyal`, async (page) => {
+if (process.env.PISTE_TREES) await run("3D trees: in 3D only, a tile loads, the colours follow summer, fall and winter", `${APP}?trip=montroyal`, async (page) => {
   const look = (is3d) => page.evaluate(async (is3d) => {
     const a = window.__app, m = a.map, wait = (ms) => new Promise((r) => setTimeout(r, ms));
     a.set3d(is3d); m.jumpTo({ center: [-73.5877, 45.5035], zoom: 16.2 }); await wait(1500);   // Mont-Royal's south slope

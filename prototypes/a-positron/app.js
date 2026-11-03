@@ -206,6 +206,7 @@
   add({ id: "bld-3d", type: "fill-extrusion", source: "bld", "source-layer": "buildings", minzoom: 14, layout: { visibility: "none" },
     paint: { "fill-extrusion-color": ["interpolate", ["linear"], ["get", "h"], 0, "#f1eee8", 25, "#e6e2db", 90, "#d9d3ca"],
       "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.82, "fill-extrusion-vertical-gradient": true } });
+  const TREES_ON = false;   // 2026-11-02: off until Raph picks a new tree design (the octagon prisms read as cylinders)
   // 3D trees (tools/island_trees.py): from the LiDAR canopy, a thin trunk and an octagon crown per tree top. 3D view only, from zoom 15.5;
   // the crown is the top half of the tree's height (shorter reads as a tree, not a column); the trunk reaches a little into it.
   // Colours by season and night: paintTrees().
@@ -1220,7 +1221,7 @@
     vis("tint", toggles.tint); vis("relief", toggles.relief);
     ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
     vis("bld-flat", toggles.buildings && !state.is3d); vis("bld-3d", toggles.buildings && state.is3d);
-    vis("trees-crown", state.is3d); vis("trees-trunk", state.is3d);
+    vis("trees-crown", TREES_ON && state.is3d); vis("trees-trunk", TREES_ON && state.is3d);
     vis("radar", state.wx);
     setTerrain(toggles.terrain && state.is3d);
     // with a route on screen, keep only the POIs and works along it (plus metro and REM stations) to cut clutter
