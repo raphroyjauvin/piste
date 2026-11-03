@@ -479,6 +479,9 @@
       return this.routeCapped(from, to, opts, relaxSteps(kind, settings), limit);
     }
 
+    // The coordinates of one leg of a route ({ e, t0, t1 }), in the direction ridden: for cutting a route exactly at a distance
+    // (common.js sliceRoute), where the route's own coords can jump at a waypoint whose two sides snapped to different streets.
+    legCoords(leg) { return this._legCoords(leg); }
     // portion of edge geometry between fractions t0..t1 (in travel direction)
     _legCoords(leg) {
       const pts = this.edgeCoords(leg.e, true);
