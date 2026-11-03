@@ -307,8 +307,30 @@ out geom tags;""")
     print(f"ok {dem.name}: {dem.stat().st_size / 1e6:.1f} MB in {time.time() - t:.0f}s")
 
 
+def task_rem(refresh):
+    """The REM light-rail lines and stations from OpenStreetMap (the ARTM publishes no map data for the REM): the route relations
+    with network REM, geometry and stops included, plus the station features. Saved as published to osm_rem/rem.json."""
+    out = RAW / "osm_rem" / "rem.json"
+    if out.exists() and not refresh:
+        print(f"skip (exists) {out.name}")
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    t = time.time()
+    bb = "(45.30,-74.20,45.75,-73.30)"
+    data = overpass(f"""[out:json][timeout:300];
+relation["route"~"^(light_rail|subway|train)$"]["network"~"REM"]{bb}->.lines;
+.lines out geom;
+nwr["network"~"REM"]["public_transport"~"^(station|stop_position)$"]{bb};
+out center tags;
+nwr["network"~"REM"]["railway"~"^(station|halt|stop)$"]{bb};
+out center tags;""")
+    out.write_text(json.dumps(data), encoding="utf-8")
+    log("osm_rem\rem.json", OVERPASS + " (query in tools/fetch_data.py task_rem)", "OpenStreetMap contributors", "ODbL 1.0", out)
+    print(f"ok {out.name}: {len(data.get('elements', []))} elements, {out.stat().st_size / 1e6:.1f} MB in {time.time() - t:.0f}s")
+
+
 TASKS = {"opendata": task_opendata, "gtfs": task_gtfs, "osm": task_osm, "mtl_tiles": task_mtl_tiles,
-         "dem": task_dem, "island": task_island}
+         "dem": task_dem, "island": task_island, "rem": task_rem}
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

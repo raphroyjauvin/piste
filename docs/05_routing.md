@@ -165,6 +165,12 @@ Result for the study area: 6,645 nodes, 10,526 edges, 0.7 MB.
   - turn-by-turn maneuvers
   - an along-route cursor for the ride simulation
 
+### Avoid construction (2026-11-02)
+- **What it does.** An edge within 25 m of an active work site costs 6 times as much (`WORKS` in `router.js`): a penalty, not a closure, so a route still exists when there is no other way. `Router.worksPenalty(points)` builds the per-edge multipliers once (spatial grid, `Float32Array`); `opts.worksPen` carries them into `route()`, and `routeSettings` / `relaxSteps` keep them, so the detour cap (`planRoute`), the relaxing steps, suggested rides and GPS reroutes all respect the option.
+- **Which works.** The same points the map shows (`PLANNED`, status `works`, the City's Info-travaux permits that block a bike path), minus any whose `until` date has passed (`activeWorks`). The snapshot in `planned.js` was taken 2026-10-29, so the map still shows a few expired cones; routing ignores them.
+- **In the app.** Checkbox "Avoid construction" ("Éviter les chantiers"), off by default, localStorage `piste-avoid-works`.
+- **Tests.** `tools/check_routes.js` (section "Avoid construction"): a fake work site on a mid-route edge moves the route off it in most trips and never changes it when the option is off; the detour cap holds; the penalty survives the relaxing steps. `test.mjs`: "avoid construction: …" (the checkbox moves the real route off a fake work site).
+
 ## Benchmarks (`tools/bench_routing.js`, `tools/compare_engines.py`)
 Share of each route on City bike infrastructure, scored the same way for every engine: 10 m samples matched to our graph within 14 m and 35°.
 
@@ -196,5 +202,5 @@ GraphHopper needs an API key, so it wasn't tested.
 - **Time rules:** handle rush-hour-only bike paths (`TYPE_VOIE2` 34, 35, 39, 94) and the summer pedestrian streets.
 - **Island-wide graph:** done 2026-10-29 (37,770 nodes, 56,315 edges; 1–8 ms per route). See the update at the top.
 - **Path names:** name off-street paths after the park they cross ("Parc La Fontaine path").
-- **Live roadworks:** route around bike paths blocked by works (`bikepath_blockedtype`).
+- **Live roadworks:** done 2026-11-02 as the "Avoid construction" option (see above); not on by default. Still open: a cone-to-edge match that uses the impacted street rather than the permit point.
 - **Winter mode:** done 2026-10-29 (4-season network only; see the update at the top). Still open: real-time clearing status, which isn't public. The City's Planif-Neige API needs an access token and covers streets, not bike paths or sidewalks. The City will send a token when the 2026-2027 version restarts, so it is shelved until winter (2026-10-30). It may help later for streets without a bike path.

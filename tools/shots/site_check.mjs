@@ -31,6 +31,17 @@ for (const base of bases) {
   const cards = await page.evaluate(() => document.querySelectorAll("#classic-track > *").length).catch(() => 0);
   check(new URL(page.url()).pathname === new URL(base).pathname, `it stays at the root (${new URL(page.url()).pathname})`);
 
+  // Offline: no service worker on a plain visit here (it registers on pistemtl.ca only); with ?sw=1 it installs at the site's root with a stamped version
+  check(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length === 0), "no service worker on a plain visit to this host");
+  await page.goto(base + "?sw=1", { waitUntil: "load" });
+  const sw = await page.evaluate(async () => {
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 60000))]);
+    const name = (await caches.keys()).find((k) => k.startsWith("piste-shell-")) || "";
+    return { scope: reg && reg.scope, script: reg && reg.active && reg.active.scriptURL, name, files: name ? (await (await caches.open(name)).keys()).length : 0 };
+  });
+  check(sw.scope === base && sw.script === base + "sw.js" && /^piste-shell-[0-9a-f]{10}$/.test(sw.name) && sw.files >= 20, `service worker at the root: ${sw.script ? sw.script.slice(origin.length) : "none"}, ${sw.name}, ${sw.files} files kept`);
+  await ctx.clearCookies();
+
   // Old links forward, keeping ?query and #hash
   await page.goto(base + "a-positron/?lang=fr#here", { waitUntil: "load" });
   await page.waitForURL((u) => !u.pathname.includes("a-positron"), { timeout: 15000 }).catch(() => {});

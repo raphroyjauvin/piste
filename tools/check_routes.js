@@ -24,7 +24,7 @@
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm");
 const ROOT = path.resolve(__dirname, "..");
-const { Router, PROFILES, SHORTEST, DETOUR, U_TURN, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM, bearing } = require(path.join(ROOT, "prototypes/shared/router.js"));
+const { Router, PROFILES, SHORTEST, DETOUR, U_TURN, WORKS, CAPPED_KINDS, activeWorks, weightsFor, routeSettings, relaxSteps, distM, bearing } = require(path.join(ROOT, "prototypes/shared/router.js"));
 const BASELINE = path.join(__dirname, "route_baseline.json");
 const UPDATE = process.argv.includes("--update"), VERBOSE = process.argv.includes("--verbose");
 
@@ -293,6 +293,43 @@ for (const t of RANDOM) planTrip(t, false);
   // a limit passed in or not gives the same route
   const [, , ca, cb] = COMMUTES[5];
   expect(JSON.stringify(r.planRoute(ca, cb, "mostLanes", {}).legs) === JSON.stringify(r.planRoute(ca, cb, "mostLanes", {}, r.detourLimit(ca, cb)).legs), "planRoute differs with and without the limit passed");
+}
+
+// ---------------------------------------------------------------- 2b1. "Avoid construction" (2026-11-02)
+// A fake work site on a mid-route edge: with the option on the route moves off every penalised edge (and still keeps to the detour
+// cap, through planRoute); with it off nothing changes. Only sites with a real alternative count, so the check searches for them.
+{
+  const expect = (ok, msg) => { if (!ok) fail(`Avoid construction: ${msg}`); };
+  const works = (lon, lat, until) => ({ geometry: { coordinates: [lon, lat] }, properties: { status: "works", until } });
+  const act = activeWorks([works(1, 2, "2026-11-02"), works(3, 4, "2026-11-01"), works(5, 6), { geometry: { coordinates: [7, 8] }, properties: { status: "closed" } }], "2026-11-02");
+  expect(JSON.stringify(act) === "[[1,2],[5,6]]", "activeWorks should keep works dated today or later (and undated), nothing else");
+  let moved = 0, tried = 0;
+  for (const [, , a, b] of COMMUTES.slice(0, 12)) {
+    const base = r.planRoute(a, b, "yourRoute", { strictness: STRICT });
+    if (!base || base.legs.length < 8) continue;
+    const e = base.legs[Math.floor(base.legs.length / 2)].e, pts = r.edgeCoords(e, true), mid = pts[Math.floor(pts.length / 2)];
+    const pen = r.worksPenalty([mid]);
+    expect(pen[e] === WORKS.factor, "the edge under the work site is not penalised");
+    expect(pen.every((v) => v === 1 || v === WORKS.factor), "penalties should be 1 or the factor");
+    tried++;
+    const settings = { strictness: STRICT, works: { worksPen: pen } };
+    const off = r.planRoute(a, b, "yourRoute", { strictness: STRICT, works: {} }), on = r.planRoute(a, b, "yourRoute", settings);
+    expect(JSON.stringify(off.legs) === JSON.stringify(base.legs), "with the option off the route changed");
+    expect(on && (on.steps > 0 || on.length <= on.limit + 1e-6), "the route with the option on broke the detour cap");
+    if (!on.legs.some((l) => l.e === e)) {
+      moved++;
+      expect(on.legs.every((l) => pen[l.e] === 1) || on.legs.filter((l) => pen[l.e] > 1).length < base.legs.filter((l) => pen[l.e] > 1).length, "the route still rides the penalised edges");
+    }
+    // the settings keep the works through the relaxing steps and into Most direct
+    const rs = relaxSteps("yourRoute", settings);
+    expect([1, 2, 3, 4, 5, 6].every((i) => rs(i).worksPen === pen) && routeSettings("mostDirect", settings).worksPen === pen, "worksPen not kept through the steps");
+  }
+  expect(tried >= 5, `only ${tried} trips could be tried`);
+  expect(moved >= 3, `the route moved off the work site in only ${moved} of ${tried} trips`);
+  // no way round: a work site on the only street still gives a route (a penalty, not a closure)
+  const [, , ca, cb] = COMMUTES[5], solo = r.planRoute(ca, cb, "mostDirect", {}), allPen = new Float32Array(r.m).fill(WORKS.factor);
+  const stuck = r.planRoute(ca, cb, "mostDirect", { works: { worksPen: allPen } });
+  expect(stuck && Math.abs(stuck.length - solo.length) < 1e-6, "with every edge penalised the route should be the plain one");
 }
 
 // ---------------------------------------------------------------- 2b2. heading-aware start (2026-11-01)

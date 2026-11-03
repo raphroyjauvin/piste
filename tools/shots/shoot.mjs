@@ -14,7 +14,7 @@ const phone = { w: 402, h: 874, scale: 2, mobile: true };   // iPhone 17 / 17 Pr
 const phone390 = { w: 390, h: 844, scale: 2, mobile: true };   // iPhone 13-16 size, for the welcome card and the tour
 const APP = process.env.PISTE_APP || "a-positron/index.html";   // PISTE_APP=index.html: a site built by tools/build_site.py (the app at the root)
 // the guided tour (tour.js), one shot per step: start at that step and wait until the callout has settled
-const TOUR = ["search", "style", "colours", "ride", "suggest", "view3d", "weather", "winter", "layers", "feedback"];
+const TOUR = ["search", "style", "colours", "suggest", "view3d", "weather", "winter", "layers", "feedback"];
 const tourSteps = (i) => [["eval", `window.pisteTour.start(${i})`], ["until", `(() => { const x = window.pisteTour.info(); return x.i === ${i} && x.settled; })()`], ["wait", 300]];
 const SHOTS = [
   { name: "P0-phone-preview", url: "phone.html", w: 1440, h: 980, scale: 1, page: true, wait: 14000 },

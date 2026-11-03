@@ -62,6 +62,7 @@
         <button type="button" class="field-btn clear" data-target="to" data-i18n-title="clearField"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
       </div>
     </div>
+    <div id="places" class="places" role="group"></div>
     <ul id="suggest" class="suggest" hidden></ul>
   </section>
 
@@ -76,6 +77,7 @@
     <div class="ends"><span>1 km</span><span>100 km</span></div>
     <div class="stop-pick"><span id="stop-label"><span data-i18n="stopOnWay"></span> <em data-i18n="optional"></em></span>
       <div id="stop-chips" class="stop-chips" role="radiogroup" aria-labelledby="stop-label"></div></div>
+    <label class="check"><input id="avoid-wind" type="checkbox"> <span data-i18n="avoidWind"></span></label>
   </section>
 
   <section class="prefs go-or-custom">
@@ -84,19 +86,19 @@
     <div class="ends"><span data-i18n="mostDirect"></span><span data-i18n="mostLanes"></span></div>
     <div class="pref-checks">
       <label class="check"><input id="hills" type="checkbox"> <span data-i18n="avoidHills"></span></label>
-      <label class="check"><input id="avoid-wind" type="checkbox"> <span data-i18n="avoidWind"></span></label>
+      <label class="check"><input id="avoid-works" type="checkbox"> <span data-i18n="avoidWorks"></span></label>
     </div>
   </section>
 
   <section id="routes" class="routes" aria-live="polite"></section>
   <section id="detail" class="detail"></section>
   <footer class="credits">
-    <p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC · OpenFreeMap</p>
+    <p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo · ECCC · OpenFreeMap</p>
     <div id="foot-links" class="foot-links">
       <button type="button" id="feedback-link" class="feedback-link" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="feedback"></span></button>
       <button type="button" id="tour-again" class="tour-again" data-i18n="takeTour"></button>
     </div>
-    <p class="legal"><span class="copyright">© 2026 Raphaël Roy-Jauvin</span><button type="button" id="about-link" class="about-link" aria-haspopup="dialog" data-i18n="aboutLink"></button></p>
+    <p class="legal"><span class="copyright">© 2026 Piste Montréal</span><button type="button" id="about-link" class="about-link" aria-haspopup="dialog" data-i18n="aboutLink"></button></p>
   </footer>
 </aside>
 
@@ -121,6 +123,7 @@
     <label><input type="checkbox" data-layer="pois-shop" checked> <span data-i18n="lyShops"></span></label>
     <label><input type="checkbox" data-layer="pois-bike" checked> <span data-i18n="lyBike"></span></label>
     <label><input type="checkbox" data-layer="metro" checked> <span data-i18n="lyMetro"></span></label>
+    <label><input type="checkbox" data-layer="rem" checked> <span data-i18n="lyRem"></span></label>
     <label><input type="checkbox" data-layer="culture" checked> <span data-i18n="lyCulture"></span></label>
     <label><input type="checkbox" data-layer="buildings" checked> <span data-i18n="lyBuildings"></span></label>
     <h3 data-i18n="layersElev"></h3>
@@ -128,6 +131,12 @@
     <label><input type="checkbox" data-layer="relief" checked> <span data-i18n="lyRelief"></span></label>
     <label><input type="checkbox" data-layer="contours" checked> <span data-i18n="lyContours"></span></label>
     <label><input type="checkbox" data-layer="terrain" checked> <span data-i18n="lyTerrain"></span> <em data-i18n="lyIn3d"></em></label>
+    <div class="night" role="radiogroup" aria-labelledby="night-label">
+      <span id="night-label" data-i18n="lyNight"></span>
+      <label><input type="radio" name="night" value="auto"> <span data-i18n="nightAuto"></span></label>
+      <label><input type="radio" name="night" value="on"> <span data-i18n="nightOn"></span></label>
+      <label><input type="radio" name="night" value="off"> <span data-i18n="nightOff"></span></label>
+    </div>
   </div>
 </div>
 
@@ -226,15 +235,25 @@
 <div id="about" class="dialog-layer" hidden>
   <div id="about-card" class="dialog-card about-card" role="dialog" aria-modal="true" aria-labelledby="ab-title" tabindex="-1">
     <h2 id="ab-title" class="dialog-title" data-i18n="aboutTitle"></h2>
-    <section><h3 data-i18n="abWhoT"></h3><p data-i18n="abWho"></p></section>
+    <p data-i18n="abWho"></p>
     <section><h3 data-i18n="abRiskT"></h3><p data-i18n="abRisk"></p></section>
     <section><h3 data-i18n="abPrivT"></h3>
-      <ul><li data-i18n="abPriv1"></li><li data-i18n="abPriv2"></li><li data-i18n="abPriv3"></li><li data-i18n="abPriv4"></li><li data-i18n="abPriv5"></li><li data-i18n="abPriv6"></li></ul></section>
-    <section><h3 data-i18n="abDataT"></h3><p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC · OpenFreeMap</p></section>
+      <ul><li data-i18n="abPriv1"></li><li data-i18n="abPriv2"></li><li data-i18n="abPriv3"></li><li data-i18n="abPriv4"></li></ul></section>
+    <section><h3 data-i18n="abDataT"></h3><p>Ville de Montréal (CC BY 4.0) · OpenStreetMap contributors · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo · ECCC · OpenFreeMap</p></section>
     <p class="dialog-alt-line"><span data-i18n="abContact"></span> <a href="mailto:support@pistemtl.ca">support@pistemtl.ca</a></p>
-    <p class="copyright">© 2026 Raphaël Roy-Jauvin</p>
+    <p class="copyright">© 2026 Piste Montréal</p>
     <div class="dialog-buttons"><button type="button" id="about-close" class="primary dialog-go" data-i18n="close"></button></div>
   </div>
+</div>
+
+<div id="place-dialog" class="dialog-layer" hidden>
+  <form id="place-form" class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="pl-title" tabindex="-1" novalidate>
+    <h2 id="pl-title" class="dialog-title"></h2>
+    <div id="pl-name-field" class="dialog-field"><label for="pl-name" data-i18n="placeName"></label><input id="pl-name" type="text" maxlength="40" autocomplete="off" enterkeyhint="done"></div>
+    <button type="button" id="pl-use" class="pl-use" data-i18n="placeUse"></button>
+    <p id="pl-status" class="fb-status" role="status" aria-live="polite"></p>
+    <div class="dialog-buttons"><button type="button" id="pl-delete" class="dialog-alt pl-delete" data-i18n="placeDelete"></button><button type="button" id="pl-cancel" class="dialog-alt" data-i18n="cancel"></button><button type="submit" class="primary dialog-go" data-i18n="placeSave"></button></div>
+  </form>
 </div>
 
 <script src="../vendor/maplibre/maplibre-gl.js"></script>
@@ -244,6 +263,7 @@
 <script src="../shared/data/graph_island.js"></script>
 <script src="../shared/data/planned.js"></script>
 <script src="../shared/data/pois.js"></script>
+<script src="../shared/data/rem.js"></script>
 <script src="../shared/data/elevation_tint.js"></script>
 <script src="../shared/data/terrain_index.js"></script>
 <script src="../shared/data/trips.js"></script>

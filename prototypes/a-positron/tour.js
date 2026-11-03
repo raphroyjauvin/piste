@@ -95,6 +95,8 @@
     if (visible(d.opener)) d.opener.focus({ preventScroll: true });
   }
 
+  window.pisteDialog = { open: openDialog, close: closeDialog };   // app.js uses the same cards for its place form
+
   // --- feedback: Subject, Message, an optional email. Never anything about where the person is or what route they planned.
   const fb = { layer: null, form: null, subject: null, message: null, email: null, bot: null, status: null, send: null, mail: null, busy: false, msg: "", kind: "", timer: 0, run: 0 };
   function fbStatus(key, kind = "") { fb.msg = key; fb.kind = kind; fb.status.textContent = key ? t(key) : ""; fb.status.dataset.kind = kind; }
@@ -208,13 +210,12 @@
     { k: 2, id: "style", sheet: "half", scroll: ".prefs", targets: [".prefs"], place: ["right", "above", "below"] },
     { k: 3, id: "colours", sheet: "peek", route: true, legend: true, camera: "route", swatches: true, scroll: "#routes .route-card.sel",
       targets: ["@route", "#routes", "#legend details"], phoneTargets: ["@route", "#routes .route-card.sel"], place: ["right", "below", "above", "left"] },
-    { k: 4, id: "ride", sheet: "half", route: true, note: true, scroll: "#ride-go", targets: [["#ride-go", "#ride-preview"]], place: ["right", "above", "below"] },
-    { k: 5, id: "suggest", tab: "suggest", sheet: "half", scroll: ".tabs", targets: ["#tab-suggest", "#classics"], place: ["right", "above", "below"] },
-    { k: 6, id: "view3d", sheet: "peek", targets: ["#view-btn"], place: ["left", "below", "above"] },
-    { k: 7, id: "weather", sheet: "peek", targets: ["#wx-btn"], place: ["left", "below", "above"] },
-    { k: 8, id: "winter", sheet: "peek", route: true, winter: true, camera: "wide", targets: ["#winter-btn", "#wx-card"], place: ["left", "below", "above"] },
-    { k: 9, id: "layers", sheet: "peek", targets: ["#layers-btn"], place: ["left", "below", "above"] },
-    { k: 10, id: "feedback", sheet: "half", scroll: "@bottom", targets: ["#foot-links"], place: ["right", "above", "below"] },
+    { k: 4, id: "suggest", tab: "suggest", sheet: "half", scroll: ".tabs", targets: ["#tab-suggest", "#classics"], place: ["right", "above", "below"] },
+    { k: 5, id: "view3d", sheet: "peek", targets: ["#view-btn"], place: ["left", "below", "above"] },
+    { k: 6, id: "weather", sheet: "peek", targets: ["#wx-btn"], place: ["left", "below", "above"] },
+    { k: 7, id: "winter", sheet: "peek", route: true, winter: true, camera: "wide", targets: ["#winter-btn", "#wx-card"], place: ["left", "below", "above"] },
+    { k: 8, id: "layers", sheet: "peek", targets: ["#layers-btn"], place: ["left", "below", "above"] },
+    { k: 9, id: "feedback", sheet: "half", scroll: "@bottom", targets: ["#foot-links"], place: ["right", "above", "below"] },
   ];
   const specsOf = (st) => (P.isPhone() && st.phoneTargets) || st.targets;
 
@@ -230,7 +231,7 @@
         <rect class="tour-shade" x="0" y="0" mask="url(#tour-mask)"/><g class="tour-rings"></g></svg>
       <div class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title" aria-describedby="tour-text" tabindex="-1">
         <button type="button" class="tour-skip"></button>
-        <h2 id="tour-title"></h2><p id="tour-text"></p><p class="tour-note"></p><div class="tour-swatches"></div>
+        <h2 id="tour-title"></h2><p id="tour-text"></p><div class="tour-swatches"></div>
         <div class="tour-foot"><div class="tour-dots" aria-hidden="true"></div>
           <div class="tour-btns"><button type="button" class="tour-back"></button><button type="button" class="primary tour-next"></button></div></div>
         <span class="sr-only tour-live" aria-live="polite"></span>
@@ -253,7 +254,6 @@
     const i = STEPS.indexOf(st), n = STEPS.length, last = i === n - 1;
     card.querySelector("#tour-title").textContent = t(`tour${st.k}T`);
     card.querySelector("#tour-text").textContent = t(`tour${st.k}`);
-    card.querySelector(".tour-note").textContent = st.note ? t(P.gpsDefault() ? "tour4Phone" : "tour4Desk") : "";
     card.querySelector(".tour-swatches").innerHTML = st.swatches
       ? [["sw-a", "lgProtected"], ["sw-b", "lgPainted"], ["sw-c", "lgShared"], ["sw-gap", "lgNoLane"]].map(([c, k]) => `<span><i class="sw ${c}"></i>${t(k)}</span>`).join("") : "";
     card.querySelector(".tour-dots").innerHTML = STEPS.map((_, j) => `<i class="${j === i ? "on" : j < i ? "done" : ""}"></i>`).join("");

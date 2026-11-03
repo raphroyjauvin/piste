@@ -10,6 +10,7 @@ Locally the app keeps running from prototypes/a-positron/ (tools/serve.py); this
 
 Usage: python tools/build_site.py [out_dir]     (default: _site next to tools/)
 """
+import hashlib
 import json
 import re
 import shutil
@@ -93,6 +94,21 @@ def main():
     # Old links
     write(OUT / "a-positron" / "index.html", forward("../"))
     write(OUT / "about.html", forward("about/", "About Piste"))
+
+    # The service worker's version: a hash of itself and every file it caches on install, so a deploy that changes any of them
+    # is a new version (the old caches are dropped when it takes over)
+    sw = OUT / "sw.js"
+    text = sw.read_bytes().decode("utf-8")
+    files = re.search(r"SHELL_FILES = \[(.*?)\];", text, re.S)
+    if not files or 'const VERSION = "dev";' not in text:
+        sys.exit("build_site: sw.js no longer has SHELL_FILES and VERSION = \"dev\"; update this script")
+    digest = hashlib.sha256(text.encode("utf-8"))
+    for name in re.findall(r'"([^"]+)"', files.group(1)):
+        f = OUT / ("index.html" if name == "./" else name)
+        if not f.is_file():
+            sys.exit(f"build_site: sw.js caches {name}, which is not in the site")
+        digest.update(f.read_bytes())
+    write(sw, text.replace('const VERSION = "dev";', f'const VERSION = "{digest.hexdigest()[:10]}";'))
 
     n = sum(1 for _ in OUT.rglob("*") if _.is_file())
     print(f"build_site: {n} files in {OUT}")

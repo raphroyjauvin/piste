@@ -92,11 +92,12 @@ async function run(name, url, fn, viewport = { width: 1440, height: 900 }, ctxOp
   const t = Date.now(), errors = [], hosts = new Set();
   let ctx, timer;
   const secs = () => ((Date.now() - t) / 1000).toFixed(1);
-  const { fresh, ...opts } = ctxOpts;
+  const { fresh, night, ...opts } = ctxOpts;
   try {
-    ctx = await browser.newContext({ viewport, ...opts });
+    ctx = await browser.newContext({ viewport, serviceWorkers: "block", ...opts });   // a service worker would serve stale files (the offline group allows it)
     if (!fresh) await ctx.addInitScript(() => { try { localStorage.setItem("piste-welcomed", "1"); } catch (e) { /* storage blocked */ } });
     await ctx.addInitScript(() => { try { localStorage.setItem("umami.disabled", "1"); } catch (e) { /* storage blocked */ } });   // tests never count as visits
+    if (!ctxOpts.night) await ctx.addInitScript(() => { try { localStorage.setItem("piste-night", "off"); } catch (e) { /* storage blocked */ } });   // Auto would turn the map dark when the tests run at night
     if (FIX) await stubOutsideData(ctx);
     if (OFFLINE) await ctx.route(/^https:\/\/(tiles\.openfreemap\.org|s3\.amazonaws\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)\//, (route) => route.abort());
     // window.__flatRide(): called by the GPS-ride groups right after a ride starts; switches to the flat camera when FLAT_RIDE is on
@@ -172,7 +173,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     popTransition: (() => { const d = document.createElement("div"); d.className = "poi-pop"; document.body.appendChild(d); const v = getComputedStyle(d).transitionDuration; d.remove(); return v; })(),
     rideText: document.querySelector("#ride-go") && document.querySelector("#ride-go").textContent,
     previewLink: !!document.querySelector("#ride-preview"),   // desktop: "Let's ride!" is the preview, so no separate link
-    windNextToHills: document.querySelector("#hills").closest(".pref-checks") === document.querySelector("#avoid-wind").closest(".pref-checks"),
+    windOnlyInSuggest: !!document.querySelector("#avoid-wind").closest("#suggest-form") && !document.querySelector(".pref-checks #avoid-wind"),
     routedGone: !document.querySelector(".routed-in") && !/Routed on this device/.test(document.body.innerText),   // 2026-10-31: the timing line under the route cards is gone
   }));
   const noFloatingCopy = await page.evaluate(() => !document.querySelector("#ride-fab"));
@@ -183,7 +184,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
   const fromAfterTap = await page.evaluate(() => window.__app.state.to && window.__app.state.to.join(","));
   await page.click("#view-btn"); await page.waitForTimeout(1200);
   const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
-  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windNextToHills && before.routedGone && noFloatingCopy
+  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windOnlyInSuggest && before.routedGone && noFloatingCopy
     && !before.tripChips && !before.exploreNote && before.avoidHills === "Avoid hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
     && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
   return { ok, ...before, noFloatingCopy, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
@@ -281,18 +282,22 @@ await run("winter mode: 4-season routing, icy map, labels", `${APP}?trip=montroy
     summerShare: Math.round(summer.share * 100), winterShare: Math.round(winter.share * 100), winterCard: winter.card.slice(0, 160) };
 }));
 
-await run("wind & rain and live BIXI", `${APP}?trip=rachel`, async (page) => page.evaluate(async (minStations) => {
-  const app = window.__app, m = app.map, s = app.state;
+// 2026-11-02: the weather button is wind and rain only; BIXI loads through its own layer and the button never changes it
+await run("wind & rain; BIXI loads on its own", `${APP}?trip=rachel`, async (page) => page.evaluate(async (minStations) => {
+  const app = window.__app, m = app.map, s = app.state, bixiVis = () => ["bixi-live", "bixi-count"].map((id) => m.getLayoutProperty(id, "visibility")).join();
+  for (let i = 0; i < 20 && !s.bixi; i++) await new Promise((r) => setTimeout(r, 500));   // before any weather
+  const bixiBefore = bixiVis();
   app.setWeather(true); await new Promise((r) => setTimeout(r, 4000));
+  const bixiDuring = bixiVis();
   const card = document.querySelector("#wx-card").textContent;
   const windNote = document.querySelector(".wind-note") ? document.querySelector(".wind-note").textContent : "";
   const out = { radar: m.getLayoutProperty("radar", "visibility"), canvas: !document.querySelector("#wind").hidden, card: card.slice(0, 200), windNote,
     wx: s.wxData && { wind: s.wxData.now.wind, dir: s.wxData.now.dir } };
-  for (let i = 0; i < 20 && !s.bixi; i++) await new Promise((r) => setTimeout(r, 500));
   out.bixiStations = s.bixi ? s.bixi.features.length : 0;
   out.bixiSample = s.bixi ? s.bixi.features.slice(0, 1).map((f) => [f.properties.name, f.properties.bikes, f.properties.docks]) : null;
   app.setWeather(false);
-  out.ok = out.radar === "visible" && out.canvas && /Wind|Calm/.test(out.card) && !!windNote && out.bixiStations >= minStations;
+  out.bixiUntouched = bixiBefore === bixiDuring && bixiDuring === bixiVis();
+  out.ok = out.radar === "visible" && out.canvas && /Wind|Calm/.test(out.card) && !!windNote && out.bixiStations >= minStations && out.bixiUntouched;
   return out;
 }, FIX ? FIX_BIXI_STATIONS : 301));   // live: the whole network (about 800 stations); fixtures: every station in the saved file
 
@@ -954,7 +959,7 @@ await run("tour: every step", APP, async (page) => {
   const afterEsc = await page.evaluate(appSnapshot);
   // second pass: replay from the panel's footer, every step with Back and Next, and finish with "Let's go"
   await page.click("#tour-again");
-  const pass2 = await tourWalk(page, 0, 9, true);
+  const pass2 = await tourWalk(page, 0, 8, true);
   const lastLabel = await page.evaluate(() => document.querySelector(".tour-next").textContent);
   await page.click(".tour-next");
   await tourClosed(page);
@@ -974,12 +979,12 @@ await run("tour: every step", APP, async (page) => {
   const own1 = await page.evaluate(appSnapshot);
   const riding = await page.evaluate(() => { const a = window.__app; a.startRide("topdown"); const r = { button: document.querySelector("#tour-again").getClientRects().length > 0, started: window.pisteTour.start(0) }; a.endRide(); return r; });
   // one step per map button, top to bottom: 3D, weather, winter, layers
-  const buttonSteps = pass2.slice(5, 9).map((st) => st.targets[0]);
+  const buttonSteps = pass2.slice(4, 8).map((st) => st.targets[0]);
   const buttonsDown = buttonSteps.map((tg) => tg.spec).join() === "#view-btn,#wx-btn,#winter-btn,#layers-btn" && buttonSteps.every((tg, k) => k === 0 || tg.r[1] > buttonSteps[k - 1].r[1]);
   // the colours step's demo route shows all three kinds: protected, shared and no bike path, DEMO_MIN metres or more of each, 2 to 5 km long
   const threeKinds = demo.protectedM >= DEMO_MIN && demo.sharedM >= DEMO_MIN && demo.noPathM >= DEMO_MIN && demo.km >= 2 && demo.km <= 5;
-  const ok = stepIds === "search,style,colours,ride,suggest,view3d,weather,winter,layers,feedback" && buttonsDown && threeKinds
-    && pass1.every((s) => s.ok) && pass2.length === 10 && pass2.every((s) => s.ok) && demo.demo && demo.routes > 0 && demo.from === "Georges-Vanier metro" && leftKey === 1
+  const ok = stepIds === "search,style,colours,suggest,view3d,weather,winter,layers,feedback" && buttonsDown && threeKinds
+    && pass1.every((s) => s.ok) && pass2.length === 9 && pass2.every((s) => s.ok) && demo.demo && demo.routes > 0 && demo.from === "Georges-Vanier metro" && leftKey === 1
     && sameState(before, afterEsc) && sameState(before, afterDone) && afterDone.drawn === 0 && afterDone.pins === 0 && lastLabel === "Let's go" && focusBack === "tour-again"
     && !own.demo && own.from === "Mont-Royal metro" && own.check.ok && sameState(own0, own1) && !riding.button && riding.started === false;
   return { ok, stepIds, buttonsDown, threeKinds, pass1: brief(pass1), pass2: brief(pass2), demo, leftKey, before, afterEsc, afterDone, lastLabel, focusBack, own: { demo: own.demo, from: own.from, check: own.check.problems }, ownRestored: sameState(own0, own1) || [own0, own1], riding,
@@ -991,10 +996,10 @@ await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
   await until(page, welcomeUp, null, 30000);
   const before = await page.evaluate(appSnapshot);
   await page.click("#welcome-tour");
-  const big = await tourWalk(page, 0, 9, false);
-  await page.click(".tour-back"); await tourAt(page, 8);
+  const big = await tourWalk(page, 0, 8, false);
+  await page.click(".tour-back"); await tourAt(page, 7);
   const back = await page.evaluate(() => ({ i: window.pisteTour.info().i, sheet: document.querySelector("#panel").dataset.sheet }));
-  await page.click(".tour-next"); await tourAt(page, 9);
+  await page.click(".tour-next"); await tourAt(page, 8);
   await page.click(".tour-next");
   await tourClosed(page);
   await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before);
@@ -1008,13 +1013,13 @@ await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
     return ["#feedback-link", "#tour-again"].map((s) => { const b = document.querySelector(s).getBoundingClientRect(); return b.top >= r.top && b.bottom <= r.bottom && b.height >= 44; }); });
   const before2 = await page.evaluate(appSnapshot);
   await page.click("#tour-again");
-  const small = await tourWalk(page, 0, 9, false);
+  const small = await tourWalk(page, 0, 8, false);
   await page.click(".tour-next");
   await tourClosed(page);
   await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before2);
   const after2 = await page.evaluate(appSnapshot);
-  const ok = big.length === 10 && big.every((s) => s.ok) && back.i === 8 && sameState(before, after) && after.drawn === 0 && foot.every(Boolean)
-    && small.length === 10 && small.every((s) => s.ok) && sameState(before2, after2);
+  const ok = big.length === 9 && big.every((s) => s.ok) && back.i === 7 && sameState(before, after) && after.drawn === 0 && foot.every(Boolean)
+    && small.length === 9 && small.every((s) => s.ok) && sameState(before2, after2);
   return { ok, phone390: brief(big), sheets390: big.map((s) => s.sheet).join(","), back, restored390: sameState(before, after), foot, phone360: brief(small),
     sheets360: small.map((s) => s.sheet).join(","), restored360: sameState(before2, after2), before2, after2, detail390: big.map((s) => ({ id: s.id, card: s.card, targets: s.targets })) };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, fresh: true });
@@ -1152,7 +1157,7 @@ const creditsProbe = () => { const q = (s) => document.querySelector(s), btn = q
     nearRight: map.right - b.right <= 24, nearBottom: map.bottom - b.bottom <= 24, aboveSheet: phone ? pr.top - b.bottom >= 0 && pr.top - b.bottom <= 30 : null, open: q(".maplibregl-ctrl-attrib").classList.contains("maplibregl-compact-show"),
     icon: getComputedStyle(btn).backgroundImage, text: q(".maplibregl-ctrl-attrib-inner").textContent, zoomAbove: zoom && getComputedStyle(zoom).display !== "none" ? zoom.getBoundingClientRect().bottom <= b.top + 0.5 : null,
     tap44: [[-21, -21], [21, -21], [-21, 21], [21, 21]].every(([dx, dy]) => hit(cx + dx, cy + dy)), shown: getComputedStyle(q(".maplibregl-ctrl-bottom-right")).display !== "none", panelTop: Math.round(pr.top) }; };
-const creditsText = (t) => /Ville de Montréal/.test(t) && /CC BY 4\.0/.test(t) && /OpenStreetMap/.test(t) && /OpenFreeMap/.test(t) && /© 2026 Raphaël Roy-Jauvin/.test(t) && /NRCan/.test(t) && /STM/.test(t) && /BIXI/.test(t) && /Open-Meteo/.test(t) && /ECCC/.test(t);
+const creditsText = (t) => /Ville de Montréal/.test(t) && /CC BY 4\.0/.test(t) && /OpenStreetMap/.test(t) && /OpenFreeMap/.test(t) && /© 2026 Piste Montréal/.test(t) && /NRCan/.test(t) && /STM/.test(t) && /BIXI/.test(t) && /Open-Meteo/.test(t) && /ECCC/.test(t);
 await run("map credits: the i sits bottom right, opens leftwards, becomes an x (desktop)", `${APP}?trip=montroyal`, async (page) => {
   const closed = await page.evaluate(creditsProbe);
   await page.click(".maplibregl-ctrl-attrib-button"); await page.waitForTimeout(400);
@@ -1299,11 +1304,11 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
   const T = dlg.text;
   // named checks, so a failure says which one (whether the text scrolls depends on the fonts, so only Close in view counts)
   const checks = {
-    copyLine: foot.copy === "© 2026 Raphaël Roy-Jauvin", link: foot.link === "About & terms", linkTap44: foot.h >= 44, sameRow: foot.sameRow,
-    dialog: dlg.role === "dialog" && dlg.modal === "true", focusIn: dlg.focus, panelInert: dlg.panelInert, mail: dlg.mail, close44: dlg.closeH >= 44, sixItems: dlg.items === 6,
-    who: /Raphaël Roy-Jauvin in Montréal/.test(T) && /beta/i.test(T), risk: /own risk/.test(T) && /traffic laws/.test(T),
-    privacy: /address service/.test(T) && /Umami/.test(T) && /without cookies/.test(T) && /Do Not Track/.test(T) && /Web3Forms/.test(T) && /not sent to us/.test(T),
-    credits: /Ville de Montréal \(CC BY 4\.0\)/.test(T) && /OpenStreetMap contributors/.test(T) && /OpenFreeMap/.test(T), copyInDialog: /© 2026 Raphaël Roy-Jauvin/.test(T), address: /support@pistemtl\.ca/.test(T),
+    copyLine: foot.copy === "© 2026 Piste Montréal", link: foot.link === "About & terms", linkTap44: foot.h >= 44, sameRow: foot.sameRow,
+    dialog: dlg.role === "dialog" && dlg.modal === "true", focusIn: dlg.focus, panelInert: dlg.panelInert, mail: dlg.mail, close44: dlg.closeH >= 44, fourItems: dlg.items === 4,
+    who: /Piste is a Montréal project, in beta/.test(T) && !/Roy-Jauvin|Who made it/.test(T), risk: /own risk/.test(T) && /traffic laws/.test(T),
+    privacy: /address service/.test(T) && /anonymously, without cookies/.test(T) && /Web3Forms/.test(T) && /not sent to us/.test(T),
+    credits: /Ville de Montréal \(CC BY 4\.0\)/.test(T) && /OpenStreetMap contributors/.test(T) && /OpenFreeMap/.test(T), copyInDialog: /© 2026 Piste Montréal/.test(T), address: /support@pistemtl\.ca/.test(T),
     escCloses: esc.closed && esc.focus === "about-link" && !esc.inert, outsideCloses: outside, phoneCloseInView: phone.closeInView, phoneInside: phone.inside,
     french: fr.link === "À propos et conditions" && frDlg.title === "À propos de Piste" && /Vie privée/i.test(frDlg.text) && /à vos propres risques/.test(frDlg.text),
   };
@@ -1334,6 +1339,259 @@ await run("phone: the tap that opens a search bar isn't taken as a tap outside",
   const ok = Object.values(out).every((o) => o.touchendCancelled && o.mousedownCancelled && o.clickCancelled && o.searching && o.focused && o.laterNotSwallowed);
   return { ok, ...(ok ? {} : { error: "failed: " + JSON.stringify(out) }), out };
 }), { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ---- Avoid construction (2026-11-02): a work site on the route; the checkbox moves the route off it, off by default, remembered ----
+await run("avoid construction: off by default, remembered, moves the route off a work site", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+  const a = window.__app, cb = document.querySelector("#avoid-works"), tap = document.querySelector("#avoid-works").closest("label").getBoundingClientRect().height;
+  const legs = () => a.state.routes[0].r.legs.map((l) => l.e), same = (x, y) => x.length === y.length && x.every((e, i) => e === y[i]);
+  const stored = () => { try { return localStorage.getItem("piste-avoid-works"); } catch (e) { return null; } };
+  a.recompute(false);
+  const off = legs(), defaults = { checked: cb.checked, stored: stored() };
+  const mid = off[Math.floor(off.length / 2)], pts = a.router.edgeCoords(mid, true), p = pts[Math.floor(pts.length / 2)];
+  window.PLANNED.features.push({ type: "Feature", geometry: { type: "Point", coordinates: p }, properties: { status: "works", name: "test", until: "2999-12-31" } });
+  cb.click(); await new Promise((r) => setTimeout(r, 300));
+  const on = legs(), moved = !same(on, off) && !on.includes(mid), kept = stored();
+  cb.click(); await new Promise((r) => setTimeout(r, 300));
+  const back = same(legs(), off), cleared = stored();
+  const ok = !defaults.checked && defaults.stored === null && moved && kept === "1" && back && cleared === "0" && tap >= 44;
+  return { ok, defaults, moved, kept, back, cleared, tap, label: cb.parentElement.textContent.trim() };
+}));
+
+// ---- Offline (2026-11-02): with ?sw=1 the service worker (a-positron/sw.js) is installed; with the signal gone, a reload still opens the app and plans a route ----
+await run("offline: the service worker keeps the app and routing working without a signal", `${APP}?sw=1`, async (page, ctx) => {
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  await page.reload({ waitUntil: "load" });   // this load is served by the worker, which keeps the basemap and tiles it sees
+  await page.waitForFunction(() => !!window.__app);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 1500)));
+  const kept = await page.evaluate(async () => {
+    const shell = (await caches.keys()).find((k) => k.startsWith("piste-shell-"));
+    return { controlled: !!navigator.serviceWorker.controller, shellFiles: shell ? (await (await caches.open(shell)).keys()).length : 0 };
+  });
+  if (FIX) await ctx.unroute("https://api.montreal.ca/**");   // a saved answer would hide the missing signal
+  await ctx.setOffline(true);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => !!window.__app, null, { timeout: 30000 });
+  const typed = async (id, text) => { await page.fill(id, text); await page.evaluate(() => new Promise((r) => setTimeout(r, 600))); };
+  await typed("#from", "Parc La Fontaine");
+  const note = await page.evaluate(() => (document.querySelector("#suggest .note") || {}).textContent || "");
+  await page.fill("#from", ""); await typed("#from", "45.5200, -73.5800"); await page.keyboard.press("Enter");
+  await typed("#to", "45.5100, -73.5700"); await page.keyboard.press("Enter");
+  await until(page, () => window.__app.state.routes.length > 0, null, 15000);
+  const out = await page.evaluate(() => ({ routes: window.__app.state.routes.length, km: window.__app.state.routes[0] ? +(window.__app.state.routes[0].r.length / 1000).toFixed(2) : 0 }));
+  await ctx.setOffline(false);
+  const ok = kept.controlled && kept.shellFiles >= 20 && /offline/i.test(note) && out.routes > 0 && out.km > 0.5;
+  return { ok, kept, note, ...out };
+}, undefined, { serviceWorkers: "allow" });
+
+// ---- Night map (2026-11-02): Auto / On / Off in the Layers panel; the basemap goes dark, the route and bike-path colours do not change ----
+await run("night map: Auto/On/Off, dark basemap, route and bike-path colours unchanged, sunrise and sunset", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+  const a = window.__app, m = a.map, wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const semantic = () => JSON.stringify(["route-solid", "route-shared", "route-quiet", "route-alts", "net-ab", "net-c", "construction", "closed"].map((id) => m.getPaintProperty(id, "line-color")));
+  const bg = () => m.getPaintProperty("background", "background-color"), water = () => m.getPaintProperty("water", "fill-color");
+  document.querySelector("#layers-btn").click();
+  const radios = [...document.querySelectorAll("input[name=night]")], tap = Math.min(...radios.map((r) => r.closest("label").getBoundingClientRect().height));
+  const day = { bg: bg(), water: water(), semantic: semantic(), checked: radios.find((r) => r.checked).value };   // the test setup stores "off"
+  radios.find((r) => r.value === "on").click(); await wait(500);
+  const night = { bg: bg(), water: water(), semantic: semantic(), stored: localStorage.getItem("piste-night"), body: document.body.classList.contains("night") };
+  radios.find((r) => r.value === "off").click(); await wait(500);
+  const back = bg();
+  // winter keeps working under night: night's colour wins while it is on, winter's again after
+  a.setWinter(true); radios.find((r) => r.value === "on").click(); await wait(500);
+  const both = bg(); radios.find((r) => r.value === "off").click(); await wait(500);
+  const winterBack = bg(); a.setWinter(false);
+  // sunrise and sunset in Montréal (Jun 21: 05:06 / 20:46 EDT; Dec 21: 07:25 / 16:23 EST), 15 minutes either side
+  const n = (s) => BikeCommon.isNight(new Date(s));
+  const sun = [n("2026-06-21T08:50:00Z"), !n("2026-06-21T09:25:00Z"), !n("2026-06-22T00:30:00Z"), n("2026-06-22T01:05:00Z"),
+    n("2026-12-21T12:10:00Z"), !n("2026-12-21T12:40:00Z"), !n("2026-12-21T21:10:00Z"), n("2026-12-21T21:40:00Z")];
+  const ok = day.checked === "off" && night.bg !== day.bg && night.water !== day.water && night.bg === "#0f1626" && night.semantic === day.semantic && !day.semantic.includes("null") && night.stored === "on" && night.body
+    && back === day.bg && both === "#0f1626" && winterBack === "#eef4f8" && sun.every(Boolean) && tap >= 44;
+  return { ok, day, night, back, both, winterBack, sun, tap };
+}));
+
+// ------------------------------------------------------------------ route cards, sharing a route (2026-11-02)
+const shareStub = () => { window.__shared = []; window.__copied = null; window.__copyFails = false;
+  Object.defineProperty(navigator, "share", { value: async (d) => { window.__shared.push(d); }, configurable: true });
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: async (s) => { if (window.__copyFails) throw new Error("blocked"); window.__copied = s; } }, configurable: true }); };
+await run("route cards: no gap count; headwinds only in Suggest a ride; share a route", `${APP}?trip=montroyal`, async (page) => {
+  const cards = await page.evaluate(() => ({ subs: [...document.querySelectorAll(".rc-sub")].map((e) => e.textContent), pct: [...document.querySelectorAll(".rc-pct")].map((e) => e.textContent),
+    n: document.querySelectorAll(".route-card").length }));
+  // headwinds no longer shape the Go routes (even with a strong wind on record), and the checkbox lives in the Suggest form
+  const wind = await page.evaluate(() => { const a = window.__app, s = a.state, len = () => s.routes.map((c) => Math.round(c.r.length)).join();
+    const before = len(); s.wxData = { now: { wind: 40, dir: 90 } }; s.avoidWind = true; a.recompute(false); const after = len(); s.avoidWind = false; s.wxData = null;
+    return { same: before === after, inForm: !!document.querySelector("#suggest-form #avoid-wind"), inPrefs: !!document.querySelector(".pref-checks #avoid-wind") }; });
+  // the share button: icon only, named, 44 px, not in the tour; Web Share gets the address that reopens the route
+  await page.evaluate(shareStub);
+  const btn = await page.evaluate(() => { const b = document.querySelector("#detail .share-btn"), r = b && b.getBoundingClientRect();
+    return b && { label: b.getAttribute("aria-label"), text: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), svg: !!b.querySelector("svg"), tour: window.pisteTour.steps.join() }; });
+  await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1);
+  const web = await page.evaluate(() => { const s = window.__app.state, ll = (p) => p.map((v) => +v.toFixed(5)).join(","); const d = window.__shared[0];
+    return { url: d && d.url, want: `${location.origin}${location.pathname}?from=${ll(s.from)}&to=${ll(s.to)}` }; });
+  // no Web Share: the link goes to the clipboard with a toast; a refusal gets a calm message instead of silence
+  await page.evaluate(() => Object.defineProperty(navigator, "share", { value: undefined, configurable: true }));
+  await page.click("#detail .share-btn"); await until(page, () => window.__copied);
+  const copied = await page.evaluate(() => ({ text: window.__copied, toast: document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent }));
+  await page.evaluate(() => { window.__copyFails = true; document.querySelector("#toast").hidden = true; });
+  await page.click("#detail .share-btn"); await until(page, () => !document.querySelector("#toast").hidden);
+  const failed = await page.evaluate(() => document.querySelector("#toast").textContent);
+  // the link reopens the same route (its ends rounded to 5 decimals)
+  const was = await page.evaluate(() => window.__app.state.routes.map((c) => Math.round(c.r.length)).join());
+  await page.goto(web.url, { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await until(page, () => window.__app.state.routes.length > 0);
+  const again = await page.evaluate(() => window.__app.state.routes.map((c) => Math.round(c.r.length)).join());
+  // a classic ride shares ?classic=<id>; the made-to-order loops have nothing to share
+  await page.goto(BASE + APP + "?classic=oldport", { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await until(page, () => !!document.querySelector("#detail .share-btn"), null, 30000);
+  await page.evaluate(shareStub); await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1);
+  const classic = await page.evaluate(() => window.__shared[0].url);
+  const loops = await page.evaluate(async () => { const a = window.__app; a.setSuggMode("custom"); await a.computeSuggestions(true); return !document.querySelector(".share-btn"); });
+  const ok = cards.n >= 1 && cards.subs.every((x) => !/stretch|without a bike path|tronçon/i.test(x)) && cards.pct.every((x) => /on bike paths/.test(x))
+    && wind.same && wind.inForm && !wind.inPrefs
+    && btn && btn.label === "Share this route" && btn.text === "" && btn.svg && btn.w >= 44 && btn.h >= 44 && !/share/i.test(btn.tour)
+    && web.url === web.want && !/welcome|notrack/.test(web.url) && copied.text === web.url && copied.toast === "Link copied" && failed === "Couldn't copy the link"
+    && again === was && /\?classic=oldport$/.test(classic) && !/welcome|notrack/.test(classic) && loops;
+  return { ok, cards, wind, btn, web, copied, failed, was, again, classic, loops };
+}, { width: 1440, height: 900 });
+
+// ------------------------------------------------------------------ saved places (2026-11-02): Home, Work, others; recents; all on this device
+const placeChips = () => [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label"));
+await run("saved places: set Home, use it, name a place, edit, delete, reload, recents, nothing sent", `${APP}`, async (page, ctx) => {
+  const seen = []; ctx.on("request", (r) => seen.push(r.url() + " " + (r.postData() || "")));
+  const out = {};
+  out.start = await page.evaluate(placeChips);
+  await page.click('#places [data-kind="home"]');   // nothing chosen yet
+  out.nothingToast = await page.evaluate(() => (document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent));
+  // choose a place, then "Set home" keeps it; Home keeps working after a reload
+  await page.evaluate(() => { window.piste.setPoint("to", [-73.5745, 45.5163], "Zorglub"); });
+  await page.click('#places [data-kind="home"]');
+  out.afterSet = await page.evaluate(placeChips);
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  out.afterReload = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label")), store: JSON.parse(localStorage.getItem("piste-places")) }));
+  // a start only: the Home chip becomes the destination and the route is made
+  await page.evaluate(() => { window.piste.setPoint("from", [-73.5875, 45.5231], "Start place"); });
+  await page.click('#places [data-i="0"]');
+  await until(page, () => window.__app.state.routes.length > 0);
+  out.routed = await page.evaluate(() => { const s = window.__app.state; return { to: s.to && s.to.map((v) => +v.toFixed(4)), label: s.toLabel, routes: s.routes.length }; });
+  // "＋": name the destination
+  await page.click("#places .add");
+  out.dialog = await page.evaluate(() => ({ open: !document.querySelector("#place-dialog").hidden, name: document.querySelector("#pl-name").value, del: document.querySelector("#pl-delete").hidden }));
+  await page.fill("#pl-name", "Café Zorglub"); await page.keyboard.press("Enter");
+  await until(page, () => document.querySelector("#place-dialog").hidden);
+  out.named = await page.evaluate(placeChips);
+  // edit with the keyboard (F2 on the chip): rename; then, with the mouse (right click), move it to the current place; then delete it
+  await page.focus('#places [data-i="1"]'); await page.keyboard.press("F2");
+  await until(page, () => !document.querySelector("#place-dialog").hidden);
+  await page.fill("#pl-name", "Café 2"); await page.click('#place-form button[type="submit"]');
+  await until(page, () => document.querySelector("#place-dialog").hidden);
+  await page.evaluate(() => { window.piste.setPoint("to", [-73.6, 45.53], "Elsewhere"); });
+  await page.click('#places [data-i="1"]', { button: "right" });
+  await until(page, () => !document.querySelector("#place-dialog").hidden);
+  await page.click("#pl-use"); await until(page, () => document.querySelector("#place-dialog").hidden);
+  out.moved = await page.evaluate(() => { const p = JSON.parse(localStorage.getItem("piste-places")); return { chips: [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label")), ll: p[1].ll }; });
+  await page.click('#places [data-i="1"]', { button: "right" }); await until(page, () => !document.querySelector("#place-dialog").hidden);
+  await page.click("#pl-delete"); await until(page, () => document.querySelector("#place-dialog").hidden);
+  out.deleted = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label")), n: JSON.parse(localStorage.getItem("piste-places")).length }));
+  // recents: a destination chosen from the suggestions comes back on an empty bar, under the saved places; they can be cleared
+  await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
+  await page.click("#to"); await page.keyboard.type("Rachel & Papineau");
+  await until(page, () => /Rachel/.test((document.querySelector("#suggest li") || {}).textContent || ""));
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
+  await page.click("#to");
+  await until(page, () => document.querySelectorAll("#suggest li").length > 1);
+  out.list = await page.evaluate(() => [...document.querySelectorAll("#suggest li")].map((li) => li.textContent));
+  await page.click("#suggest li:last-child");
+  out.afterClear = await page.evaluate(() => ({ recents: JSON.parse(localStorage.getItem("piste-recents")), shown: !document.querySelector("#suggest").hidden }));
+  const safe = (u) => { try { return decodeURIComponent(u); } catch (e) { return u; } };
+  const leaked = seen.filter((u) => /Zorglub|Elsewhere|45\.5163|73\.5745/.test(safe(u)));
+  const ok = out.start.join() === "Set home,Set work,Save a place" && /pick a place first/i.test(out.nothingToast) && out.afterSet.join() === "Home,Set work,Save a place"
+    && out.afterReload.chips.join() === "Home,Set work,Save a place" && out.afterReload.store.length === 1 && out.afterReload.store[0].kind === "home"
+    && out.routed.to.join() === "-73.5745,45.5163" && out.routed.label === "Home" && out.routed.routes > 0
+    && out.dialog.open && out.dialog.name === "Home" && out.dialog.del && out.named.join() === "Home,Set work,Café Zorglub,Save a place"
+    && out.moved.chips.join() === "Home,Set work,Café 2,Save a place" && out.moved.ll.join() === "-73.6,45.53" && out.deleted.n === 1 && out.deleted.chips.join() === "Home,Set work,Save a place"
+    && out.list.length === 3 && /^Home\s*Saved$/.test(out.list[0]) && /Rachel/.test(out.list[1]) && /Recent/.test(out.list[1]) && /Clear recent/.test(out.list[2])
+    && out.afterClear.recents.length === 0 && !out.afterClear.shown && leaked.length === 0;
+  return { ok, ...out, requests: seen.length, leaked };
+}, { width: 1440, height: 900 });
+
+await run("saved places: phone chips scroll, long press edits, search shows saved places over the keyboard", `${APP}`, async (page) => {
+  await page.evaluate(() => { localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "", ll: [-73.5745, 45.5163] }, ...["Alpha", "Bravo place", "Charlie", "Delta", "Echo", "Foxtrot"].map((name, i) => ({ kind: "", name, ll: [-73.58 - i / 100, 45.52] }))])); });
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(() => window.__app.setSheet("half")); await page.waitForTimeout(500);
+  const row = await settled(page, () => { const r = document.querySelector("#places"), chips = [...r.querySelectorAll(".place")].map((c) => c.getBoundingClientRect()), s = document.querySelector(".search");
+    const withRow = s.offsetHeight; r.style.display = "none"; const without = s.offsetHeight; r.style.display = "";
+    return { scrolls: r.scrollWidth > r.clientWidth + 20, tap44: chips.every((c) => c.height >= 44 && c.width >= 43.5), added: withRow - without, pageX: document.documentElement.scrollWidth <= innerWidth,
+      panelH: Math.round(document.querySelector("#panel").getBoundingClientRect().height), half: Math.round(innerHeight / 2) }; });
+  // a long press (finger held on a chip) opens the editor and does not also use the place
+  const hold = await page.evaluate(async () => {
+    const chip = document.querySelector('#places [data-i="1"]'), b = chip.getBoundingClientRect(), o = { bubbles: true, pointerType: "touch", pointerId: 7, isPrimary: true, clientX: b.left + 20, clientY: b.top + 22 };
+    chip.dispatchEvent(new PointerEvent("pointerdown", o)); await new Promise((r) => setTimeout(r, 650));
+    chip.dispatchEvent(new PointerEvent("pointerup", o)); chip.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    return { open: !document.querySelector("#place-dialog").hidden, name: document.querySelector("#pl-name").value, usedIt: !!window.__app.state.to || !!window.__app.state.from };
+  });
+  await page.click("#pl-cancel"); await until(page, () => document.querySelector("#place-dialog").hidden);
+  // search mode: the chips step aside and the empty bar lists the saved places above the keyboard
+  await page.evaluate(() => document.querySelector("#to").focus());
+  await until(page, () => document.body.classList.contains("searching") && document.querySelectorAll("#suggest li").length > 0);
+  const search = await settled(page, () => { const u = document.querySelector("#suggest"), p = document.querySelector("#panel").getBoundingClientRect();
+    return { chipsHidden: getComputedStyle(document.querySelector("#places")).display === "none", items: u.querySelectorAll("li").length, first: u.querySelector("li").textContent,
+      listAbovePanel: Math.round(u.getBoundingClientRect().bottom) <= Math.round(p.top) + 1, shown: !u.hidden }; });
+  const ok = row.scrolls && row.tap44 && row.pageX && row.added <= 40 && row.panelH === row.half && hold.open && hold.name === "Alpha" && !hold.usedIt
+    && search.chipsHidden && search.items === 7 && /^Home\s*Saved$/.test(search.first) && search.shown && search.listAbovePanel;
+  return { ok, row, hold, search };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ---- REM (2026-11-02): light-rail tracks and stations next to the metro, with their own Layers checkbox and credit ----
+await run("REM: tracks and stations on the map, a Layers checkbox, the credit", `${APP}?trip=montroyal`, async (page) => {
+  await page.evaluate(() => { window.__app.map.jumpTo({ center: [-73.5655, 45.4999], zoom: 15 }); });   // Gare Centrale
+  await page.evaluate(idle);
+  const out = await page.evaluate(async () => {
+    const m = window.__app.map, box = document.querySelector("#layers"), cb = document.querySelector('input[data-layer="rem"]');
+    const rendered = (id) => m.queryRenderedFeatures({ layers: [id] }).length;
+    const before = { line: rendered("rem-line"), stations: rendered("poi-rem"), visible: m.getLayoutProperty("poi-rem", "visibility") !== "none" };
+    const names = window.POIS.filter((p) => p[0] === "rem").map((p) => p[1]);
+    cb.click(); await new Promise((r) => setTimeout(r, 300));
+    const off = [m.getLayoutProperty("rem-line", "visibility"), m.getLayoutProperty("rem-casing", "visibility"), m.getLayoutProperty("poi-rem", "visibility")];
+    cb.click(); await new Promise((r) => setTimeout(r, 300));
+    const found = (await BikeCommon.makeGeocoder(window.__app.router).search("Gare Centrale")).some((r) => r.kind === "rem");
+    return { before, stationCount: names.length, hasGare: names.includes("Gare Centrale"), lineColor: m.getPaintProperty("rem-line", "line-color"), image: m.hasImage("poi-rem"), off, found,
+      credit: document.querySelector(".credits p").textContent.includes("REM"), label: cb.parentElement.textContent.trim() };
+  });
+  const ok = out.before.line > 0 && out.before.stations > 0 && out.before.visible && out.stationCount >= 20 && out.hasGare && out.lineColor === "#84BD00" && out.image
+    && out.off.every((v) => v === "none") && out.found && out.credit && out.label === "REM";
+  return { ok, ...out };
+});
+
+// ---- 3D trees (2026-11-02): from the LiDAR canopy (tools/island_trees.py); in the 3D view only, from zoom 15.5; coloured by season ----
+await run("3D trees: in 3D only, a tile loads, the colours follow summer, fall and winter", `${APP}?trip=montroyal`, async (page) => {
+  const look = (is3d) => page.evaluate(async (is3d) => {
+    const a = window.__app, m = a.map, wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    a.set3d(is3d); m.jumpTo({ center: [-73.5877, 45.5035], zoom: 16.2 }); await wait(1500);   // Mont-Royal's south slope
+    return { is3d, crowns: m.queryRenderedFeatures({ layers: ["trees-crown"] }).length, trunks: m.queryRenderedFeatures({ layers: ["trees-trunk"] }).length,
+      shown: ["trees-crown", "trees-trunk"].map((id) => m.getLayoutProperty(id, "visibility")) };
+  }, is3d);
+  const d3 = await look(true); await page.evaluate(idle);
+  const d3b = await page.evaluate(() => ({ crowns: window.__app.map.queryRenderedFeatures({ layers: ["trees-crown"] }).length, trunks: window.__app.map.queryRenderedFeatures({ layers: ["trees-trunk"] }).length }));
+  const d2 = await look(false);
+  const colours = await page.evaluate(() => {
+    const a = window.__app, m = a.map, get = (p) => JSON.stringify(m.getPaintProperty("trees-crown", p));
+    a.paintTrees(new Date(2026, 6, 15)); const summer = get("fill-extrusion-color"), summerOp = get("fill-extrusion-opacity");
+    a.paintTrees(new Date(2026, 9, 20)); const fall = get("fill-extrusion-color");
+    a.paintTrees(new Date(2026, 8, 19)); const beforeFall = get("fill-extrusion-color");
+    a.paintTrees(new Date(2026, 10, 16)); const afterFall = get("fill-extrusion-color");
+    a.setWinter(true); const winter = get("fill-extrusion-color"), winterOp = get("fill-extrusion-opacity");
+    a.setWinter(false);
+    return { summer, fall, winter, summerOp, winterOp, fallIsMix: /#d9772b/.test(fall) && /#b8402c/.test(fall) && /#e0b73a/.test(fall) && /#6f8f3a/.test(fall), threeGreens: (summer.match(/#/g) || []).length === 3,
+      edges: beforeFall === summer && afterFall === summer };
+  });
+  const tileOk = await page.evaluate(async () => {   // a sample tile straight from the PMTiles file: the crowns layer has features with a height and a seed
+    const p = new pmtiles.PMTiles(new URL("../shared/tiles/trees.pmtiles", location.href).href), t = await p.getZxy(15, 9685, 11722);
+    return { header: (await p.getHeader()).maxZoom, bytes: t ? t.data.byteLength : 0 };
+  }).catch((e) => ({ error: String(e) }));
+  const ok = d3.crowns > 0 && d3.trunks > 0 && d3b.crowns > 0 && d2.crowns === 0 && d2.trunks === 0 && d2.shown.every((v) => v === "none") && d3.shown.every((v) => v === "visible")
+    && colours.summer !== colours.fall && colours.fall !== colours.winter && colours.summer !== colours.winter && colours.fallIsMix && colours.threeGreens && colours.edges
+    && +colours.winterOp < 0.4 && +colours.summerOp > 0.8 && tileOk.bytes > 0;
+  return { ok, d3, d3b, d2, colours, tileOk };
+});
 
 await browser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----

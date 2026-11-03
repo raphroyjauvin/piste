@@ -48,6 +48,8 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   - NRCan HRDEM, CMM 2023 and 2024 LiDAR (OGL-Canada)
   - AWS Terrain Tiles (public dataset; the fallback beyond our own terrain tiles: check the terms at registry.opendata.aws/terrain-tiles before a public launch)
   - STM GTFS
+  - REM lines and stations (OpenStreetMap, ODbL)
+  - Canopée 2019, Ville de Montréal (CC BY 4.0), the tree mask for the 3D trees
   - BIXI GBFS (station locations and live status)
   - Open-Meteo forecast (CC BY 4.0; free for non-commercial use: check the terms before a public launch)
   - Environment and Climate Change Canada radar (GeoMet)

@@ -48,6 +48,7 @@
     park: { label: "Park", fr: "Parc", color: "#3E8E57", glyph: "tree", minzoom: 14.6, group: "outdoors" },
     viewpoint: { label: "Viewpoint", fr: "Belvédère", color: "#3E8E57", glyph: "peak", minzoom: 14.6, group: "outdoors" },
     culture: { label: "Museum / culture", fr: "Musée / culture", color: "#6E5AA0", glyph: "columns", minzoom: 15.8, group: "outdoors" },
+    rem: { label: "REM station", fr: "Station du REM", color: "#84BD00", minzoom: 12, group: "transit" },   // the REM's green; icon drawn in iconSVG
     works: { label: "Works blocking a bike path", fr: "Travaux sur une piste cyclable", color: STM.yellow, glyph: "works", minzoom: 13, group: "alerts", dark: true },
   };
 
@@ -81,6 +82,11 @@
       s += `<circle cx="12" cy="12" r="8.3" fill="${METRO_SIGN_BLUE}"/>` +
         `<path d="M10.25 6.2h3.5v5.3h3.1L12 17.7l-4.85-6.2h3.1z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width=".7" stroke-linejoin="round"/>`;
       return wrap(s);
+    }
+    if (kind === "rem") {
+      // the REM's green on a rounded badge with a plain "REM" wordmark: our own drawing, not their logo
+      return wrap(`<rect x="0.8" y="4.8" width="22.4" height="14.4" rx="4.4" fill="${k.color}" stroke="${ring}" stroke-width="1.6"/>` +
+        `<text x="12" y="15.2" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8.6" font-weight="800" letter-spacing=".3" fill="#1c2a00">REM</text>`);
     }
     if (kind === "bixi") {
       // BIXI red on a rounded-square tag, with a plain bike (not their wordmark)
@@ -322,7 +328,7 @@
     const local = [];
     (window.POIS || []).forEach((p) => {
       if (!p[1] || p[0] === "parking") return;
-      local.push({ label: p[1], kind: p[0], lon: p[2], lat: p[3], rank: p[0] === "metro" ? 3 : p[0] === "park" ? 2 : 1 });
+      local.push({ label: p[1], kind: p[0], lon: p[2], lat: p[3], rank: p[0] === "metro" || p[0] === "rem" ? 3 : p[0] === "park" ? 2 : 1 });
     });
     const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
     // intersections "Rachel & Papineau"
@@ -350,6 +356,7 @@
       const m = nq.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
       if (m) { const a = +m[1], b = +m[2]; return [{ label: q, sub: lang() === "fr" ? "Coordonnées" : "Coordinates", lon: a < -60 ? a : b, lat: a < -60 ? b : a }]; }
       const res = [...intersections(q)];
+      let offline = false;
       local.filter((p) => norm(p.label).includes(nq)).sort((a, b) => b.rank - a.rank).slice(0, 6).forEach((p) => res.push(Object.assign({ sub: poiLabel(p.kind) }, p)));
       if (ctrl) ctrl.abort();
       ctrl = new AbortController();
@@ -364,8 +371,10 @@
               sub: fr ? "Adresse (Ville de Montréal)" : "Address (Ville de Montréal)", lon: it.coordinates.lon, lat: it.coordinates.lat });
           });
         }
-      } catch (e) { /* offline or aborted: local results only */ }
-      return res.slice(0, 10);
+      } catch (e) { offline = e.name !== "AbortError"; }   // offline: local results only, and the list says so (out.offline)
+      const out = res.slice(0, 10);
+      out.offline = offline;
+      return out;
     }
     return { search };
   }
@@ -916,6 +925,21 @@
     },
   };
 
+  // ---------------------------------------------------------------- night: is the sun down? (worked out here, no network)
+  // The "sunrise equation", good to a few minutes at Montréal's latitude. `lon` is east-positive, `date` any Date.
+  function isNight(date = new Date(), lat = 45.5, lon = -73.6) {
+    const R = Math.PI / 180, jd = date.getTime() / 86400000 + 2440587.5;
+    const js = Math.round(jd - 2451545 + lon / 360) - lon / 360;   // mean solar noon of the solar day nearest to `date`
+    const m = (357.5291 + 0.98560028 * js) % 360;
+    const lam = (m + 1.9148 * Math.sin(m * R) + 0.02 * Math.sin(2 * m * R) + 0.0003 * Math.sin(3 * m * R) + 180 + 102.9372) % 360;   // the sun's longitude
+    const noon = 2451545 + js + 0.0053 * Math.sin(m * R) - 0.0069 * Math.sin(2 * lam * R);
+    const sinDec = Math.sin(lam * R) * Math.sin(23.4397 * R);
+    const cosH = (Math.sin(-0.833 * R) - Math.sin(lat * R) * sinDec) / (Math.cos(lat * R) * Math.sqrt(1 - sinDec * sinDec));   // -0.833°: sun's edge at the horizon
+    if (cosH >= 1) return true;    // the sun never rises
+    if (cosH <= -1) return false;  // the sun never sets
+    return Math.abs(jd - noon) > Math.acos(cosH) / (2 * Math.PI);   // farther from noon than the half-day length
+  }
+
   function gapSentence(g, dist) {
     const I = window.BikeI18n;
     const d = Math.round(dist / 10) * 10, m = Math.round(g.length / 10) * 10;
@@ -928,5 +952,5 @@
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
     profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, tailRoute, joinRoutes, voice, audioSession, gapSentence, buildCursor, distM,
-    cleanTrail, rideSummary, SUMMARY };
+    cleanTrail, rideSummary, SUMMARY, isNight };
 })();

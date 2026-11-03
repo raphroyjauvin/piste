@@ -4,9 +4,11 @@
 (async function () {
   "use strict";
   const C = window.BikeCommon, I = window.BikeI18n, WX = window.BikeWeather, BX = window.BikeBixi;
-  const { Router, weightsFor, routeSettings, PROFILES } = window.BikeRouter;
+  const { Router, weightsFor, routeSettings, activeWorks, PROFILES } = window.BikeRouter;
   const $ = (s) => document.querySelector(s);
   const t = (k, v) => I.t(k, v);
+  // the REM's stations join the places on the map (same layers, search and ride pop-ups as the metro's); its tracks have their own layers
+  if (window.REM) window.POIS = window.POIS.concat(window.REM.stations.map(([name, lon, lat]) => ["rem", name, lon, lat]));
   const params = new URLSearchParams(location.search);
   const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -115,11 +117,16 @@
   }
   const map = new maplibregl.Map({
     container: "map", style, center: [-73.585, 45.522], zoom: 12.8, maxPitch: 80,
-    attributionControl: { compact: true, customAttribution: "© 2026 Raphaël Roy-Jauvin · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · STM · BIXI · Open-Meteo · ECCC" },
+    attributionControl: { compact: true, customAttribution: "© 2026 Piste Montréal · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo · ECCC" },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
   await new Promise((r) => map.on("load", r));
+  // Offline (2026-11-02): sw.js keeps the app and the map you have seen working without a signal. Only on the published site
+  // (or with ?sw=1), so the dev server and the tests are never served old files. Registered after the map, to leave the first load alone.
+  if ("serviceWorker" in navigator && (/(^|\.)pistemtl\.ca$/.test(location.hostname) || params.get("sw") === "1")) {
+    navigator.serviceWorker.register("sw.js").catch((e) => console.warn("offline mode unavailable", e));
+  }
 
   const styleLayers = map.getStyle().layers;
   const firstSymbol = (styleLayers.find((l) => l.type === "symbol") || {}).id;
@@ -167,8 +174,10 @@
   map.addSource("relief", { type: "raster", url: TILES("relief"), tileSize: 256 });
   map.addSource("contours", { type: "vector", url: TILES("contours") });
   map.addSource("bld", { type: "vector", url: TILES("buildings") });
+  map.addSource("trees", { type: "vector", url: TILES("trees") });
   map.addSource("network", { type: "geojson", data: networkGeoJSON() });
   map.addSource("planned", { type: "geojson", data: window.PLANNED });
+  if (window.REM) map.addSource("rem", { type: "geojson", data: { type: "Feature", geometry: { type: "MultiLineString", coordinates: window.REM.lines } } });
   map.addSource("pois", { type: "geojson", data: C.poisGeoJSON(window.POIS) });
   map.addSource("terrain", { type: "raster-dem", tiles: ["piste-dem://{z}/{x}/{y}"], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
   map.addSource("radar", { type: "raster", tiles: [WX.radarTiles(false)], tileSize: 256, maxzoom: 10,
@@ -197,6 +206,13 @@
   add({ id: "bld-3d", type: "fill-extrusion", source: "bld", "source-layer": "buildings", minzoom: 14, layout: { visibility: "none" },
     paint: { "fill-extrusion-color": ["interpolate", ["linear"], ["get", "h"], 0, "#f1eee8", 25, "#e6e2db", 90, "#d9d3ca"],
       "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.82, "fill-extrusion-vertical-gradient": true } });
+  // 3D trees (tools/island_trees.py): from the LiDAR canopy, a thin trunk and an octagon crown per tree top. 3D view only, from zoom 15.5;
+  // the crown is the top half of the tree's height (shorter reads as a tree, not a column); the trunk reaches a little into it.
+  // Colours by season and night: paintTrees().
+  add({ id: "trees-trunk", type: "fill-extrusion", source: "trees", "source-layer": "trunks", minzoom: 16, layout: { visibility: "none" },
+    paint: { "fill-extrusion-height": ["*", 0.55, ["get", "h"]], "fill-extrusion-base": 0, "fill-extrusion-color": "#6a5d52", "fill-extrusion-opacity": 0.9 } });
+  add({ id: "trees-crown", type: "fill-extrusion", source: "trees", "source-layer": "crowns", minzoom: 15.5, layout: { visibility: "none" },
+    paint: { "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": ["*", 0.5, ["get", "h"]], "fill-extrusion-color": "#6f9a5d", "fill-extrusion-opacity": 0.88 } });
   add({ id: "radar", type: "raster", source: "radar", layout: { visibility: "none" }, paint: { "raster-opacity": 0.5, "raster-fade-duration": 300 } });
   // bike network (winter: 4-season lanes stay green, the rest turns grey and dashed)
   add({ id: "net-casing", type: "line", source: "network", layout: { "line-cap": "round", "line-join": "round" },
@@ -207,6 +223,12 @@
       "line-opacity": 0.9 } });
   add({ id: "net-c", type: "line", source: "network", filter: ["==", ["get", "t"], 2],
     paint: { "line-color": COL.netC, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.8, 16, 2], "line-dasharray": [2, 1.5] } });
+  // the REM tracks (rem.js), under the bike network: the REM's green with a darker edge, so it shows on the light map
+  if (map.getSource("rem")) {
+    const remWidth = (scale) => ["interpolate", ["linear"], ["zoom"], 9, 0.8 * scale, 13, 2.4 * scale, 17, 4.4 * scale];
+    add({ id: "rem-casing", type: "line", source: "rem", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#4a6d00", "line-width": remWidth(1.6) } }, "net-casing");
+    add({ id: "rem-line", type: "line", source: "rem", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": window.REM.color, "line-width": remWidth(1) } }, "net-casing");
+  }
   add({ id: "net-not-cleared", type: "line", source: "network", filter: ["==", ["get", "s4"], 0], layout: { visibility: "none" },
     paint: { "line-color": COL.notCleared, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.8, 16, 2.2], "line-dasharray": [1.2, 1.4] } });
   // planned & construction (browse only), closures and works (always, toggle)
@@ -254,7 +276,7 @@
     map.addLayer({ id, type: "symbol", source: "pois", minzoom: k.minzoom, filter: ["==", ["get", "k"], kind],
       layout: { "icon-image": ["get", "icon"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.72, 17, 1], "icon-padding": 1,
         "text-field": ["step", ["zoom"], "", 16.5, ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 11,
-        "text-offset": [0, 1.35], "text-anchor": "top", "text-optional": true, "symbol-sort-key": kind === "metro" ? 0 : kind === "bixi" ? 1 : 5 },
+        "text-offset": [0, 1.35], "text-anchor": "top", "text-optional": true, "symbol-sort-key": k.group === "transit" ? 0 : kind === "bixi" ? 1 : 5 },
       paint: { "text-color": "#4a525a", "text-halo-color": "#ffffff", "text-halo-width": 1.3 } });
   }
   // live BIXI: the station icon, plus a badge with the bikes available (green, orange when 1-2, grey when empty)
@@ -298,12 +320,7 @@
     router.setWinter(on);
     document.body.classList.toggle("winter", on);
     $("#winter-btn").setAttribute("aria-pressed", String(on));
-    for (const [id, prop, val] of WINTER_PAINT) {
-      if (!map.getLayer(id)) continue;
-      const key = id + "|" + prop;
-      if (!(key in summerPaint)) summerPaint[key] = map.getPaintProperty(id, prop);
-      map.setPaintProperty(id, prop, on ? val : summerPaint[key] ?? null);
-    }
+    paintMap();
     const s4 = ["==", ["get", "s4"], 1];
     map.setFilter("net-ab", on ? ["all", ["<=", ["get", "t"], 1], s4] : ["<=", ["get", "t"], 1]);
     map.setFilter("net-c", on ? ["all", ["==", ["get", "t"], 2], s4] : ["==", ["get", "t"], 2]);
@@ -314,6 +331,87 @@
     classicsRouted = false;   // the classics re-route on the 4-season network
     recompute(true);
   }
+
+  // ------------------------------------------------------------------ tree colours (2026-11-02)
+  // Each crown takes one colour of its season's set by its seed (s, stable per place). Summer: three greens. Fall (20 Sep to 15 Nov): orange, red,
+  // yellow and some green. Winter mode: leafless, a faint grey-brown crown over the trunks. Night: the same colours, darker.
+  const TREE_COLORS = {
+    // muted on purpose (2026-11-02): soft sage greens and dusty autumn tones keep the map calm under the route colours
+    summer: { day: ["#6f9a5d", "#5f8c52", "#82a86d"], night: ["#2a4a3e", "#24423a", "#30523f"], trunk: ["#6a5d52", "#2f2a30"], crown: 0.88, trunkOpacity: 0.9 },
+    fall: { day: ["#c98a4b", "#b5654a", "#d2b060", "#8fa266", "#c98a4b", "#a9705a"], night: ["#6b4a30", "#5e3a30", "#6e5e36", "#43503a", "#6b4a30", "#5a3f35"],
+      trunk: ["#6a5d52", "#2f2a30"], crown: 0.88, trunkOpacity: 0.9 },
+    winter: { day: ["#8b7d70"], night: ["#4a4553"], trunk: ["#6b5d52", "#3b343a"], crown: 0.22, trunkOpacity: 1 },
+  };
+  function treeSeason(date = new Date()) {
+    const md = (date.getMonth() + 1) * 100 + date.getDate();
+    return state.winter ? "winter" : md >= 920 && md <= 1115 ? "fall" : "summer";
+  }
+  function paintTrees(date) {
+    const set = TREE_COLORS[treeSeason(date)], cols = state.night ? set.night : set.day, i = state.night ? 1 : 0;
+    const crown = cols.length === 1 ? cols[0] : ["match", ["%", ["get", "s"], cols.length], ...cols.slice(0, -1).flatMap((c, k) => [k, c]), cols.at(-1)];
+    map.setPaintProperty("trees-crown", "fill-extrusion-color", crown);
+    map.setPaintProperty("trees-crown", "fill-extrusion-opacity", set.crown);
+    map.setPaintProperty("trees-trunk", "fill-extrusion-color", set.trunk[i]);
+    map.setPaintProperty("trees-trunk", "fill-extrusion-opacity", set.trunkOpacity);
+  }
+
+  // ------------------------------------------------------------------ night map (2026-11-02)
+  // Ink-navy land, dark teal water, warm taupe streets, soft amber labels: deliberately not the usual grey-blue dark map.
+  // Only the basemap, our buildings, the terrain shading and the map's own text change; the bike paths, routes, warnings, works
+  // and place icons keep their colours (AA or better on this ground). Night wins over winter's colours where both have one.
+  const NIGHT = { land: "#0f1626", water: "#0a3a41", halo: "rgba(15,22,38,0.92)", text: "#d6ab6b", street: "#c29b5e", road: "#5d4e3a", motorway: "#74603f", casing: "#17130f" };
+  const NIGHT_PAINT = [
+    ["background", "background-color", NIGHT.land], ["landuse_residential", "fill-color", "#131b2d"], ["park", "fill-color", "#12271f"],
+    ["landcover_wood", "fill-color", "#10221e"], ["water", "fill-color", NIGHT.water], ["waterway", "line-color", "#11505a"],
+    ["aeroway-area", "fill-color", "#1a2238"], ["aeroway-runway", "line-color", "#2a3350"], ["aeroway-taxiway", "line-color", "#2a3350"],
+    ["road_area_pier", "fill-color", NIGHT.land], ["road_pier", "line-color", NIGHT.land],
+    ["highway_path", "line-color", "#2f2c29"], ["highway_minor", "line-color", "#3a352e"],
+    ["highway_major_casing", "line-color", NIGHT.casing], ["highway_major_inner", "line-color", NIGHT.road], ["highway_major_subtle", "line-color", "rgba(93,78,58,0.6)"],
+    ["highway_motorway_casing", "line-color", NIGHT.casing], ["highway_motorway_inner", "line-color", NIGHT.motorway], ["highway_motorway_subtle", "line-color", "rgba(125,102,72,0.55)"],
+    ["highway_motorway_bridge_casing", "line-color", NIGHT.casing], ["highway_motorway_bridge_inner", "line-color", NIGHT.motorway],
+    ["tunnel_motorway_casing", "line-color", "#1d1a18"], ["tunnel_motorway_inner", "line-color", "#2a2724"],
+    ["railway", "line-color", "#2c3243"], ["railway_service", "line-color", "#2c3243"], ["railway_transit", "line-color", "#2c3243"],
+    ["railway_dashline", "line-color", NIGHT.land], ["railway_service_dashline", "line-color", NIGHT.land], ["railway_transit_dashline", "line-color", NIGHT.land],
+    ["boundary_2", "line-color", "#33405f"], ["boundary_3", "line-color", "#33405f"],
+    ...["waterway_line_label", "water_name_point_label", "water_name_line_label"].flatMap((id) => [[id, "text-color", "#78b4b0"], [id, "text-halo-color", NIGHT.halo]]),
+    ...["highway-name-path", "highway-name-minor", "highway-name-major", "airport"].flatMap((id) => [[id, "text-color", NIGHT.street], [id, "text-halo-color", NIGHT.halo]]),
+    ...["label_other", "label_village", "label_town", "label_state", "label_city", "label_city_capital"].flatMap((id) => [[id, "text-color", NIGHT.text], [id, "text-halo-color", NIGHT.halo]]),
+    ["bld-flat", "fill-color", "#1b2540"], ["bld-flat", "fill-outline-color", "#2a3558"],
+    ["bld-3d", "fill-extrusion-color", ["interpolate", ["linear"], ["get", "h"], 0, "#222c4a", 25, "#2b3659", 90, "#374470"]], ["bld-3d", "fill-extrusion-opacity", 0.9],
+    ["tint", "raster-brightness-max", 0.32], ["tint", "raster-saturation", -0.6], ["relief", "raster-brightness-max", 0.38],
+    ["contours-detail", "line-color", "#6f5c3f"], ["contours-minor", "line-color", "#6f5c3f"], ["contours-index", "line-color", "#8a7350"],
+    ["contour-labels", "text-color", "#a88a5a"], ["contour-labels", "text-halo-color", NIGHT.halo],
+    ["net-casing", "line-color", NIGHT.land],   // the white edge that lifts the paths off a light map would glare here
+    ...POI_LAYERS.flatMap((p) => [[p.id, "text-color", "#c9b28a"], [p.id, "text-halo-color", NIGHT.halo]]),
+  ];
+  // Summer, winter and night colours in one place: night wins, then winter, then the style's own colour (kept the first time we change it).
+  function paintMap() {
+    const want = new Map();
+    for (const [id, prop, val] of state.winter ? WINTER_PAINT : []) want.set(id + "|" + prop, val);
+    for (const [id, prop, val] of state.night ? NIGHT_PAINT : []) want.set(id + "|" + prop, val);
+    for (const [id, prop] of [...WINTER_PAINT, ...NIGHT_PAINT]) {
+      if (!map.getLayer(id)) continue;
+      const key = id + "|" + prop;
+      if (!(key in summerPaint)) summerPaint[key] = map.getPaintProperty(id, prop);
+      map.setPaintProperty(id, prop, want.has(key) ? want.get(key) : summerPaint[key] ?? null);
+    }
+    paintTrees();
+  }
+  // "Night map" in the Layers panel: Auto (between sunset and sunrise in Montréal, worked out here), On or Off; kept in localStorage "piste-night"
+  const nightPref = () => (["auto", "on", "off"].includes(store.get("night", "auto")) ? store.get("night", "auto") : "auto");
+  function applyNight() {
+    const pref = nightPref(), on = pref === "on" || (pref === "auto" && C.isNight(new Date()));
+    if (on === !!state.night) return;
+    state.night = on;
+    document.body.classList.toggle("night", on);
+    paintMap();
+  }
+  document.querySelectorAll("input[name=night]").forEach((r) => {
+    r.checked = r.value === nightPref();
+    r.addEventListener("change", () => { store.set("night", r.value); applyNight(); });
+  });
+  paintTrees(); applyNight();
+  setInterval(applyNight, 60000);   // Auto: the sun sets while the app is open
 
   // ------------------------------------------------------------------ wind & rain
   const wind = new WX.WindLayer(map, $("#wind"));
@@ -345,10 +443,10 @@
     if (w.minutes < -0.5 && w.tailShare >= 0.3) return t("windTail", { p: I.pct(w.tailShare), min: Math.max(1, Math.round(-w.minutes)) });
     return t("windCross");
   }
-  // "avoid headwinds": per-edge slow-down riding into today's wind, cached until the wind changes
+  // "avoid headwinds" (Suggest a ride only): per-edge slow-down riding into today's wind, cached until the wind changes
   let windArr = {}, windKey = "";
   function windWeights() {
-    const wx = state.wxData; if (!state.avoidWind || !wx || wx.now.wind < 6) return {};
+    const wx = state.wxData; if (state.tab !== "suggest" || !state.avoidWind || !wx || wx.now.wind < 6) return {};
     const key = `${wx.now.dir}|${wx.now.wind}`;
     if (key !== windKey) { windArr = router.windCost((wx.now.dir + 180) % 360, (wx.now.wind / 3.6) * 0.6, WX.speedWith); windKey = key; }
     return windArr;
@@ -401,7 +499,16 @@
   }
 
   // ------------------------------------------------------------------ UI: prefs
-  const strict = $("#strict"), strictOut = $("#strict-out"), hills = $("#hills");
+  const strict = $("#strict"), strictOut = $("#strict-out"), hills = $("#hills"), avoidWorks = $("#avoid-works");
+  avoidWorks.checked = store.get("avoid-works", "0") === "1";   // off unless the rider turned it on
+  avoidWorks.addEventListener("change", () => { store.set("avoid-works", avoidWorks.checked ? "1" : "0"); recompute(false); });
+  // "Avoid construction": ×6 on the edges within 25 m of today's work sites (router.worksPenalty), built once on first use
+  let worksPen = null;
+  function worksWeights() {
+    if (!avoidWorks.checked) return {};
+    worksPen ??= router.worksPenalty(activeWorks(window.PLANNED.features, new Date().toLocaleDateString("en-CA")));
+    return { worksPen };
+  }
   function strictLabel(v) { return t(v < 20 ? "mostDirect" : v < 45 ? "mostlyDirect" : v < 70 ? "balanced" : v < 92 ? "lanesFirst" : "lanesAlways"); }
   strict.addEventListener("input", () => { strictOut.textContent = strictLabel(+strict.value); recompute(false); });
   hills.addEventListener("change", () => recompute(false));
@@ -450,7 +557,7 @@
   kmNum.addEventListener("change", () => setKm(kmNum.value, true));
   kmNum.addEventListener("keydown", (e) => { if (e.key === "Enter") { setKm(kmNum.value, true); kmNum.blur(); } });
   kmLabel();
-  // avoid hills and avoid headwinds sit together under the route style and apply to every kind of route
+  // "avoid headwinds" lives in the Suggest a ride form
   $("#avoid-wind").addEventListener("change", async (e) => {
     state.avoidWind = e.target.checked;
     if (state.avoidWind && !state.wxData) await loadWeather();
@@ -459,21 +566,21 @@
 
   // ------------------------------------------------------------------ UI: search
   const fromEl = $("#from"), toEl = $("#to"), sug = $("#suggest"), sugHome = sug.parentElement;
-  let sugItems = [], sugActive = -1, sugTarget = null, sugTimer = null;
+  let sugItems = [], sugOffline = false, sugActive = -1, sugTarget = null, sugTimer = null;
   const syncFieldLabels = () => { for (const el of [fromEl, toEl]) el.setAttribute("aria-label", el.placeholder); };   // the placeholder is the only visible name
   syncFieldLabels();
   for (const el of [fromEl, toEl]) {
     el.addEventListener("input", () => {
       if (!el.value.trim() && state[el.id]) { clearPoint(el.id); recompute(true); }   // all the text deleted: that place, and the route, go
       sugTarget = el.id; clearTimeout(sugTimer);
-      sugTimer = setTimeout(async () => { sugItems = await geocoder.search(el.value); sugActive = -1; renderSuggest(); }, 160);
+      sugTimer = setTimeout(async () => { sugItems = el.value.trim() ? await geocoder.search(el.value) : emptyItems(); sugOffline = sugItems.offline; sugActive = -1; renderSuggest(); }, 160);
     });
     el.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown" && !sug.hidden) { sugActive = Math.min(sugItems.length - 1, sugActive + 1); renderSuggest(); e.preventDefault(); }
       if (e.key === "ArrowUp" && !sug.hidden) { sugActive = Math.max(0, sugActive - 1); renderSuggest(); e.preventDefault(); }
       if (e.key === "Enter") {   // the keyboard's return key: the highlighted (or top) suggestion, or the place as it is
         e.preventDefault(); sugTarget = el.id;
-        if (sugItems.length && !sug.hidden) choose(sugItems[Math.max(0, sugActive)]);
+        if (sugItems.length && !sug.hidden && (sugActive >= 0 || el.value.trim())) choose(sugItems[Math.max(0, sugActive)]);   // an empty bar's list needs an arrow first
         else if (el.value === (state[el.id + "Label"] || "")) placeDone(el.id);
       }
       if (e.key === "Escape") { if (search.which) cancelSearch(); else sug.hidden = true; }
@@ -481,21 +588,24 @@
     el.addEventListener("blur", () => setTimeout(() => blurred(el), 180));
   }
   function renderSuggest() {
-    if (!sugItems.length) { sug.hidden = true; return; }
+    if (!sugItems.length && !sugOffline) { sug.hidden = true; return; }
     if (search.which) placeSuggest();
     else { const field = (sugTarget === "from" ? fromEl : toEl).closest(".field"); sug.style.top = field.offsetTop + field.offsetHeight + 4 + "px"; }
-    sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("");
+    sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("")
+      + (sugOffline ? `<li class="note">${t("searchOffline")}</li>` : "");   // no signal: the address service is out of reach
     sug.hidden = false;
-    sug.querySelectorAll("li").forEach((li) => {
+    sug.querySelectorAll("li[data-i]").forEach((li) => {
       const pick = (e) => { e.preventDefault(); choose(sugItems[+li.dataset.i]); };
       li.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") pick(e); });   // a finger: pick at once, the keyboard stays up
       li.addEventListener("mousedown", pick);
     });
   }
   function choose(it) {
-    const which = sugTarget;
     sug.hidden = true; sugItems = [];
+    if (it.clear) { recents = []; writeList("recents", recents); return; }
+    const which = sugTarget;
     setPoint(which, [it.lon, it.lat], it.label);
+    if (which === "to") remember(it.label, [it.lon, it.lat]);
     placeDone(which);
   }
   // a place was chosen (or kept as it was): the start moves straight on to an empty destination; otherwise the search is over
@@ -660,7 +770,10 @@
     });
     el.addEventListener("touchend", (e) => { if (tapOpenedSearch) { tapOpenedSearch = false; e.preventDefault(); } }, { passive: false });
     el.addEventListener("touchcancel", () => { tapOpenedSearch = false; });
-    el.addEventListener("focus", () => { if (isPhone() && state.mode !== "ride") enterSearch(el.id); });
+    el.addEventListener("focus", () => {
+      if (isPhone() && state.mode !== "ride") enterSearch(el.id);
+      if (!el.value.trim()) { sugTarget = el.id; sugItems = emptyItems(); sugOffline = false; sugActive = -1; renderSuggest(); }   // an empty bar offers saved places and recent destinations
+    });
   }
   document.querySelectorAll(".clear").forEach((b) => onPress(b, () => clearField(b.dataset.target)));
 
@@ -692,6 +805,105 @@
   onPress(locateBtn, useMyLocation);
   if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, () => { if (search.which && kbOpen()) dock(true); });
 
+  // ------------------------------------------------------------------ saved places (2026-11-02): Home, Work and others, and the last 5 destinations
+  // Kept on this device only (localStorage "piste-places" and "piste-recents"); nothing here is ever sent anywhere.
+  const readList = (key) => {
+    try { const v = JSON.parse(store.get(key, "[]")); return Array.isArray(v) ? v.filter((p) => p && Array.isArray(p.ll) && p.ll.length === 2 && p.ll.every(Number.isFinite)) : []; }
+    catch (e) { return []; }
+  };
+  const writeList = (key, list) => store.set(key, JSON.stringify(list));
+  let places = readList("places"), recents = readList("recents").slice(0, 5);   // places: { kind: "home" | "work" | "", name, ll }; recents: { name, ll }
+  const placeBox = $("#places"), pl = { layer: $("#place-dialog"), name: $("#pl-name"), status: $("#pl-status"), i: -1 };
+  const placeName = (p) => (p.kind ? t(p.kind === "home" ? "placeHome" : "placeWork") : p.name);
+  const placeIcon = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+  const PLACE_ICON = { home: placeIcon('<path d="M4 11 12 4l8 7M6 9.5V20h12V9.5M10 20v-5.5h4V20"/>'),
+    work: placeIcon('<rect x="3.5" y="7.5" width="17" height="12" rx="2"/><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5M3.5 13h17"/>'), add: placeIcon('<path d="M12 5v14M5 12h14"/>') };
+  function renderPlaces() {
+    const chip = (attr, icon, text, cls = "") => `<button type="button" class="place ${cls}" ${attr}>${icon}<span>${C.esc(text)}</span></button>`;
+    const fixed = ["home", "work"].map((k) => {
+      const i = places.findIndex((p) => p.kind === k);
+      return i < 0 ? chip(`data-kind="${k}"`, PLACE_ICON[k], t(k === "home" ? "setHome" : "setWork"), "unset") : chip(`data-i="${i}" title="${t("placeHold")}"`, PLACE_ICON[k], placeName(places[i]));
+    });
+    const more = places.map((p, i) => (p.kind ? "" : chip(`data-i="${i}" title="${t("placeHold")}"`, "", p.name)));
+    placeBox.setAttribute("aria-label", t("placesLabel"));
+    placeBox.innerHTML = fixed.join("") + more.join("") + `<button type="button" class="place add" aria-label="${t("placeAdd")}" title="${t("placeAdd")}">${PLACE_ICON.add}</button>`;
+  }
+  const commitPlaces = () => { writeList("places", places); renderPlaces(); };
+  // the place on the bars: the destination, or the start when there is no destination
+  const currentPlace = () => { const w = state.to ? "to" : state.from ? "from" : null; return w && { name: state[w + "Label"] || t("droppedPin"), ll: state[w].map((v) => +v.toFixed(6)) }; };
+  function placeTarget() {   // the bar a chip fills: the one being typed in, else the destination (the start, when only the destination is set)
+    if (state.tab === "suggest") return "from";
+    const a = document.activeElement;
+    if (a === fromEl || a === toEl) return a.id;
+    return state.to && !state.from ? "from" : "to";
+  }
+  function usePlace(p) {
+    setPoint(placeTarget(), p.ll, placeName(p));
+    if (state.tab !== "go" || (state.from && state.to)) recompute(true);
+    else map.easeTo({ center: p.ll, zoom: Math.max(map.getZoom(), 14.5), duration: 600 });   // one end only: show where it is
+  }
+  function setHomeOrWork(kind) {
+    const cur = currentPlace();
+    if (!cur) { toast(t("pickPlaceFirst")); return; }
+    places = places.filter((p) => p.kind !== kind).concat({ kind, name: "", ll: cur.ll });
+    commitPlaces();
+  }
+  function remember(name, ll) {   // a chosen destination goes on top of the last five
+    const same = (r) => r.ll.every((v, k) => Math.abs(v - ll[k]) < 1e-4);
+    recents = [{ name, ll }, ...recents.filter((r) => !same(r))].slice(0, 5);
+    writeList("recents", recents);
+  }
+  function emptyItems() {   // an empty search bar offers the saved places, then the recent destinations (with a way to clear them)
+    const item = (p, tag) => ({ label: placeName(p), sub: t(tag), lon: p.ll[0], lat: p.ll[1] });
+    const rows = [...places.map((p) => item(p, "savedTag")), ...recents.map((p) => item(p, "recentTag"))];
+    return recents.length ? [...rows, { label: t("clearRecents"), clear: true }] : rows;
+  }
+  // The small form: name the current place (new), or rename, move to the current place, or delete a saved one
+  function openPlace(i, opener) {
+    const p = places[i], cur = currentPlace();
+    if (!p && !cur) { toast(t("pickPlaceFirst")); return; }
+    pl.i = i; pl.status.textContent = ""; pl.name.removeAttribute("aria-invalid");
+    $("#pl-title").textContent = t(p ? "placeEditT" : "placeNewT");
+    pl.name.value = p ? placeName(p) : cur.name;
+    $("#pl-name-field").hidden = !!(p && p.kind);   // Home and Work keep their names
+    $("#pl-delete").hidden = !p; $("#pl-use").hidden = !(p && cur);
+    const first = !isPhone() && !(p && p.kind) ? pl.name : null;   // phones: no keyboard until the field is tapped
+    const back = () => { const chip = placeBox.querySelector(pl.i >= 0 && places[pl.i] ? `[data-i="${pl.i}"]` : ".add"); if (chip) chip.focus({ preventScroll: true }); };
+    if (window.pisteDialog.open(pl.layer, opener, first, back) && first) pl.name.select();
+  }
+  const closePlace = () => window.pisteDialog.close();
+  $("#place-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = pl.name.value.trim(), p = places[pl.i];
+    if (!name && !(p && p.kind)) { pl.name.setAttribute("aria-invalid", "true"); pl.status.dataset.kind = "error"; pl.status.textContent = t("placeNeedName"); pl.name.focus(); return; }
+    if (p) { if (!p.kind) p.name = name; } else places.push({ kind: "", name, ll: currentPlace().ll });
+    commitPlaces(); closePlace();
+  });
+  $("#pl-delete").addEventListener("click", () => { places.splice(pl.i, 1); pl.i = -1; commitPlaces(); closePlace(); });
+  $("#pl-use").addEventListener("click", () => { places[pl.i].ll = currentPlace().ll; commitPlaces(); closePlace(); });
+  $("#pl-cancel").addEventListener("click", closePlace);
+  pl.layer.addEventListener("click", (e) => { if (e.target === pl.layer) closePlace(); });
+  // chips: a tap uses the place; a long press (touch), right click, the menu key or F2 edits it
+  let held = false, holdT = 0, holdAt = null;
+  const editFrom = (e) => { const b = e.target.closest("[data-i]"); if (b) openPlace(+b.dataset.i, b); return !!b; };
+  placeBox.addEventListener("pointerdown", (e) => {
+    held = false; holdAt = [e.clientX, e.clientY]; clearTimeout(holdT);
+    if (e.pointerType !== "mouse") holdT = setTimeout(() => { held = editFrom(e); }, 500);
+  });
+  placeBox.addEventListener("pointermove", (e) => { if (holdAt && Math.hypot(e.clientX - holdAt[0], e.clientY - holdAt[1]) > 8) clearTimeout(holdT); });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) placeBox.addEventListener(ev, () => clearTimeout(holdT));
+  placeBox.addEventListener("contextmenu", (e) => { e.preventDefault(); editFrom(e); });
+  placeBox.addEventListener("keydown", (e) => { if (e.key === "F2" && editFrom(e)) e.preventDefault(); });
+  placeBox.addEventListener("mousedown", (e) => e.preventDefault());   // a click keeps the focus on the search bar it fills
+  placeBox.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (held) { held = false; return; }   // the press that opened the editor
+    if (b.dataset.i) usePlace(places[+b.dataset.i]);
+    else if (b.dataset.kind) setHomeOrWork(b.dataset.kind);
+    else openPlace(-1, b);
+  });
+  renderPlaces();
+
   // ------------------------------------------------------------------ map clicks
   let layersJustClosed = false;
   map.on("click", (e) => {
@@ -706,7 +918,9 @@
     if (state.tab === "suggest" && state.smode === "classics") return;
     const lonlat = [e.lngLat.lng, e.lngLat.lat];
     const which = state.tab === "suggest" ? "from" : state.pick || (!state.from ? "from" : "to");
-    setPoint(which, lonlat, placeLabel(lonlat[0], lonlat[1]));
+    const label = placeLabel(lonlat[0], lonlat[1]);
+    setPoint(which, lonlat, label);
+    if (which === "to") remember(label, lonlat);
     state.pick = null; document.querySelectorAll(".pick").forEach((x) => x.classList.remove("on")); map.getCanvas().style.cursor = "";
     recompute(!state.routes.length);
   });
@@ -733,7 +947,7 @@
   function overlap(a, b) { let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++; return c / Math.max(a.sig.size, b.sig.size); }
   // the router settings behind each kind of route (a GPS reroute uses the same ones as the route you started)
   // What the panel says now (slider, hills, wind), in the form the router takes (see routeSettings in shared/router.js).
-  function planSettings() { return { strictness: +strict.value / 100, avoidHills: hills.checked, wind: windWeights() }; }
+  function planSettings() { return { strictness: +strict.value / 100, avoidHills: hills.checked, wind: windWeights(), works: worksWeights() }; }
   function routeWeights(key) { return routeSettings(key, planSettings()); }   // "Your route" and suggested rides use "yourRoute"
   function selWeights(sel) {
     if (sel.classic) return { w: PROFILES.bikemax.w, hill: 4 };   // as classicRoute()
@@ -778,7 +992,7 @@
     const t1 = performance.now();
     const wx = state.avoidWind ? state.wxData || (await loadWeather()) : null;
     const picks = await suggester.suggest({ start: state.from, km: state.sugg.km, loop: state.sugg.loop, stop: state.sugg.stop,
-      weights: Object.assign({}, weightsFor(+strict.value / 100, hills.checked), windWeights()), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
+      weights: Object.assign({}, weightsFor(+strict.value / 100, hills.checked), windWeights(), worksWeights()), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
     if (token !== suggToken) return;   // a newer request started meanwhile
     state.lastMs = performance.now() - t1;
     state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), end: c.end, loop: c.loop }));
@@ -916,7 +1130,7 @@
       return `<button type="button" class="route-card ${i === state.sel ? "sel" : ""}" data-i="${i}">
         <div class="rc-top"><b>${C.esc(routeTitle(c))}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
         ${note ? `<div class="rc-note">${C.esc(note)}</div>` : ""}
-        <div class="rc-sub">${C.fmtKm(r.length)} · ${t("climbM", { m: Math.round(r.climb) })} · ${gaps.length ? (gaps.length > 1 ? t("gapsN", { n: gaps.length }) : t("gaps1")) : t("lanesAllWay")}</div>
+        <div class="rc-sub">${C.fmtKm(r.length)} · ${t("climbM", { m: Math.round(r.climb) })}${gaps.length ? "" : ` · ${t("lanesAllWay")}`}</div>
         ${compBar(r)}
         <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></button>`;
     }).join("");
@@ -926,9 +1140,11 @@
       ? `<div class="gaps">${gaps.map((g, i) => `<button type="button" class="gap-item" data-g="${i}"><span class="gi-icon">${i + 1}</span><span>${C.esc(t("gapOn", { m: Math.round(g.length), name: g.names.slice(0, 2).map(I.place).join(", ") || t("aStreet") }))}<br><small>${t(g.busy ? "busyStreet" : "quietStreet")} · ${t("after", { d: C.fmtKm(g.start) })}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>`
       : `<div class="no-gaps">${t("lanesWhole")}</div>`;
     const turns = r.maneuvers.map((m) => `<li>${C.esc(I.maneuver(m))} <span class="turn-at">· ${C.fmtKm(m.at)}</span></li>`).join("");
-    const classicHead = classic ? `<div class="classic-summary"><b>${C.esc(routeTitle(sel))}</b><span>${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t("climbM", { m: Math.round(r.climb) })}</span>${compBar(r)}<div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></div>` : "";
+    const share = canShare() ? `<button type="button" class="share-btn" aria-label="${t("share")}" title="${t("share")}">${SHARE_ICON}</button>` : "";
+    const withShare = (html) => (share ? `<div class="det-head">${html}${share}</div>` : html), elev = `<h2>${t("elevation")}</h2>`;
+    const classicHead = classic ? `<div class="classic-summary">${withShare(`<b>${C.esc(routeTitle(sel))}</b>`)}<span>${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t("climbM", { m: Math.round(r.climb) })}</span>${compBar(r)}<div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></div>` : "";
     const wl = state.wx && state.wxData ? `<p class="wind-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3"/></svg>${C.esc(windLine(r))}</p>` : "";
-    det.innerHTML = `${classicHead}<h2>${t("elevation")}</h2><div class="profile">${C.profileSVG(r, { width: 336, height: 92, tierColors: TIER_BAR, gapShade: "rgba(239,143,69,.14)",
+    det.innerHTML = `${classicHead}${classic ? elev : withShare(elev)}<div class="profile">${C.profileSVG(r, { width: 336, height: 92, tierColors: TIER_BAR, gapShade: "rgba(239,143,69,.14)",
         fill: "#e6edf2", stroke: "#6f8799", text: "#7b858f", climbs: sel.climbs, climbFill: CLIMB.fill, climbText: "#7a5a3a", minRange: 30, headroom: 0.25, gaps })}</div>
       <p class="climb-note">${climbSummary(r, sel.climbs)}</p>${wl}
       <h2>${t(state.winter ? "withoutLaneWinter" : "withoutLane")}</h2>${gapHtml}
@@ -940,7 +1156,24 @@
       map.easeTo({ center: [p.lon, p.lat], zoom: 17, duration: 600 });
     }));
     $("#ride-go").onclick = () => rideTap(gpsDefault());
+    const shareBtn = det.querySelector(".share-btn"); if (shareBtn) shareBtn.onclick = shareRoute;
     if ($("#ride-preview")) $("#ride-preview").onclick = () => rideTap(false);
+  }
+
+  // ------------------------------------------------------------------ share a route: the system share sheet, or the link on the clipboard
+  const SHARE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3.5M8 7l4-4 4 4M8 10.5H6.5A1.5 1.5 0 0 0 5 12v7a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-7a1.5 1.5 0 0 0-1.5-1.5H16"/></svg>';
+  const canShare = () => (state.tab === "go" ? !!(state.from && state.to) : state.smode === "classics" && !!state.routes.length);   // not the made-to-order loops
+  function shareUrl() {   // this page's own address, without the welcome or notrack options, plus what reopens the route
+    const ll = (p) => p.map((v) => +v.toFixed(5)).join(",");
+    const route = state.tab === "go" ? `from=${ll(state.from)}&to=${ll(state.to)}` : `classic=${CLASSICS[state.classic].id}`;
+    return `${location.origin}${location.pathname}?${route}${state.winter ? "&winter=1" : ""}`;
+  }
+  async function shareRoute() {
+    const url = shareUrl();
+    try { await navigator.share({ title: "Piste", url }); return; }
+    catch (e) { if (e.name === "AbortError") return; }   // the person closed the sheet; anything else (no Web Share): copy the link instead
+    try { await navigator.clipboard.writeText(url); toast(t("linkCopied")); }
+    catch (e) { console.warn("link not copied", e); toast(t("linkCopyFail")); }
   }
 
   // ------------------------------------------------------------------ layers panel & modes
@@ -963,7 +1196,7 @@
   }
   function poiOn(p) {   // parks and viewpoints are always on
     if (p.group === "outdoors" && p.kind !== "culture") return true;
-    if (p.kind === "metro") return toggles.metro;
+    if (p.group === "transit") return toggles[p.kind];   // metro, REM
     if (p.kind === "culture") return toggles.culture;
     if (p.group === "food") return toggles["pois-food"];
     if (p.group === "shopping") return toggles["pois-shop"];
@@ -972,13 +1205,14 @@
   function applyLayers() {
     const browse = state.mode === "explore", riding = state.mode === "ride";
     ["net-casing", "net-ab", "net-c"].forEach((id) => vis(id, toggles.network));
+    ["rem-casing", "rem-line"].forEach((id) => vis(id, toggles.rem));
     vis("net-not-cleared", toggles.network && state.winter);
     if (map.getLayer("net-ab")) map.setPaintProperty("net-ab", "line-opacity", browse ? 0.9 : 0.45);
     ["planned", "construction", "construction-tape"].forEach((id) => vis(id, toggles.planned && browse && !state.winter));
     vis("closed", toggles.works);
     // while riding, roadside pop-ups replace the map's POI icons (only metro stations stay)
     const liveBixi = !!state.bixi;
-    POI_LAYERS.forEach((p) => vis(p.id, riding ? p.kind === "metro" && toggles.metro : poiOn(p) && !(p.kind === "bixi" && liveBixi)));
+    POI_LAYERS.forEach((p) => vis(p.id, riding ? p.group === "transit" && toggles[p.kind] : poiOn(p) && !(p.kind === "bixi" && liveBixi)));
     // 2026-11-01: no place names on the map while riding (they showed up behind the turn card); the icons stay, a tap on one still names it
     POI_LAYERS.forEach((p) => { if (map.getLayer(p.id)) map.setPaintProperty(p.id, "text-opacity", riding ? 0 : 1); });
     vis("bixi-live", liveBixi && toggles["pois-bike"] && !riding); vis("bixi-count", liveBixi && toggles["pois-bike"] && !riding);
@@ -986,9 +1220,10 @@
     vis("tint", toggles.tint); vis("relief", toggles.relief);
     ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
     vis("bld-flat", toggles.buildings && !state.is3d); vis("bld-3d", toggles.buildings && state.is3d);
+    vis("trees-crown", state.is3d); vis("trees-trunk", state.is3d);
     vis("radar", state.wx);
     setTerrain(toggles.terrain && state.is3d);
-    // with a route on screen, keep only the POIs and works along it (plus metro stations) to cut clutter
+    // with a route on screen, keep only the POIs and works along it (plus metro and REM stations) to cut clutter
     const sel = state.routes[state.sel];
     if (sel && !browse) {
       const cur = C.buildCursor(sel.r);
@@ -999,7 +1234,7 @@
     const ids = sel && !browse ? C.routePOIs(sel.r, window.POIS, 90).map((p) => p.i) : null;
     POI_LAYERS.forEach((p) => {
       const base = ["==", ["get", "k"], p.kind];
-      map.setFilter(p.id, ids && p.kind !== "metro" ? ["all", base, ["in", ["id"], ["literal", ids]]] : base);
+      map.setFilter(p.id, ids && p.group !== "transit" ? ["all", base, ["in", ["id"], ["literal", ids]]] : base);
     });
     if (liveBixi) {
       let f = null;
@@ -1039,7 +1274,7 @@
     classicCache.clear(); classicsRouted = false;   // sight names are part of the route
     if (state.tab === "suggest" && state.smode === "classics") showClassic(state.classic, false); else renderClassicCards();
     if (state.from) fromEl.value = state.fromLabel; if (state.to) toEl.value = state.toLabel;
-    setMapTexts(); renderRoutes(); renderWxCard(); renderSound(); buildElevationLegend(); renderSummary(); if (state.mode === "ride") updateWindBadge(true);
+    setMapTexts(); renderRoutes(); renderPlaces(); renderWxCard(); renderSound(); buildElevationLegend(); renderSummary(); if (state.mode === "ride") updateWindBadge(true);
     if (!state.ride) $("#ride-pause").textContent = t("pause");
     if (state.gpsState) gpsStatus(state.gpsState);
     document.dispatchEvent(new Event("piste:lang"));   // tour.js redraws its text
@@ -1659,7 +1894,7 @@
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
-    startGpsRide, endRide, gpsDefault, setFollow, riderMarker };
+    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees };
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
     computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };

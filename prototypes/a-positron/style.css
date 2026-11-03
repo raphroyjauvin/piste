@@ -126,6 +126,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .suggest li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; }
 .suggest li:hover, .suggest li.active { background: var(--blue-soft); }
 .suggest li small { color: var(--ink-3); }
+.suggest li.note { cursor: default; font-size: 13px; color: var(--ink-3); }
+.suggest li.note:hover { background: none; }
 
 .prefs { display: flex; flex-direction: column; gap: 6px; }
 .pref-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
@@ -133,8 +135,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .pref-row > output { color: var(--blue-deep); font-weight: 700; font-size: 14px; }
 .prefs input[type=range] { width: 100%; accent-color: var(--blue); }
 .ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
-.check { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink-2); }
-.pref-checks { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 2px; }
+.check { display: flex; gap: 8px; align-items: center; min-height: 44px; font-size: 14px; color: var(--ink-2); }   /* the whole label is the 44 px tap target */
+.pref-checks { display: flex; flex-wrap: wrap; gap: 0 22px; margin-top: -4px; }
 
 .routes { display: flex; flex-direction: column; gap: 8px; }
 .routes:empty { display: none; }
@@ -205,6 +207,9 @@ body.riding .tour-again { visibility: hidden; }
 .layers h3 + label { margin-top: 2px; }
 .layers label + h3 { margin-top: 8px; }
 .layers label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.layers .night { display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; margin-top: 6px; font-size: 14px; }
+.layers .night > span { margin-right: auto; }
+.layers .night label { min-height: 44px; }   /* the whole label is the 44 px tap target */
 .layers em { font-style: normal; font-size: 11px; color: var(--ink-3); margin-left: auto; }
 
 /* weather and winter card */
@@ -369,8 +374,6 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   box-shadow: 0 2px 6px rgba(10, 22, 32, .14), 0 18px 46px rgba(10, 22, 32, .3); padding: 15px 16px 10px 18px; will-change: transform, opacity; }
 .tour-card h2 { margin: 0 56px 5px 0; font: 800 19px/1.2 var(--font-display); color: var(--ink); }
 .tour-card p { margin: 0; font-size: 15px; line-height: 1.45; color: var(--ink-2); }
-.tour-card .tour-note { margin-top: 5px; font-size: 13px; color: var(--ink-3); }
-.tour-card .tour-note:empty { display: none; }
 .tour-skip { position: absolute; top: 3px; right: 4px; min-width: 44px; min-height: 44px; padding: 0 12px; border: 0; background: none; border-radius: 12px;
   color: var(--ink-3); font-size: 13.5px; font-weight: 700; }
 .tour-skip:hover { color: var(--ink); }
@@ -437,6 +440,28 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
 .copyright { margin: 0; font-size: 12.5px; color: var(--ink-2); }
 .about-card .copyright { text-align: center; }
 
+/* ---------- saved places: slim chips under the search bars (44 px to tap, 30 px of layout), share button, place form ---------- */
+.places { display: flex; gap: 6px; margin: -7px 0 -7px 26px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.places::-webkit-scrollbar { display: none; }
+.place { position: relative; isolation: isolate; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 44px; padding: 0 12px; border: 0; background: none;
+  color: var(--ink-2); font: 500 13px/1 var(--font-ui); white-space: nowrap; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.place::before { content: ""; position: absolute; inset: 7px 0; z-index: -1; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); }
+.place:hover::before { border-color: var(--blue); }
+.place:focus-visible { outline: none; }
+.place:focus-visible::before { outline: 2px solid var(--blue); outline-offset: 2px; }
+.place.unset { color: var(--ink-2); }
+.place.unset::before { border-style: dashed; }
+.place.add { min-width: 44px; padding: 0; }
+.place.add::before { inset: 7px; }
+.place svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.det-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -10px 0; }   /* the 44 px button lends its height to the gaps around it */
+.share-btn { flex: none; width: 44px; height: 44px; margin-right: -12px; padding: 0; border: 0; border-radius: 50%; background: none; display: grid; place-items: center; color: var(--ink-3); }
+.share-btn:hover { color: var(--blue-deep); }
+.share-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#place-form .dialog-buttons { flex-wrap: wrap; }
+.pl-use { align-self: flex-start; min-height: 44px; padding: 0 2px; border: 0; background: none; color: var(--blue-deep); font: 700 14px/1 var(--font-ui); }
+.pl-delete { margin-right: auto; color: var(--gap-ink); }
+
 /* ---------- phones: the panel is a bottom sheet you drag up (full) or down (map) ---------- */
 @media (max-width: 760px) {
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: none; height: 50%; border-radius: 20px 20px 0 0;
@@ -454,7 +479,7 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
   .field input { font-size: 16px; }   /* 16 px stops iPhone Safari from zooming in when you tap a search bar */
   /* typing a place: only the search bars show, sitting on the keyboard; suggestions float over the map above */
   body.searching #panel > :not(.grabber):not(.search) { display: none !important; }
-  body.searching .map-controls, body.searching .wx-card, body.searching .legend { display: none !important; }
+  body.searching .map-controls, body.searching .wx-card, body.searching .legend, body.searching .places { display: none !important; }
   body > .suggest { position: fixed; left: 10px; right: 10px; top: auto; z-index: 20; overflow: auto; box-shadow: var(--shadow); }
   .brand { touch-action: none; }
   .brand .mark { width: 28px; height: 28px; }

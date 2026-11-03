@@ -60,27 +60,37 @@
   // CAPPED_KINDS keep to the detour cap (see Router.planRoute); "mostDirect" is the shortest-ish route and has none.
   const CAPPED_KINDS = ["yourRoute", "mostLanes"];
 
-  // Router options (w, hill, wind) for one kind of route.
-  function routeSettings(kind, { strictness = 0.8, avoidHills = false, wind = {} } = {}) {
-    if (kind === "mostLanes") return Object.assign({ w: PROFILES.bikemax.w, hill: avoidHills ? 12 : 4 }, wind);
-    if (kind === "mostDirect") return { w: PROFILES.direct.w, hill: avoidHills ? 12 : 0 };
-    return Object.assign({}, weightsFor(strictness, avoidHills), wind);
+  // "Avoid construction" (2026-11-02): an edge within `radiusM` of a work site that blocks a bike path costs `factor` times
+  // as much, not infinity, so a route still exists when there is no other way. See Router.worksPenalty and activeWorks.
+  const WORKS = { radiusM: 25, factor: 6 };
+
+  // The work sites to avoid today: the Point features of the map's works layer (status "works") whose `until` date (YYYY-MM-DD)
+  // has not passed; one with no date counts as active. `today` is a YYYY-MM-DD string. Returns [[lon, lat], ...].
+  function activeWorks(features, today) {
+    return features.filter((f) => f.properties.status === "works" && (!f.properties.until || f.properties.until >= today)).map((f) => f.geometry.coordinates.slice(0, 2));
+  }
+
+  // Router options (w, hill, wind, worksPen) for one kind of route. `wind` and `works` are option objects merged in as they are.
+  function routeSettings(kind, { strictness = 0.8, avoidHills = false, wind = {}, works = {} } = {}) {
+    if (kind === "mostLanes") return Object.assign({ w: PROFILES.bikemax.w, hill: avoidHills ? 12 : 4 }, wind, works);
+    if (kind === "mostDirect") return Object.assign({ w: PROFILES.direct.w, hill: avoidHills ? 12 : 0 }, works);
+    return Object.assign({}, weightsFor(strictness, avoidHills), wind, works);
   }
 
   // The steps Router.routeCapped tries when a route is over the cap: relaxSteps(kind, settings)(i), i = 1, 2, ...
   // Step i is the same kind of route with the strictness lowered by 0.15 * i (hill and wind settings kept; "mostLanes"
-  // counts as strictness 1). The step after the strictness reaches 0 is the "mostDirect" settings; then null (no more steps).
+  // counts as strictness 1; works are kept too). The step after the strictness reaches 0 is the "mostDirect" settings; then null (no more steps).
   // Pure: the same input always gives the same steps.
   function relaxSteps(kind, settings = {}) {
     const s0 = kind === "mostLanes" ? 1 : settings.strictness ?? 0.8;
-    const { avoidHills = false, wind = {} } = settings;
+    const { avoidHills = false, wind = {}, works = {} } = settings;
     const direct = routeSettings("mostDirect", settings);
     return (i) => {
       const s = Math.round((s0 - 0.15 * i) * 1000) / 1000;   // rounded so 0.85 - 6 x 0.15 is a clean -0.05
       if (s <= 0) return s > -0.15 ? direct : null;
       const o = weightsFor(s, avoidHills);
       if (kind === "mostLanes") o.hill = avoidHills ? 12 : 4;
-      return Object.assign(o, wind);
+      return Object.assign(o, wind, works);
     };
   }
 
@@ -181,6 +191,23 @@
       }
       this.winter = !!on;
       this.etier = this.winter ? this.etierWinter : this.etierBase;
+    }
+
+    // ---------- "avoid construction": cost multipliers for the edges next to work sites ----------
+    // points: [[lon, lat], ...] (see activeWorks). Returns the Float32Array opts.worksPen for route(): WORKS.factor on every
+    // edge that passes within WORKS.radiusM of a point, 1 elsewhere. The grid holds a point every 60 m or less along each
+    // edge, so an edge within 25 m of a site has one within 55 m: the site's cell and its 8 neighbours (>= 120 m) are enough.
+    worksPenalty(points) {
+      const pen = new Float32Array(this.m).fill(1);
+      for (const [lon, lat] of points) {
+        const cx = Math.floor(lon / this.cell), cy = Math.floor(lat / this.cell);
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          for (const e of this.grid.get((cx + dx) * 100000 + (cy + dy)) || []) {
+            if (pen[e] === 1 && this._projectOnEdge(e, lon, lat).dist <= WORKS.radiusM) pen[e] = WORKS.factor;
+          }
+        }
+      }
+      return pen;
     }
 
     // ---------- "avoid headwinds": how much slower each direction of each edge is today ----------
@@ -327,10 +354,12 @@
       const pen = opts.penalty || null, wpen = this.winter ? this.winterPen : null;
       // opts.windFwd / windBack: per-edge slow-down riding a->b / b->a into the wind (>= 1), from windCost()
       const wf = opts.windFwd || null, wb = opts.windBack || null;
+      // opts.worksPen: per-edge multipliers (>= 1) next to work sites, from worksPenalty()
+      const wk = opts.worksPen || null;
       const cost = (e, fwd, part) => {
         const L = this.elen[e] * part;
         const climb = (fwd ? this.ecf[e] : this.ecb[e]) * part;
-        return L * w[this.etier[e]] * (pen ? pen[e] : 1) * (wpen ? wpen[e] : 1) * (wf ? (fwd ? wf[e] : wb[e]) : 1) + climb * hill;
+        return L * w[this.etier[e]] * (pen ? pen[e] : 1) * (wpen ? wpen[e] : 1) * (wf ? (fwd ? wf[e] : wb[e]) : 1) * (wk ? wk[e] : 1) + climb * hill;
       };
       const usable = (c) => this.edir[c.e] !== 3 && this.etier[c.e] !== 5;
       // the rider's heading (only for a start point, not a fixed edge): U-turn penalties on the start candidates
@@ -634,5 +663,5 @@
     };
   }
 
-  return { Router, TIERS, PROFILES, SHORTEST, DETOUR, U_TURN, CAPPED_KINDS, weightsFor, routeSettings, relaxSteps, distM, bearing, buildCursor };
+  return { Router, TIERS, PROFILES, SHORTEST, DETOUR, U_TURN, WORKS, CAPPED_KINDS, activeWorks, weightsFor, routeSettings, relaxSteps, distM, bearing, buildCursor };
 });
