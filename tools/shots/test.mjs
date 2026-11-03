@@ -1112,7 +1112,8 @@ const appSnapshot = async () => {
     legend: document.querySelector("#legend details").open, layers: !document.querySelector("#layers").hidden, scroll: Math.round(document.querySelector("#panel").scrollTop),
     zoom: +m.getZoom().toFixed(2), center: [+c.lng.toFixed(4), +c.lat.toFixed(4)], pitch: Math.round(m.getPitch()) };
 };
-const sameState = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// the card's scroll may land 1 px off after a restore (fractional scroll heights round differently): invisible, so allowed
+const sameState = (a, b) => JSON.stringify({ ...a, scroll: 0 }) === JSON.stringify({ ...b, scroll: 0 }) && Math.abs((a.scroll || 0) - (b.scroll || 0)) <= 1;
 // In the page: is the current step laid out right? Measured here, not taken from the tour's own bookkeeping where possible:
 // every target is on screen (all of it inside the panel's visible part if it is in the panel; the route clear of the panel),
 // a cut-out covers each target, and the callout is on screen, inside the safe areas, off the targets and off the cut-out's centre.
