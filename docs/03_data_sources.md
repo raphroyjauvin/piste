@@ -6,7 +6,7 @@
 | **OpenStreetMap, REM routes and stations**: `osm_rem/rem.json` (0.2 MB; `tools/fetch_data.py rem`, Overpass; ODbL) | The 4 relations tagged `network=REM` (Deux-Montagnes, Anse-à-l'Orme, South Shore, both directions) with geometry, and 23 station nodes. The ARTM publishes the REM's schedule (GTFS) but no map layer we could use | 2026-11-02 | `tools/build_rem.py` writes `prototypes/shared/data/rem.js` (simplified tracks, stations); the Layers "REM" checkbox |
 | **Ville de Montréal, Canopée 2019**: `mtl_canopee/canope-2019.zip` (69 MB shapefile, CC BY 4.0) | Tree canopy as polygons: the ground projection of tree crowns and groups of trees over 3 m | 2019 | Tree mask for the 3D trees. (The City also publishes a canopy height model, "MNC", by borough: an alternative to NRCan DSM minus DTM) |
 | **NRCan HRDEM CMM 2023, 1 m** (`dsm_study_area_32188_1m.tif`, `dtm_study_area_32188_1m.tif`, already downloaded 2026-10-25) | Surface and ground, 1 m, over the study area | 2023 | Canopy height for the 3D trees: `tools/island_trees.py` |
-| Built: `prototypes/shared/tiles/trees.pmtiles` (4.4 MB) | 123,000 tree tops (height, colour seed): crowns (z15-16) and trunks (z16) | built 2026-11-02 | The 3D trees |
+| Built: `prototypes/shared/tiles/trees.pmtiles` (2.4 MB) | 123,000 tree tops as points (height `h`, picture seed `s`; z15-16) | rebuilt 2026-11-02 (was crown and trunk polygons, 4.4 MB) | The 3D trees |
 
 ## Update 2026-10-29: weather, live BIXI, winter fields, island data and map layers, photos
 | Source | What it gives | Freshness | Use |

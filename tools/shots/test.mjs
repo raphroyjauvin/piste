@@ -1561,36 +1561,38 @@ await run("REM: tracks and stations on the map, a Layers checkbox, the credit", 
   return { ok, ...out };
 });
 
-// ---- 3D trees (2026-11-02): from the LiDAR canopy (tools/island_trees.py); in the 3D view only, from zoom 15.5; coloured by season ----
-if (process.env.PISTE_TREES) await run("3D trees: in 3D only, a tile loads, the colours follow summer, fall and winter", `${APP}?trip=montroyal`, async (page) => {
-  const look = (is3d) => page.evaluate(async (is3d) => {
-    const a = window.__app, m = a.map, wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    a.set3d(is3d); m.jumpTo({ center: [-73.5877, 45.5035], zoom: 16.2 }); await wait(1500);   // Mont-Royal's south slope
-    return { is3d, crowns: m.queryRenderedFeatures({ layers: ["trees-crown"] }).length, trunks: m.queryRenderedFeatures({ layers: ["trees-trunk"] }).length,
-      shown: ["trees-crown", "trees-trunk"].map((id) => m.getLayoutProperty(id, "visibility")) };
-  }, is3d);
-  const d3 = await look(true); await page.evaluate(idle);
-  const d3b = await page.evaluate(() => ({ crowns: window.__app.map.queryRenderedFeatures({ layers: ["trees-crown"] }).length, trunks: window.__app.map.queryRenderedFeatures({ layers: ["trees-trunk"] }).length }));
-  const d2 = await look(false);
-  const colours = await page.evaluate(() => {
-    const a = window.__app, m = a.map, get = (p) => JSON.stringify(m.getPaintProperty("trees-crown", p));
-    a.paintTrees(new Date(2026, 6, 15)); const summer = get("fill-extrusion-color"), summerOp = get("fill-extrusion-opacity");
-    a.paintTrees(new Date(2026, 9, 20)); const fall = get("fill-extrusion-color");
-    a.paintTrees(new Date(2026, 8, 19)); const beforeFall = get("fill-extrusion-color");
-    a.paintTrees(new Date(2026, 10, 16)); const afterFall = get("fill-extrusion-color");
-    a.setWinter(true); const winter = get("fill-extrusion-color"), winterOp = get("fill-extrusion-opacity");
-    a.setWinter(false);
-    return { summer, fall, winter, summerOp, winterOp, fallIsMix: new Set(fall.match(/#[0-9a-f]{6}/gi)).size >= 5, threeGreens: (summer.match(/#/g) || []).length === 3,
-      edges: beforeFall === summer && afterFall === summer };
+// ---- 3D trees (2026-11-02): flat illustrated trees at the LiDAR tree tops (tools/island_trees.py); 3D view only, from zoom 15.5; the picture follows the season and night ----
+await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall, winter and night", `${APP}?trip=montroyal`, async (page) => {
+  const look = async (is3d, zoom) => {   // Mont-Royal's south slope; polls until the trees are drawn (or, when none should be, until the map is still)
+    await page.evaluate(([is3d, zoom]) => { const a = window.__app; a.set3d(is3d, false); a.map.jumpTo({ center: [-73.5877, 45.5035], zoom, pitch: is3d ? 60 : 0, bearing: 0 }); }, [is3d, zoom]);
+    if (is3d && zoom >= 16) await until(page, () => window.__app.map.queryRenderedFeatures({ layers: ["trees"] }).length > 0, null, 30000);
+    else await page.evaluate(idle);
+    return page.evaluate(() => { const m = window.__app.map, f = m.queryRenderedFeatures({ layers: ["trees"] });
+      return { trees: f.length, shown: m.getLayoutProperty("trees", "visibility"), sample: f[0] ? f[0].properties : null, loaded: m.isSourceLoaded("trees") }; });
+  };
+  const d3 = await look(true, 16.2), far = await look(true, 15), d2 = await look(false, 16.2);
+  const pics = await page.evaluate(() => {
+    const a = window.__app, m = a.map, pick = () => { const e = m.getLayoutProperty("trees", "icon-image"), n = e[2][2]; return { n, suffix: e[3], names: Array.from({ length: n }, (_, k) => e[1] + k) }; };
+    const when = (d) => { a.paintTrees(d); return pick(); };
+    const summer = when(new Date(2026, 6, 15)), fall = when(new Date(2026, 9, 20)), beforeFall = when(new Date(2026, 8, 19)), afterFall = when(new Date(2026, 10, 16));
+    const firstFall = when(new Date(2026, 8, 20)), lastFall = when(new Date(2026, 10, 15));
+    a.setWinter(true); const winter = pick(); a.setWinter(false);
+    document.querySelector("input[name=night][value=on]").click(); const night = pick();
+    document.querySelector("input[name=night][value=off]").click();
+    const all = [...summer.names, ...fall.names, ...winter.names].flatMap((n) => [n, n + "-n"]), img = m.getImage("tree-summer-0");
+    return { summer, fall, winter, night: night.suffix, off: pick().suffix, allImages: all.length === 18 && all.every((n) => m.hasImage(n)), size: img && [img.data.width, img.data.height, img.pixelRatio],
+      edges: beforeFall.names[0] === summer.names[0] && afterFall.names[0] === summer.names[0] && firstFall.names[0] === fall.names[0] && lastFall.names[0] === fall.names[0],
+      layout: ["icon-anchor", "icon-pitch-alignment", "icon-rotation-alignment", "symbol-z-order"].map((k) => m.getLayoutProperty("trees", k)) };
   });
-  const tileOk = await page.evaluate(async () => {   // a sample tile straight from the PMTiles file: the crowns layer has features with a height and a seed
+  const tileOk = await page.evaluate(async () => {   // a sample tile straight from the PMTiles file
     const p = new pmtiles.PMTiles(new URL("../shared/tiles/trees.pmtiles", location.href).href), t = await p.getZxy(15, 9685, 11722);
     return { header: (await p.getHeader()).maxZoom, bytes: t ? t.data.byteLength : 0 };
   }).catch((e) => ({ error: String(e) }));
-  const ok = d3.crowns > 0 && d3.trunks > 0 && d3b.crowns > 0 && d2.crowns === 0 && d2.trunks === 0 && d2.shown.every((v) => v === "none") && d3.shown.every((v) => v === "visible")
-    && colours.summer !== colours.fall && colours.fall !== colours.winter && colours.summer !== colours.winter && colours.fallIsMix && colours.threeGreens && colours.edges
-    && +colours.winterOp < 0.4 && +colours.summerOp > 0.8 && tileOk.bytes > 0;
-  return { ok, d3, d3b, d2, colours, tileOk };
+  const ok = d3.trees > 0 && d3.shown === "visible" && d3.sample && d3.sample.h >= 3 && d3.sample.s >= 0 && d3.sample.s <= 255 && far.trees === 0 && d2.trees === 0 && d2.shown === "none"
+    && [pics.summer.n, pics.fall.n, pics.winter.n].join() === "3,4,2" && pics.summer.names[0] === "tree-summer-0" && pics.fall.names[0] === "tree-fall-0" && pics.winter.names[0] === "tree-winter-0"
+    && pics.edges && pics.night === "-n" && pics.off === "" && pics.allImages && pics.size.join() === "144,192,2"
+    && pics.layout.join() === "bottom,viewport,viewport,viewport-y" && tileOk.bytes > 0;
+  return { ok, d3, far, d2, pics, tileOk };
 });
 
 await browser.close();

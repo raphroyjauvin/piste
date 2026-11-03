@@ -9,7 +9,7 @@
 
 const VERSION = "dev";                    // tools/build_site.py stamps a hash of the built files here: every deploy is a new version
 const SHELL = `piste-shell-${VERSION}`;   // the app itself: filled on install, replaced as a whole by the next version
-const TILES = "piste-tiles-1";            // tiles and photos, filled while browsing. Bump the number when a .pmtiles or terrain file is rebuilt
+const TILES = "piste-tiles-2";            // tiles and photos, filled while browsing. Bump the number when a .pmtiles or terrain file is rebuilt
 const MAX_TILES = 2500;                   // entries kept in TILES, oldest dropped first (about 100 MB at 20-60 KB a tile)
 
 const SHELL_FILES = [
