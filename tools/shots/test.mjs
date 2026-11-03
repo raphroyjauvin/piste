@@ -1600,7 +1600,7 @@ console.log("\n=== details ===");
 for (const r of results) console.log(JSON.stringify(r));
 console.log("\n=== summary ===");
 for (const r of results) say(r);
-if (process.env.GITHUB_ACTIONS) for (const r of failed) console.log(`::error title=Piste test failed::${r.name}: ${r.error || (r.errors && r.errors[0]) || "a check was false"}`.replace(/\r?\n/g, " "));
+if (process.env.GITHUB_ACTIONS) for (const r of failed) console.log(`::error title=Piste test failed::${r.name}: ${r.error || (r.errors && r.errors[0]) || "a check was false: " + JSON.stringify({ ...r, name: undefined, ok: undefined }).slice(0, 900)}`.replace(/\r?\n/g, " "));
 const total = ((Date.now() - T0) / 1000).toFixed(0);
 if (!results.length) console.log(`FAILED: no test group matched${only ? ` the filter "${only}"` : ""}`);
 else console.log(failed.length ? `${failed.length} of ${results.length} test(s) FAILED in ${total} s` : `all ${results.length} tests passed in ${total} s`);
