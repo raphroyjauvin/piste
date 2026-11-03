@@ -322,6 +322,8 @@
     router.setWinter(on);
     document.body.classList.toggle("winter", on);
     $("#winter-btn").setAttribute("aria-pressed", String(on));
+    const wb = $("#wx-btn");   // "wind & snow" in winter mode (the icon swaps in CSS)
+    wb.dataset.i18nTitle = on ? "weatherBtnSnow" : "weatherBtn"; wb.title = t(wb.dataset.i18nTitle); wb.setAttribute("aria-label", wb.title);
     paintMap();
     const s4 = ["==", ["get", "s4"], 1];
     map.setFilter("net-ab", on ? ["all", ["<=", ["get", "t"], 1], s4] : ["<=", ["get", "t"], 1]);
@@ -451,12 +453,13 @@
 
   // ------------------------------------------------------------------ wind & rain
   const wind = new WX.WindLayer(map, $("#wind"));
+  wind.follow(new WX.PrecipLayer(map, $("#precip")));   // rain rings or snow dots, only when it falls now (2026-11-03); same on / off as the streaks
   let wxTimer = null;
   async function loadWeather(force) {
     try {
       state.wxData = await WX.load(force);
       wind.set(state.wxData);
-    } catch (e) { state.wxData = null; console.warn(e); }
+    } catch (e) { state.wxData = null; wind.set(null); console.warn(e); }
     renderWxCard(); if (state.routes.length) renderRoutes();
     if (state.mode === "ride") updateWindBadge(true);   // new weather mid-ride
     return state.wxData;
@@ -487,6 +490,18 @@
     if (key !== windKey) { windArr = router.windCost((wx.now.dir + 180) % 360, (wx.now.wind / 3.6) * 0.6, WX.speedWith); windKey = key; }
     return windArr;
   }
+  // The card's rain row, or the snow row: what is falling now decides, and with nothing falling winter mode asks for the snow outlook
+  function precipRow(wx) {
+    const wet = WX.precipNow(wx);
+    if (wet ? wet.kind === "snow" : state.winter) {
+      const s = WX.snowOutlook(wx);
+      const txt = s.now ? t("snowNow", { cm: I.num(s.cm) }) : s.at ? t("snowAt", { h: s.at, p: s.prob != null ? I.pct(s.prob / 100) : "" }).replace(" ()", "") : t("noSnowFor", { n: s.dryHours });
+      return `<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg><span>${txt}</span></div>`;
+    }
+    const rain = WX.rainOutlook(wx);
+    const txt = rain.now ? t("rainNow", { mm: I.num(rain.mm) }) : rain.at ? t("rainAt", { h: rain.at, p: rain.prob != null ? I.pct(rain.prob / 100) : "" }) : t("dryFor", { n: rain.dryHours });
+    return `<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c3.5 5 6 8.2 6 11a6 6 0 0 1-12 0c0-2.8 2.5-6 6-11z"/></svg><span>${txt}</span></div>`;
+  }
   function renderWxCard() {
     const card = $("#wx-card");
     if ((!state.wx && !state.winter) || state.mode === "ride" || state.summary) { card.hidden = true; return; }
@@ -496,9 +511,7 @@
       const dirKey = I.compassKey(wx.now.dir), to = (wx.now.dir + 180) % 360;
       const windTxt = wx.now.wind < 3 ? t("calm") : t("windFrom", { dir: t("from_" + dirKey), v: Math.round(wx.now.wind) }) + (wx.now.gust > wx.now.wind + 8 ? ` · ${t("gusts", { v: Math.round(wx.now.gust) })}` : "");
       rows.push(`<div class="wx-row"><svg class="wx-arrow" viewBox="0 0 24 24" style="transform:rotate(${to - map.getBearing()}deg)" aria-hidden="true"><path d="M12 21V5M6 11l6-6 6 6"/></svg><span>${windTxt}</span></div>`);
-      const rain = WX.rainOutlook(wx);
-      const rainTxt = rain.now ? t("rainNow", { mm: I.num(rain.mm) }) : rain.at ? t("rainAt", { h: rain.at, p: rain.prob != null ? I.pct(rain.prob / 100) : "" }) : t("dryFor", { n: rain.dryHours });
-      rows.push(`<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c3.5 5 6 8.2 6 11a6 6 0 0 1-12 0c0-2.8 2.5-6 6-11z"/></svg><span>${rainTxt}</span></div>`);
+      rows.push(precipRow(wx));
       const sel = state.routes[state.sel];
       if (sel) rows.push(`<div class="wx-row wx-route"><span>${windLine(sel.r)}</span></div>`);
     }

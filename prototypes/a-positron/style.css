@@ -200,6 +200,10 @@ body.riding .tour-again { visibility: hidden; }
 .round-btn[aria-pressed="true"] svg { stroke: #fff; }
 #wx-btn .drop { fill: rgba(0, 149, 230, .18); }
 #wx-btn[aria-pressed="true"] .drop { fill: rgba(255, 255, 255, .25); }
+/* winter mode: the weather button is "wind & snow", a snowflake in the drop's place (same box, so nothing moves) */
+#wx-btn .flake, body.winter #wx-btn .drop { display: none; }
+#wx-btn .flake { stroke-width: 1.6; }
+body.winter #wx-btn .flake { display: inline; }
 #winter-btn[aria-pressed="true"] { background: #2a6f9e; }
 
 .layers { background: var(--paper); border-radius: 14px; box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 7px; width: 280px; max-height: calc(100vh - 120px); overflow: auto; }
