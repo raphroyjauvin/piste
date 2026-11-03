@@ -133,9 +133,9 @@ const wait = (ms) => `new Promise((r) => setTimeout(r, ${ms}))`;
 // Wait (up to ms) until fn(arg) is true in the page. It never throws: the group then judges whatever state it reached, so a thing that
 // never happens still fails the check, but a slow machine gets the time it needs instead of a fixed pause.
 const until = (page, fn, arg, ms = 15000) => page.waitForFunction(fn, arg, { timeout: ms }).catch(() => {});
-// Read a layout measurement after it has stopped moving (two equal readings 100 ms apart, up to 10 s), for panels that slide into place.
 // the card's height slides (a CSS transition): wait for it to end before measuring, as a slow machine is still mid-slide after 400 ms
 const panelStill = (page) => page.evaluate(() => Promise.all(document.querySelector("#panel").getAnimations().map((a) => a.finished.catch(() => {}))));
+// Read a layout measurement after it has stopped moving (two equal readings 100 ms apart, up to 10 s), for panels that slide into place.
 async function settled(page, fn) {
   let prev, same = 0;
   for (let i = 0; i < 100 && same < 2; i++) { const v = JSON.stringify(await page.evaluate(fn)); same = v === prev ? same + 1 : 0; prev = v; if (same < 2) await page.waitForTimeout(100); }
@@ -649,8 +649,9 @@ await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-
   // The rider is drawn once per frame, so on a slow machine the picture is up to one frame behind: a position error may be as large as
   // the distance covered in a frame (lag) plus half the usual limit. On a fast machine the limit is the usual one.
   const allow = (limit, lag) => Math.max(limit, lag + limit / 2);
+  // to the true track: the replay's own noise leaves ~4-4.5 m beyond one frame's lag on any machine (measured 2026-11-03, before and after that day's ride changes)
   const ok = f.gps && f.speedHidden && f.pauseHidden && f.gpsShown && /Waiting for GPS/.test(f.first) && /km\/h/.test(f.now) && f.d > 80 && f.ignored >= 2
-    && f.frames > 40 && f.backwards === 0 && f.offLineM < 0.5 && f.toFixMaxM < allow(12, f.lagMaxM) && f.toFixMeanM < allow(6, f.lagMeanM) && f.toTrueMeanM < allow(8, f.lagMeanM) && f.cameraM < 0.5 && f.stepOverM <= 0
+    && f.frames > 40 && f.backwards === 0 && f.offLineM < 0.5 && f.toFixMaxM < allow(12, f.lagMaxM) && f.toFixMeanM < allow(6, f.lagMeanM) && f.toTrueMeanM < Math.max(8, f.lagMeanM + 5.5) && f.cameraM < 0.5 && f.stepOverM <= 0
     && !dragged.follow && dragged.button && dragged.centerToRiderM > 30 && recentered.follow && !recentered.button && recentered.centerToRiderM < 0.5
     && arrival.arrived && /Arrived/.test(arrival.toast) && arrival.endedAfter && arrival.wakeAfter === "off";
   return { ok, follow, dragged, recentered, arrival };
@@ -1817,6 +1818,7 @@ await run("offline: the service worker keeps the app and routing working without
   await page.waitForFunction(() => !!window.__app, null, { timeout: 30000 });
   const typed = async (id, text) => { await page.fill(id, text); await page.evaluate(() => new Promise((r) => setTimeout(r, 600))); };
   await typed("#from", "Parc La Fontaine");
+  await until(page, () => /offline/i.test((document.querySelector("#suggest .note") || {}).textContent || ""), null, 15000);   // a slow machine takes longer than 600 ms to give up
   const note = await page.evaluate(() => (document.querySelector("#suggest .note") || {}).textContent || "");
   await page.fill("#from", ""); await typed("#from", "45.5200, -73.5800"); await page.keyboard.press("Enter");
   await typed("#to", "45.5100, -73.5700"); await page.keyboard.press("Enter");
