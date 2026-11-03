@@ -301,6 +301,139 @@ await run("wind & rain; BIXI loads on its own", `${APP}?trip=rachel`, async (pag
   return out;
 }, FIX ? FIX_BIXI_STATIONS : 301));   // live: the whole network (about 800 stations); fixtures: every station in the saved file
 
+// ---- 2026-11-03: rain and snow on the map, and the weather button in winter mode ----
+// The saved forecast is dry, so these groups answer the forecast request themselves with a wet "current" (rain 2.4 mm/h, or snow 2 cm/h): nothing
+// here depends on today's weather, with or without PISTE_FIXTURES. Playwright runs the newest matching route first, so this one wins over the saved copy.
+const FORECASTS = { dry: {}, rain: { precipitation: 0.6, rain: 0.6, snowfall: 0, weather_code: 63, temperature_2m: 9 },
+  snow: { precipitation: 0.4, rain: 0, snowfall: 0.5, weather_code: 73, temperature_2m: -4 } };
+async function stubForecast(ctx, kind) {
+  const j = JSON.parse(fixture("open-meteo.json")); j.current = { ...j.current, ...FORECASTS[kind] };
+  await ctx.route("https://api.open-meteo.com/**", (route) => route.request().method() === "OPTIONS" ? route.fulfill({ status: 204, headers: { ...CORS, "access-control-allow-headers": "*" } })
+    : route.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify(j) }));
+}
+// Give the page a new forecast: answer with it, load it afresh, and cycle the weather toggle so the card and the layers take it
+async function setForecast(page, ctx, kind) {
+  await stubForecast(ctx, kind);
+  await page.evaluate(async () => { await BikeWeather.load(true); window.__app.setWeather(false); window.__app.setWeather(true); });
+  await until(page, (code) => window.__app.state.wxData && window.__app.state.wxData.now.code === code, FORECASTS[kind].weather_code ?? 0);
+}
+// window.__ink(selector): what a canvas holds right now: inked pixels, their mean red (dark ink on the day map, light on the night map) and a hash of the picture
+const INK_JS = `window.__ink = (sel) => { const c = document.querySelector(sel), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let n = 0, r = 0, h = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i]) { n++; r += d[i - 3]; h = (h * 31 + d[i] + (i >> 2)) | 0; } return { n, meanR: n ? r / n : 0, hash: h, px: c.width * c.height }; };`;
+const frames = (page, n = 2) => page.evaluate(async (k) => { for (let i = 0; i < k; i++) await new Promise((r) => requestAnimationFrame(r)); }, n);
+const precipLook = (page) => page.evaluate(() => { const c = document.querySelector("#precip"), w = document.querySelector("#wind"), p = window.__ink("#precip");
+  return { hidden: c.hidden, kind: c.dataset.kind || "", n: p.n, share: p.n / p.px, meanR: Math.round(p.meanR), hash: p.hash, windHidden: w.hidden, windN: w.hidden ? 0 : window.__ink("#wind").n }; });
+const precipRuns = (page, kind) => until(page, (k) => { const c = document.querySelector("#precip"); return !c.hidden && c.dataset.kind === k && window.__ink("#precip").n > 0; }, kind, 20000);
+const precipStopped = (page) => until(page, () => document.querySelector("#precip").hidden, null, 20000);
+
+await run("rain and snow animation: only while it falls, toggle on, not riding, motion allowed; streaks alongside; paused when hidden; sized to the map", `${APP}?trip=rachel`, async (page, ctx) => {
+  await page.evaluate(INK_JS);
+  // what counts as falling (BikeWeather.precipNow): the codes and amounts of the brief
+  const cls = await page.evaluate(() => {
+    const P = (now) => { const r = BikeWeather.precipNow({ now: { rain: 0, precip: 0, snow: 0, code: 0, ...now } }); return r ? r.kind : null; };
+    return { snow: [{ snow: 0.1 }, { code: 71 }, { code: 77 }, { code: 85 }, { code: 86 }, { snow: 0.2, precip: 0.2 }].map(P),
+      rain: [{ rain: 0.1 }, { precip: 0.1 }, { code: 51 }, { code: 67 }, { code: 80 }, { code: 82 }].map(P),
+      none: [{}, { code: 3 }, { code: 45 }, { code: 78 }, { code: 83 }, { code: 95 }].map(P), noData: BikeWeather.precipNow(null),
+      rates: [BikeWeather.precipNow({ now: { rain: 0.6, precip: 0.6, snow: 0, code: 63 } }).rate, BikeWeather.precipNow({ now: { rain: 0, precip: 0.4, snow: 0.5, code: 73 } }).rate] };
+  });
+  const clsOk = cls.snow.every((k) => k === "snow") && cls.rain.every((k) => k === "rain") && cls.none.every((k) => k === null) && cls.noData === null && cls.rates.join() === "2.4,2";
+  const before = await precipLook(page);   // nothing loaded yet: no weather toggle, no forecast
+  const start = await page.evaluate(() => ({ wx: window.__app.state.wx, loaded: !!window.__app.state.wxData, dpr: devicePixelRatio }));
+  // dry forecast, toggle on: the streaks run, nothing falls
+  await setForecast(page, ctx, "dry");
+  await until(page, () => !document.querySelector("#wind").hidden && window.__ink("#wind").n > 0);
+  await frames(page, 4);
+  const dry = await precipLook(page);
+  // rain: rings on the day map, with the streaks still running
+  await setForecast(page, ctx, "rain"); await precipRuns(page, "rain");
+  await until(page, () => window.__ink("#wind").n > 0);
+  const rain = await precipLook(page);
+  await until(page, (h) => window.__ink("#precip").hash !== h, rain.hash);   // the picture moves
+  await page.evaluate(() => document.body.classList.add("night")); await until(page, () => window.__ink("#precip").meanR > 140);   // light rings on the night map
+  const rainNight = await precipLook(page);
+  await page.evaluate(() => document.body.classList.remove("night"));
+  // snow: dots, a different picture, still sparse
+  await setForecast(page, ctx, "snow"); await precipRuns(page, "snow");
+  await until(page, () => window.__ink("#wind").n > 0);
+  const snow = await precipLook(page);
+  await until(page, (h) => window.__ink("#precip").hash !== h, snow.hash);
+  await page.evaluate(() => document.body.classList.add("night")); await until(page, () => window.__ink("#precip").meanR > 200);
+  const snowNight = await precipLook(page);
+  await page.evaluate(() => document.body.classList.remove("night"));
+  // toggle off: gone at once, the loop stops; on again: back
+  await page.evaluate(() => window.__app.setWeather(false)); await frames(page, 3);
+  const off = await precipLook(page);
+  await page.evaluate(() => window.__app.setWeather(true)); await precipRuns(page, "snow");
+  // a ride: nothing falls on the map (the preview ride), and it all comes back after
+  await page.evaluate(() => window.__app.startRide("topdown")); await frames(page, 3);
+  const ride = await precipLook(page);
+  await page.evaluate(() => window.__app.endRide()); await precipRuns(page, "snow");
+  // reduced motion: stops when the setting turns on while it runs, stays off while on, starts when it turns off
+  await page.emulateMedia({ reducedMotion: "reduce" }); await precipStopped(page); await frames(page, 3);
+  const calmLive = await precipLook(page);
+  await page.evaluate(() => { window.__app.setWeather(false); window.__app.setWeather(true); }); await frames(page, 3);
+  const calmOn = await precipLook(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" }); await precipRuns(page, "snow");
+  // the page hidden: the picture freezes; shown again: it moves
+  await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); });
+  await frames(page, 3); const h1 = (await precipLook(page)).hash; await frames(page, 8); const h2 = (await precipLook(page)).hash;
+  await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); });
+  await until(page, (h) => window.__ink("#precip").hash !== h, h1);
+  const resumed = (await precipLook(page)).hash !== h1;
+  // sized to the map, with the pixel ratio capped at 2 (this phone is 3)
+  await page.setViewportSize({ width: 360, height: 640 });
+  await until(page, () => { const c = document.querySelector("#precip"); return c.width === Math.round(innerWidth * 2) && c.height === Math.round(innerHeight * 2); });
+  const size = await page.evaluate(() => { const c = document.querySelector("#precip"); return { w: c.width, h: c.height, css: [innerWidth, innerHeight] }; });
+  const sparse = (x) => x.n > 0 && x.share < 0.03;
+  const ok = clsOk && before.hidden && !before.kind && start.wx === false && !start.loaded && start.dpr === 3
+    && dry.hidden && !dry.kind && dry.n === 0 && !dry.windHidden && dry.windN > 0
+    && !rain.hidden && rain.kind === "rain" && sparse(rain) && rain.meanR < 110 && !rain.windHidden && rain.windN > 0 && rainNight.meanR > 140 && sparse(rainNight)
+    && !snow.hidden && snow.kind === "snow" && sparse(snow) && !snow.windHidden && snow.windN > 0 && snowNight.meanR > 200 && sparse(snowNight)
+    && off.hidden && !off.kind && off.n === 0 && off.windHidden
+    && ride.hidden && !ride.kind && ride.n === 0 && ride.windHidden
+    && calmLive.hidden && !calmLive.kind && calmLive.n === 0 && calmOn.hidden && calmOn.n === 0
+    && h1 === h2 && resumed && size.w === size.css[0] * 2 && size.h === size.css[1] * 2;
+  return { ok, cls, clsOk, start, dry, rain, rainNight, snow, snowNight, off, ride, calmLive, calmOn, paused: h1 === h2, resumed, size };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, deviceScaleFactor: 3 });
+
+await run("wind & snow button (phone): winter swaps the drop for a snowflake, label and card wording in English and French, nothing moves", `${APP}?trip=rachel`, async (page, ctx) => {
+  await stubForecast(ctx, "snow");
+  await page.evaluate(() => {
+    const rect = (el) => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map((v) => +v.toFixed(2)).join(); };
+    window.__wxBtn = () => { const b = document.querySelector("#wx-btn"), shown = (s) => getComputedStyle(b.querySelector(s)).display !== "none";
+      return { title: b.title, label: b.getAttribute("aria-label"), drop: shown(".drop"), flake: shown(".flake"), icon: rect(b.querySelector("svg")), pressed: b.getAttribute("aria-pressed"),
+        boxes: ["#view-btn", "#wx-btn", "#winter-btn", "#layers-btn"].map((s) => rect(document.querySelector(s))).join("|"), h: b.getBoundingClientRect().height, w: b.getBoundingClientRect().width }; };
+  });
+  const summer = await page.evaluate(() => window.__wxBtn());
+  const winter = await page.evaluate(() => { window.__app.setWinter(true); return window.__wxBtn(); });   // read in the same step: the swap is instant
+  const winterFr = await page.evaluate(() => { window.__app.setLang("fr"); return window.__wxBtn().title; });
+  const summerFr = await page.evaluate(() => { window.__app.setWinter(false); return window.__wxBtn(); });
+  const back = await page.evaluate(() => { window.__app.setLang("en"); return window.__wxBtn(); });
+  // the card: with snow falling it says snow (winter mode or not), in French too; raining in winter mode it still says rain; dry, winter mode asks for the snow outlook
+  const card = () => page.evaluate(() => (document.querySelector("#wx-card").hidden ? "" : document.querySelector("#wx-card").textContent));
+  await page.evaluate(() => { window.__app.setWinter(true); window.__app.setWeather(true); });
+  await until(page, () => /Snowing now/.test(document.querySelector("#wx-card").textContent));
+  const snowEn = await card();
+  await page.evaluate(() => window.__app.setLang("fr")); const snowFr = await card();
+  await page.evaluate(() => window.__app.setLang("en"));
+  await page.evaluate(() => window.__app.setWinter(false)); const snowSummer = await card();
+  await page.evaluate(() => window.__app.setWinter(true));
+  await setForecast(page, ctx, "rain"); await until(page, () => /Raining now/.test(document.querySelector("#wx-card").textContent));
+  const rainWinter = await card();
+  await setForecast(page, ctx, "dry"); await until(page, () => /No snow for the next/.test(document.querySelector("#wx-card").textContent));
+  const dryWinter = await card();
+  await page.evaluate(() => window.__app.setWinter(false)); const drySummer = await card();
+  const same = (a, b) => a.boxes === b.boxes && a.icon === b.icon && a.w === b.w && a.h === b.h;
+  const ok = summer.title === "Wind & rain" && summer.label === "Wind & rain" && summer.drop && !summer.flake
+    && winter.title === "Wind & snow" && winter.label === "Wind & snow" && !winter.drop && winter.flake && same(summer, winter) && winter.h >= 44 && winter.w >= 44
+    && winterFr === "Vent et neige" && summerFr.title === "Vent et pluie" && summerFr.drop && !summerFr.flake
+    && back.title === "Wind & rain" && back.label === "Wind & rain" && back.drop && !back.flake && same(summer, back)
+    && /Snowing now \(2\.0 cm\/h\)/.test(snowEn) && !/rain/i.test(snowEn) && /Il neige \(2,0 cm\/h\)/.test(snowFr) && /Snowing now/.test(snowSummer)
+    && /Raining now \(2\.4 mm\/h\)/.test(rainWinter) && /No snow for the next 6 hours/.test(dryWinter) && /Dry for the next 6 hours/.test(drySummer);
+  return { ok, summer, winter, winterFr, summerFr: summerFr.title, back: back.title, snowEn: snowEn.slice(0, 120), snowFr: snowFr.slice(0, 120), snowSummer: snowSummer.slice(0, 120),
+    rainWinter: rainWinter.slice(0, 120), dryWinter: dryWinter.slice(0, 120), drySummer: drySummer.slice(0, 120) };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
 await run("French", `${APP}?trip=montroyal&lang=fr`, async (page) => page.evaluate(() => {
   const s = window.__app.state, r = s.routes[0].r;
   const tab = document.querySelector("#tab-go").textContent, pct = document.querySelector(".rc-pct").textContent;
