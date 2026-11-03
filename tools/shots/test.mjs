@@ -1561,18 +1561,41 @@ await run("REM: tracks and stations on the map, a Layers checkbox, the credit", 
   return { ok, ...out };
 });
 
-// ---- 3D trees (2026-11-02): flat illustrated trees at the LiDAR tree tops (tools/island_trees.py); 3D view only, from zoom 15.5; the picture follows the season and night ----
-await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall, winter and night", `${APP}?trip=montroyal`, async (page) => {
-  const look = async (is3d, zoom) => {   // Mont-Royal's south slope; polls until the trees are drawn (or, when none should be, until the map is still)
-    await page.evaluate(([is3d, zoom]) => { const a = window.__app; a.set3d(is3d, false); a.map.jumpTo({ center: [-73.5877, 45.5035], zoom, pitch: is3d ? 60 : 0, bearing: 0 }); }, [is3d, zoom]);
-    if (is3d && zoom >= 16) await until(page, () => window.__app.map.queryRenderedFeatures({ layers: ["trees"] }).length > 0, null, 30000);
-    else await page.evaluate(idle);
-    return page.evaluate(() => { const m = window.__app.map, f = m.queryRenderedFeatures({ layers: ["trees"] });
-      return { trees: f.length, shown: m.getLayoutProperty("trees", "visibility"), sample: f[0] ? f[0].properties : null, loaded: m.isSourceLoaded("trees") }; });
+// ---- 3D trees (2026-11-02; WebGL since 2026-11-03): illustrated trees at the LiDAR tree tops (tools/island_trees.py), stood upright by shared/trees3d.js so
+// buildings and hills hide the trees behind them; 3D view only, from zoom 15.5; the picture follows the season and night; the flat symbol layer "trees" is the fallback ----
+// Page helpers for the pixel checks: grab(box) draws one frame now and reads a box of the canvas (CSS px from the top left); trees(box) is what the
+// trees add to that box: the share of its pixels that change when they are drawn, and those pixels' mean colour. __warns keeps the console warnings.
+const treeHelpers = `window.__warns = window.__warns || []; if (!console.warn.__kept) { const w = console.warn; console.warn = (...a) => { window.__warns.push(a.join(" ")); w.apply(console, a); }; console.warn.__kept = 1; }
+window.__px = {
+  grab(box) { const m = window.__app.map, gl = m.painter.context.gl, [x, y, w, h] = box.map((v) => Math.round(v * devicePixelRatio)), px = new Uint8Array(w * h * 4);
+    m.redraw(); gl.readPixels(x, gl.drawingBufferHeight - y - h, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px); return px; },
+  trees(box) {
+    const m = window.__app.map, id = window.__app.state.treesGL ? "trees-gl" : "trees", show = (v) => m.setLayoutProperty(id, "visibility", v);
+    show("visible"); const on = this.grab(box); show("none"); const off = this.grab(box); show("visible");
+    let n = 0; const sum = [0, 0, 0];
+    for (let i = 0; i < on.length; i += 4) if (Math.abs(on[i] - off[i]) + Math.abs(on[i + 1] - off[i + 1]) + Math.abs(on[i + 2] - off[i + 2]) > 24) { n++; for (let c = 0; c < 3; c++) sum[c] += on[i + c]; }
+    return { share: +(n / (on.length / 4)).toFixed(3), rgb: n ? sum.map((v) => Math.round(v / n)) : [0, 0, 0] };
+  },
+};`;
+const MONT_ROYAL = [-73.5877, 45.5035];   // the mountain's south slope: dense trees
+await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall, winter and night", APP, async (page) => {
+  await page.evaluate(treeHelpers);
+  const cam = (is3d, zoom) => page.evaluate(([c, is3d, zoom]) => { const a = window.__app; a.set3d(is3d, false); a.map.jumpTo({ center: c, zoom, pitch: is3d ? 60 : 0, bearing: 0 }); }, [MONT_ROYAL, is3d, zoom]);
+  const drawn = () => until(page, () => window.__app.trees.info().drawn > 0 && window.__app.map.loaded(), null, 30000);
+  const look = async (is3d, zoom) => {   // polls until the trees are drawn (or, when none should be, until the map is still)
+    await cam(is3d, zoom);
+    if (is3d && zoom >= 16) await drawn(); else await page.evaluate(idle);
+    return page.evaluate(() => { const m = window.__app.map, i = window.__app.trees.info(), f = m.querySourceFeatures("trees", { sourceLayer: "trees" });
+      return { drawn: i.drawn, webgl: i.webgl, error: i.error, gl: m.getLayoutProperty("trees-gl", "visibility"), flat: m.getLayoutProperty("trees", "visibility"), sample: f[0] ? f[0].properties : null }; });
   };
-  const d3 = await look(true, 16.2), far = await look(true, 15), d2 = await look(false, 16.2);
-  const pics = await page.evaluate(() => {
-    const a = window.__app, m = a.map, pick = () => { const e = m.getLayoutProperty("trees", "icon-image"), n = e[2][2]; return { n, suffix: e[3], names: Array.from({ length: n }, (_, k) => e[1] + k) }; };
+  const d3 = await look(true, 16.2);
+  // once everything is drawn the map goes quiet: the tree layer must not keep it redrawing (a slow machine may still draw a few last frames)
+  await page.evaluate(idle);
+  const quiet = await page.evaluate(() => new Promise((r) => { const m = window.__app.map, t = window.__app.trees, r0 = t.info().rebuilds; let frames = 0; const f = () => frames++;
+    m.on("render", f); setTimeout(() => { m.off("render", f); r({ frames, rebuilds: t.info().rebuilds - r0 }); }, 2000); }));
+  const far = await look(true, 15), d2 = await look(false, 16.2);
+  const pics = await page.evaluate(() => {   // which pictures each layer uses: the flat layer's image names, the WebGL layer's atlas columns and row
+    const a = window.__app, m = a.map, pick = () => { const e = m.getLayoutProperty("trees", "icon-image"), n = e[2][2]; return { n, suffix: e[3], names: Array.from({ length: n }, (_, k) => e[1] + k), gl: a.trees.info().pictures.join() }; };
     const when = (d) => { a.paintTrees(d); return pick(); };
     const summer = when(new Date(2026, 6, 15)), fall = when(new Date(2026, 9, 20)), beforeFall = when(new Date(2026, 8, 19)), afterFall = when(new Date(2026, 10, 16));
     const firstFall = when(new Date(2026, 8, 20)), lastFall = when(new Date(2026, 10, 15));
@@ -1580,20 +1603,106 @@ await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall,
     document.querySelector("input[name=night][value=on]").click(); const night = pick();
     document.querySelector("input[name=night][value=off]").click();
     const all = [...summer.names, ...fall.names, ...winter.names].flatMap((n) => [n, n + "-n"]), img = m.getImage("tree-summer-0");
-    return { summer, fall, winter, night: night.suffix, off: pick().suffix, allImages: all.length === 18 && all.every((n) => m.hasImage(n)), size: img && [img.data.width, img.data.height, img.pixelRatio],
+    return { summer, fall, winter, night: [night.suffix, night.gl.split(",")[2]], off: pick().suffix, allImages: all.length === 18 && all.every((n) => m.hasImage(n)), size: img && [img.data.width, img.data.height, img.pixelRatio],
       edges: beforeFall.names[0] === summer.names[0] && afterFall.names[0] === summer.names[0] && firstFall.names[0] === fall.names[0] && lastFall.names[0] === fall.names[0],
       layout: ["icon-anchor", "icon-pitch-alignment", "icon-rotation-alignment", "symbol-z-order"].map((k) => m.getLayoutProperty("trees", k)) };
   });
+  // what the WebGL trees actually draw over the middle of the map: green in summer, warmer in fall, sparse bare branches in winter, dark at night
+  const colour = async (setup, settle) => {   // settle: wait for the map to finish changing (the camera, colour transitions) first
+    await page.evaluate(setup);
+    if (settle) { await cam(true, 16.2); await page.evaluate(idle); await drawn(); }
+    return page.evaluate(() => __px.trees([440, 200, 480, 320]));
+  };
+  const summerPx = await colour(() => window.__app.paintTrees(new Date(2026, 6, 15)), true);
+  const fallPx = await colour(() => window.__app.paintTrees(new Date(2026, 9, 20)), false);
+  const winterPx = await colour(() => window.__app.setWinter(true), true);
+  const nightPx = await colour(() => { window.__app.setWinter(false); document.querySelector("input[name=night][value=on]").click(); window.__app.paintTrees(new Date(2026, 6, 15)); }, true);
+  await page.evaluate(() => document.querySelector("input[name=night][value=off]").click());
+  const lum = (p) => p.rgb[0] + p.rgb[1] + p.rgb[2];
+  const px = { summer: summerPx, fall: fallPx, winter: winterPx, night: nightPx,
+    summerGreen: summerPx.share > 0.2 && summerPx.rgb[1] > summerPx.rgb[0] && summerPx.rgb[1] > summerPx.rgb[2], fallWarm: fallPx.share > 0.2 && fallPx.rgb[0] > fallPx.rgb[1] + 15,
+    winterBare: winterPx.share > 0.03 && winterPx.share < 0.6 * summerPx.share, nightDark: nightPx.share > 0.2 && lum(nightPx) < 0.6 * lum(summerPx) };
   const tileOk = await page.evaluate(async () => {   // a sample tile straight from the PMTiles file
     const p = new pmtiles.PMTiles(new URL("../shared/tiles/trees.pmtiles", location.href).href), t = await p.getZxy(15, 9685, 11722);
     return { header: (await p.getHeader()).maxZoom, bytes: t ? t.data.byteLength : 0 };
   }).catch((e) => ({ error: String(e) }));
-  const ok = d3.trees > 0 && d3.shown === "visible" && d3.sample && d3.sample.h >= 3 && d3.sample.s >= 0 && d3.sample.s <= 255 && far.trees === 0 && d2.trees === 0 && d2.shown === "none"
+  const ok = d3.drawn > 0 && quiet.rebuilds === 0 && quiet.frames < 20 && d3.gl === "visible" && d3.flat === "none" && d3.webgl >= 1 && !d3.error && d3.sample && d3.sample.h >= 3 && d3.sample.s >= 0 && d3.sample.s <= 255
+    && far.drawn === 0 && d2.gl === "none" && d2.flat === "none"
     && [pics.summer.n, pics.fall.n, pics.winter.n].join() === "3,4,2" && pics.summer.names[0] === "tree-summer-0" && pics.fall.names[0] === "tree-fall-0" && pics.winter.names[0] === "tree-winter-0"
-    && pics.edges && pics.night === "-n" && pics.off === "" && pics.allImages && pics.size.join() === "144,192,2"
-    && pics.layout.join() === "bottom,viewport,viewport,viewport-y" && tileOk.bytes > 0;
-  return { ok, d3, far, d2, pics, tileOk };
-});
+    && pics.summer.gl === "0,3,0" && pics.fall.gl === "3,4,0" && pics.winter.gl === "7,2,0" && pics.night.join() === "-n,1"
+    && pics.edges && pics.off === "" && pics.allImages && pics.size.join() === "144,192,2"
+    && pics.layout.join() === "bottom,viewport,viewport,viewport-y" && px.summerGreen && px.fallWarm && px.winterBare && px.nightDark && tileOk.bytes > 0;
+  return { ok, d3, quiet, far, d2, pics, px, tileOk };
+}, { width: 1000, height: 700 });
+
+await run("3D trees: a tree behind a tall building is hidden by it; after a lost graphics context the flat pictures take over", APP, async (page) => {
+  await page.evaluate(treeHelpers);
+  // a 13 m tree 6 m north of a 77 m tower downtown, the camera looking north at it from the south: the tower stands between them
+  const TREE = [-73.57435315847397, 45.50262012732853, 13.07];
+  await page.evaluate((T) => {
+    const a = window.__app; a.set3d(true, false);
+    document.querySelector('input[data-layer="terrain"]').click();   // flat ground, so the picture's place on screen is exact
+    a.map.jumpTo({ center: [T[0], T[1]], zoom: 17.5, pitch: 60, bearing: 0 });
+  }, TREE);
+  await page.evaluate(idle); await until(page, () => window.__app.trees.info().drawn > 0 && window.__app.map.loaded(), null, 30000);
+  // the middle of the tree's picture, above its trunk: what the trees add there with the buildings shown, then hidden
+  const measure = () => page.evaluate((T) => {
+    const m = window.__app.map, p = m.project([T[0], T[1]]), ppm = 512 * 2 ** m.getZoom() / (2 * Math.PI * 6371008.8 * Math.cos(T[1] * Math.PI / 180));
+    const h = 0.87 * T[2] * ppm, w = 0.75 * T[2] * ppm, box = [p.x - 0.2 * w, p.y - 0.75 * h, 0.4 * w, 0.6 * h];
+    return { share: __px.trees(box).share, box: box.map(Math.round), terrain: !!m.getTerrain() };
+  }, TREE);
+  const buildings = async (v) => { await page.evaluate((v) => { window.__app.map.setLayoutProperty("bld-3d", "visibility", v); }, v); await page.evaluate(idle); };   // idle: flat pictures fade in
+  const check = async () => {   // buildings hidden second: a hidden layer lets its tiles go
+    const behind = await measure(); await buildings("none"); const open = await measure(); await buildings("visible");
+    return { open: open.share, behind: behind.share, box: behind.box, terrain: behind.terrain };
+  };
+  const gl = await check();
+  // what the map hears when a phone takes its graphics memory back (only the event: a real loss and restore also trips a MapLibre 5.24 error, see app.js)
+  await page.evaluate(() => { window.__app.map.fire("webglcontextlost"); });   // (braces: the map itself is not sent back)
+  await until(page, () => !window.__app.state.treesGL && window.__app.map.getLayoutProperty("trees", "visibility") === "visible", null, 15000);
+  await page.evaluate(idle);
+  const flat = await check();
+  const after = await page.evaluate(() => ({ gl: window.__app.state.treesGL, layer: !!window.__app.map.getLayer("trees-gl"),
+    warned: window.__warns.some((w) => /3D trees: WebGL drawing stopped \(WebGL context lost\)/.test(w)) }));
+  // WebGL: the tree shows in the open and not behind the tower. The flat pictures are drawn over everything, the tower too (why WebGL draws them now)
+  const ok = !gl.terrain && gl.open > 0.3 && gl.behind < 0.02 && !after.gl && !after.layer && after.warned && flat.open > 0.3 && flat.behind > 0.3;
+  return { ok, gl, flat, after };
+}, { width: 1000, height: 700 });
+
+await run("3D trees: the Layers checkbox (Trees in 3D) is on by default and remembered; a tree shader that fails falls back to the flat pictures", APP, async (page, ctx) => {
+  const box = () => page.evaluate(() => { const cb = document.querySelector('input[data-layer="trees"]'), label = cb.closest("label");
+    return { checked: cb.checked, label: label.textContent.replace(/\s+/g, " ").trim(), stored: localStorage.getItem("piste-trees"), afterBuildings: !!label.previousElementSibling.querySelector('[data-layer="buildings"]') }; });
+  const show3d = () => page.evaluate((c) => { const a = window.__app; a.set3d(true, false); a.map.jumpTo({ center: c, zoom: 16.2, pitch: 60, bearing: 0 }); }, MONT_ROYAL);
+  const layers = () => page.evaluate(() => ["trees-gl", "trees-src", "trees"].map((id) => (window.__app.map.getLayer(id) ? window.__app.map.getLayoutProperty(id, "visibility") : "absent")).join());
+  const first = await box();
+  await show3d(); await until(page, () => window.__app.trees.info().drawn > 0, null, 30000);
+  const shown = await layers();
+  await page.evaluate(() => document.querySelector('input[data-layer="trees"]').click());
+  const hidden = await layers(), off = await box();
+  const fr = await page.evaluate(() => { window.__app.setLang("fr"); const t = document.querySelector('input[data-layer="trees"]').closest("label").textContent.replace(/\s+/g, " ").trim(); window.__app.setLang("en"); return t; });
+  // next visit, with a tree shader that does not compile: the box is still unticked; ticking it in 3D shows the flat pictures, with a warning
+  await ctx.addInitScript(() => {
+    for (const GL of [window.WebGLRenderingContext, window.WebGL2RenderingContext].filter(Boolean)) {
+      const source = GL.prototype.shaderSource, param = GL.prototype.getShaderParameter, ours = new WeakSet();
+      GL.prototype.shaderSource = function (s, text) { if (/u_keep/.test(text)) ours.add(s); return source.call(this, s, text); };
+      GL.prototype.getShaderParameter = function (s, p) { return ours.has(s) && p === this.COMPILE_STATUS ? false : param.call(this, s, p); };
+    }
+  });
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(treeHelpers);
+  const again = await box();
+  await show3d(); await page.evaluate(idle);
+  const offIn3d = await layers();
+  await page.evaluate(() => document.querySelector('input[data-layer="trees"]').click());
+  await until(page, () => !window.__app.state.treesGL && window.__app.map.queryRenderedFeatures({ layers: ["trees"] }).length > 0, null, 30000);
+  const fell = await page.evaluate(() => ({ gl: window.__app.state.treesGL, flat: window.__app.map.queryRenderedFeatures({ layers: ["trees"] }).length, error: window.__app.trees.info().error,
+    warned: window.__warns.some((w) => /3D trees: WebGL drawing stopped \(tree shader/.test(w)), stored: localStorage.getItem("piste-trees") }));
+  const ok = first.checked && first.label === "Trees in 3D" && first.afterBuildings && first.stored === null && shown === "visible,visible,none" && hidden === "none,none,none"
+    && !off.checked && off.stored === "0" && fr === "Arbres en 3D" && !again.checked && offIn3d.split(",").every((v) => v === "none" || v === "absent")
+    && !fell.gl && fell.flat > 0 && /^tree shader/.test(fell.error || "") && fell.warned && fell.stored === "1";
+  return { ok, first, shown, hidden, off, fr, again, offIn3d, fell };
+}, { width: 1000, height: 700 });
 
 await browser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----
