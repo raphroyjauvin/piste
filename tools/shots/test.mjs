@@ -312,14 +312,19 @@ await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, as
     for (const t0 = performance.now(); !(s.routes[0] && document.querySelectorAll(".classic-card").length === 10) && performance.now() - t0 < 20000;) await new Promise((r) => setTimeout(r, 100));   // first ride routed, cards drawn
     const cards = document.querySelectorAll(".classic-card").length;
     const lengths = window.CLASSICS.map((c, i) => { const r = app.classicRoute(i); return r ? [c.id, +(r.length / 1000).toFixed(1), Math.round(r.infraShare * 100)] : [c.id, null]; });
+    // 2026-11-03: each ride is one continuous line on the streets: where one leg ends the next begins (no straight jump at a waypoint off the street)
+    const dm = (a, b) => Math.hypot((a[0] - b[0]) * 111320 * Math.cos(a[1] * Math.PI / 180), (a[1] - b[1]) * 110540);
+    const jumps = window.CLASSICS.map((c, i) => { const r = app.classicRoute(i); let worst = 0;
+      if (r) for (let k = 1; k < r.legs.length; k++) { const a = app.router._legCoords(r.legs[k - 1]), b = app.router._legCoords(r.legs[k]); worst = Math.max(worst, dm(a[a.length - 1], b[0])); }
+      return Math.round(worst); });
     const sights = (s.routes[0] && s.routes[0].r.stops || []).filter((x) => x.sight).length;
     const photo = getComputedStyle(document.querySelector(".cc-photo")).backgroundImage.includes("photos/oldport.jpg");
-    return { cards, lengths, sights, photo, panelVisible: !document.querySelector("#classics").hidden, first: s.classic };
+    return { cards, lengths, jumps, sights, photo, panelVisible: !document.querySelector("#classics").hidden, first: s.classic };
   });
   await page.evaluate(() => { const tr = document.querySelector("#classic-track"); const c = tr.children[3]; tr.scrollLeft = c.offsetLeft - (tr.clientWidth - c.offsetWidth) / 2; });
   await until(page, () => window.__app.state.classic === 3, null, 10000);   // the card under the middle becomes the selected ride
   const afterSwipe = await page.evaluate(() => window.__app.state.classic);
-  return { ok: out.cards === 10 && out.lengths.every((l) => l[1] && l[1] > 5) && out.sights >= 2 && out.photo && afterSwipe === 3, ...out, afterSwipe };
+  return { ok: out.cards === 10 && out.lengths.every((l) => l[1] && l[1] > 5) && out.jumps.every((j) => j <= 1) && out.sights >= 2 && out.photo && afterSwipe === 3, ...out, afterSwipe };
 });
 
 await run("winter mode: 4-season routing, icy map, labels", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {

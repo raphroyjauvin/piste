@@ -418,8 +418,12 @@ for (const c of CLASSICS) {
     const season = winter ? "winter" : "summer", where = `classic ${c.id}, ${season}`;
     const pen = new Float32Array(r.m).fill(1), parts = [];
     let ok = true;
+    const closes = c.pts.length > 2 && c.pts[0][0] === c.pts[c.pts.length - 1][0] && c.pts[0][1] === c.pts[c.pts.length - 1][1];
     for (let k = 1; k < c.pts.length; k++) {
-      const p = r.route(c.pts[k - 1], c.pts[k], { w: PROFILES.bikemax.w, hill: 4, penalty: pen });
+      // as classicRoute() in app.js (2026-11-03): each leg starts where the last one ended; a loop ends where it began
+      const from = k > 1 ? parts[k - 2].to : c.pts[0], to = closes && k === c.pts.length - 1 ? parts[0].from : c.pts[k];
+      const o = { w: PROFILES.bikemax.w, hill: 4, penalty: pen };
+      const p = r.route(from, to, o) || r.route(c.pts[k - 1], c.pts[k], o);
       routes++;
       if (!p) { fail(`${where}: no route for leg ${k}`); ok = false; break; }
       checkRoute(p, `${where}, leg ${k}`);

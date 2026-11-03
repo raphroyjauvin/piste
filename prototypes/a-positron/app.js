@@ -1259,8 +1259,13 @@
     const c = CLASSICS[i], key = `${c.id}|${state.winter}`;
     if (classicCache.has(key)) return classicCache.get(key);
     const pen = new Float32Array(router.m).fill(1), parts = [], w = { w: PROFILES.bikemax.w, hill: 4 };
+    const closes = c.pts.length > 2 && c.pts[0][0] === c.pts[c.pts.length - 1][0] && c.pts[0][1] === c.pts[c.pts.length - 1][1];
     for (let k = 1; k < c.pts.length; k++) {
-      const p = router.route(c.pts[k - 1], c.pts[k], Object.assign({}, w, { penalty: pen }));
+      // each leg starts exactly where the last one ended, and a loop ends exactly where it began: no straight jump at a waypoint
+      // off the street (Olympic had one of 444 m). If the router can't join those exact spots, the waypoints are used as before.
+      const from = k > 1 ? parts[k - 2].to : c.pts[0], to = closes && k === c.pts.length - 1 ? parts[0].from : c.pts[k];
+      const o = Object.assign({}, w, { penalty: pen });
+      const p = router.route(from, to, o) || router.route(c.pts[k - 1], c.pts[k], o);
       if (!p) { classicCache.set(key, null); return null; }
       if (c.avoidBack) for (const l of p.legs) pen[l.e] = 4;
       parts.push(p);

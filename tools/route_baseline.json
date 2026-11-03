@@ -621,21 +621,21 @@
   },
   "classic-oldport": {
    "classic|summer": {
-    "km": 9.07,
-    "bikePaths": 91.8,
-    "climb": 65,
+    "km": 9.3,
+    "bikePaths": 92,
+    "climb": 67,
     "busy": 537
    },
    "classic|winter": {
-    "km": 11.34,
-    "bikePaths": 87,
+    "km": 11.35,
+    "bikePaths": 87.1,
     "climb": 97,
     "busy": 537
    }
   },
   "classic-plateau": {
    "classic|summer": {
-    "km": 10.35,
+    "km": 10.34,
     "bikePaths": 96.4,
     "climb": 61,
     "busy": 258
@@ -643,103 +643,103 @@
    "classic|winter": {
     "km": 10.76,
     "bikePaths": 87.1,
-    "climb": 67,
+    "climb": 66,
     "busy": 490
    }
   },
   "classic-montroyal": {
    "classic|summer": {
-    "km": 10.51,
+    "km": 10.54,
     "bikePaths": 76.7,
-    "climb": 125,
+    "climb": 150,
     "busy": 2207
    },
    "classic|winter": {
-    "km": 11.44,
-    "bikePaths": 48.7,
-    "climb": 157,
-    "busy": 5300
+    "km": 11.48,
+    "bikePaths": 48.5,
+    "climb": 182,
+    "busy": 5332
    }
   },
   "classic-jeantalon": {
    "classic|summer": {
-    "km": 9.52,
-    "bikePaths": 87.9,
+    "km": 9.59,
+    "bikePaths": 87.2,
     "climb": 43,
-    "busy": 370
+    "busy": 428
    },
    "classic|winter": {
-    "km": 9.97,
-    "bikePaths": 83,
-    "climb": 45,
-    "busy": 775
+    "km": 10.07,
+    "bikePaths": 82.2,
+    "climb": 46,
+    "busy": 803
    }
   },
   "classic-olympic": {
    "classic|summer": {
-    "km": 15.43,
-    "bikePaths": 99.3,
-    "climb": 83,
+    "km": 17.07,
+    "bikePaths": 99.4,
+    "climb": 85,
     "busy": 14
    },
    "classic|winter": {
-    "km": 15.75,
-    "bikePaths": 81.2,
-    "climb": 82,
-    "busy": 1883
+    "km": 17.67,
+    "bikePaths": 81.6,
+    "climb": 89,
+    "busy": 2166
    }
   },
   "classic-jeandrapeau": {
    "classic|summer": {
-    "km": 15.32,
+    "km": 15.43,
     "bikePaths": 93.9,
-    "climb": 100,
+    "climb": 101,
     "busy": 134
    },
    "classic|winter": {
-    "km": 14.26,
-    "bikePaths": 49.2,
-    "climb": 87,
+    "km": 14.38,
+    "bikePaths": 48.7,
+    "climb": 89,
     "busy": 848
    }
   },
   "classic-visitation": {
    "classic|summer": {
-    "km": 9.53,
-    "bikePaths": 90.6,
-    "climb": 48,
-    "busy": 563
+    "km": 9.77,
+    "bikePaths": 90.7,
+    "climb": 50,
+    "busy": 601
    },
    "classic|winter": {
-    "km": 10.35,
-    "bikePaths": 90.9,
-    "climb": 59,
-    "busy": 563
+    "km": 10.57,
+    "bikePaths": 89.1,
+    "climb": 61,
+    "busy": 601
    }
   },
   "classic-verdun": {
    "classic|summer": {
-    "km": 25.84,
-    "bikePaths": 97.1,
-    "climb": 89,
-    "busy": 395
+    "km": 24.85,
+    "bikePaths": 97.2,
+    "climb": 86,
+    "busy": 338
    },
    "classic|winter": {
-    "km": 22.64,
+    "km": 22.67,
     "bikePaths": 75.4,
-    "climb": 78,
+    "climb": 79,
     "busy": 1505
    }
   },
   "classic-lachine": {
    "classic|summer": {
-    "km": 26.84,
+    "km": 26.82,
     "bikePaths": 98.2,
     "climb": 74,
     "busy": 302
    },
    "classic|winter": {
-    "km": 31.21,
+    "km": 31.23,
     "bikePaths": 88.2,
     "climb": 131,
     "busy": 1861
@@ -760,6 +760,6 @@
    }
   }
  },
- "recorded": "2026-10-31",
+ "recorded": "2026-11-03",
  "graphBuilt": "2026-10-31 12:17"
 }
