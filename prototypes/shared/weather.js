@@ -18,6 +18,20 @@
       .finally(() => { pending = null; });
     return pending;
   }
+  // Demo weather for checking the animations on a phone (2026-11-04): ?wx=rain or ?wx=snow, optional &wind=<km/h> (default 0, calm),
+  // &from=<N, NE, E, SE, S, SW, W, NW or degrees> (where the wind comes from, default W) and &mm=<per hour> (default 2 rain, 1 snow).
+  // Only that page load; the card says "Demo weather". Returns null without ?wx=rain|snow.
+  const COMPASS = { N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315 };
+  function demo(params) {
+    const kind = params.get("wx");
+    if (kind !== "rain" && kind !== "snow") return null;
+    const num = (k, d, lo, hi) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+    const f = (params.get("from") || "W").toUpperCase(), dir = f in COMPASS ? COMPASS[f] : num("from", 270, 0, 360) % 360;
+    const wind = num("wind", 0, 0, 80), mm = num("mm", kind === "snow" ? 1 : 2, 0.1, 30), q = mm / 4;   // Open-Meteo's "current" values are per 15 min
+    const snow = kind === "snow";
+    return { demo: true, now: { time: "", temp: snow ? -4 : 9, precip: q, rain: snow ? 0 : q, snow: snow ? q : 0, wind, dir, gust: Math.round(wind * 1.4), code: snow ? 73 : 63 },
+      next: [], snow24: snow ? 3 : 0, depth: null, icy: false };
+  }
   function parse(j) {
     const c = j.current, h = j.hourly;
     const nowIdx = Math.max(0, h.time.findIndex((t) => t > c.time) - 1);   // local ISO strings sort correctly
@@ -293,5 +307,5 @@
     }
   }
 
-  window.BikeWeather = { load, rainOutlook, snowOutlook, precipNow, windOnRoute, fallVelocity, WindLayer, PrecipLayer, speedWith };
+  window.BikeWeather = { demo, load, rainOutlook, snowOutlook, precipNow, windOnRoute, fallVelocity, WindLayer, PrecipLayer, speedWith };
 })();

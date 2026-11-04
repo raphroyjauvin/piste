@@ -501,6 +501,25 @@ await run("wind streaks and rain or snow (phone): streaks alone when dry, rain o
   return { ok, cls, clsOk, start, dry, loops, rain, rainNight, snow, snowNight, dryAgain, off, ride, paused: h1 === h2, resumed, size, seen };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, deviceScaleFactor: 3 });
 
+// 2026-11-04: a test link to see the rain and snow whatever the weather: ?wx=rain|snow, &wind, &from, &mm; the card says it's a demo
+await run("demo weather link: ?wx=rain&wind=40&from=W rains along a west wind, ?wx=snow&winter=1 snows; the card says demo; a plain visit is real weather", `${APP}?wx=rain&wind=40&from=W`, async (page) => {
+  await page.evaluate(INK_JS);
+  const read = () => page.evaluate(() => { const s = window.__app.state, w = s.wxData; return { on: s.wx, demo: !!(w && w.demo), wind: w && w.now.wind, dir: w && w.now.dir,
+    card: document.querySelector("#wx-card").textContent, kind: document.querySelector("#precip").dataset.kind }; });
+  await precipRuns(page, "rain"); const rain = await read();
+  await page.goto(BASE + APP + "?wx=snow&winter=1&lang=fr", { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(INK_JS); await precipRuns(page, "snow"); const snow = await read();
+  await page.goto(BASE + APP + "?wx=1", { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await until(page, () => !!window.__app.state.wxData); const real = await read();
+  const checks = {
+    rain: rain.on && rain.demo && rain.wind === 40 && rain.dir === 270 && rain.kind === "rain" && /Demo weather/.test(rain.card),
+    snow: snow.on && snow.demo && snow.kind === "snow" && snow.wind === 0 && /Météo de démonstration/.test(snow.card),
+    realOtherwise: real.on && !real.demo && !/Demo weather/.test(real.card),
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), rain, snow, real };
+}, { width: 390, height: 844 });
+
 await run("rain and snow motion (phone): calm falls straight down the screen; wind slants it along the wind's screen direction, more with speed, turned with the map", `${APP}?trip=rachel`, async (page, ctx) => {
   // The average velocity (px/s, y down) of the real layer's lines or flakes: move them one step and see where each went. A line that wrapped round
   // the edge, or a flake that was replaced, jumped far: those are left out.

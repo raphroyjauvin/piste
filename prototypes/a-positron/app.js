@@ -495,9 +495,10 @@
   const precip = new WX.PrecipLayer(map, $("#precip"));   // rain lines or snow flakes (2026-11-03): they replace the wind streaks while it falls now
   wind.follow(precip);
   let wxTimer = null;
+  const WX_DEMO = WX.demo(params);   // ?wx=rain|snow: pretend weather, to check the rain and snow on a phone (see weather.js demo)
   async function loadWeather(force) {
     try {
-      state.wxData = await WX.load(force);
+      state.wxData = WX_DEMO || await WX.load(force);
       wind.set(state.wxData, state.winter);
     } catch (e) { state.wxData = null; wind.set(null); console.warn(e); }
     renderWxCard(); if (state.routes.length) renderRoutes();
@@ -546,6 +547,7 @@
     const card = $("#wx-card");
     if ((!state.wx && !state.winter) || state.mode === "ride" || state.summary) { card.hidden = true; return; }
     const wx = state.wxData, rows = [];
+    if (wx && wx.demo) rows.push(`<div class="wx-row wx-note">${t("wxDemo")}</div>`);
     if (!wx) rows.push(`<div class="wx-row">${t(state.wx ? "wxLoading" : "winterOn")}</div>`);
     if (state.wx && wx) {
       const dirKey = I.compassKey(wx.now.dir), to = (wx.now.dir + 180) % 360;
@@ -2185,7 +2187,7 @@
   if (pTo) setPoint("to", pTo, placeLabel(pTo[0], pTo[1]));
   if (trip) { setPoint("from", trip.from.lonlat, trip.from.label); setPoint("to", trip.to.lonlat, trip.to.label); }
   if (params.get("winter") === "1") setWinter(true);
-  if (params.get("wx") === "1") setWeather(true);
+  if (params.get("wx") === "1" || WX_DEMO) setWeather(true);
   if (params.get("suggest") || params.get("classic")) {
     state.tab = "suggest";
     if (params.get("classic")) { state.smode = "classics"; state.classic = Math.max(0, CLASSICS.findIndex((c) => c.id === params.get("classic"))); }
