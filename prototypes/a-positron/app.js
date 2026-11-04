@@ -102,13 +102,13 @@
   let style;
   try {
     style = await (await fetch("https://tiles.openfreemap.org/styles/positron")).json();
-    style.layers = style.layers.filter((l) => l.id !== "building");
+    // our buildings and our parks (parks.pmtiles) instead of theirs: their "park" layer holds only nature reserves and protected areas, and sat under the tint
+    style.layers = style.layers.filter((l) => l.id !== "building" && l.id !== "park");
     // a bike app has no use for provincial route numbers (the "125", "138" shields repeated along every highway): hide them; street names stay
     const isRoadRef = (l) => l.type === "symbol" && (/shield/.test(l.id) || JSON.stringify((l.layout || {})["text-field"] || "").includes('"ref"'));
     for (const l of style.layers) {
       if (isRoadRef(l)) l.layout = { ...l.layout, visibility: "none" };
       if (l.id === "water") l.paint["fill-color"] = "#c9dde9";
-      if (l.id === "park") { l.paint["fill-color"] = "#d3e8cc"; l.paint["fill-opacity"] = 0.9; }
     }
   } catch (e) {
     style = { version: 8, glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf", sources: {},
@@ -179,6 +179,7 @@
   map.addSource("contours", { type: "vector", url: TILES("contours") });
   map.addSource("bld", { type: "vector", url: TILES("buildings") });
   map.addSource("trees", { type: "vector", url: TILES("trees") });
+  map.addSource("parks", { type: "vector", url: TILES("parks") });
   map.addSource("network", { type: "geojson", data: networkGeoJSON() });
   map.addSource("planned", { type: "geojson", data: window.PLANNED });
   if (window.REM) map.addSource("rem", { type: "geojson", data: { type: "Feature", geometry: { type: "MultiLineString", coordinates: window.REM.lines } } });
@@ -192,6 +193,10 @@
   add({ id: "tint", type: "raster", source: "tint",
     paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 13, 1, 15, 0.7, 17, 0.45], "raster-fade-duration": 0 } }, tintBefore);
   if (map.getLayer("water") && map.getLayer(tintBefore)) map.moveLayer("water", tintBefore);
+  // 2026-11-03: parks (tools/island_parks.py: OpenStreetMap parks, nature reserves and public gardens over the whole island, merged into one layer) as a quiet,
+  // see-through green over the tint; water, hill shading, contours, buildings, paths and labels all draw over it. Parks keep their icons.
+  add({ id: "parks", type: "fill", source: "parks", "source-layer": "parks", minzoom: 11,
+    paint: { "fill-color": "#79ad76", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.2, 13, 0.34] } }, "water");
   // 2026-10-29: shading halfway between the first prototype (0.75) and the strong version (0.95 → 0.72)
   add({ id: "relief", type: "raster", source: "relief",
     paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.85, 15, 0.8, 18, 0.72], "raster-fade-duration": 0 } }, firstRoad);
@@ -316,7 +321,7 @@
 
   // ------------------------------------------------------------------ winter mode: icy colours, 4-season network, snow status
   const WINTER_PAINT = [
-    ["background", "background-color", "#eef4f8"], ["park", "fill-color", "#e1ecf1"], ["water", "fill-color", "#b9d2e2"],
+    ["background", "background-color", "#eef4f8"], ["parks", "fill-color", "#76a898"], ["water", "fill-color", "#b9d2e2"],
     ["landuse_residential", "fill-color", "#e6eef4"], ["landcover_wood", "fill-color", "#dbe6ed"], ["waterway", "line-color", "#a9c6d9"],
     ["highway_major_casing", "line-color", "#c6d6e2"], ["highway_motorway_casing", "line-color", "#c6d6e2"],
     ["tint", "raster-hue-rotate", 170], ["tint", "raster-saturation", -0.35],
@@ -433,7 +438,7 @@
   // and place icons keep their colours (AA or better on this ground). Night wins over winter's colours where both have one.
   const NIGHT = { land: "#0f1626", water: "#0a3a41", halo: "rgba(15,22,38,0.92)", text: "#d6ab6b", street: "#c29b5e", road: "#5d4e3a", motorway: "#74603f", casing: "#17130f" };
   const NIGHT_PAINT = [
-    ["background", "background-color", NIGHT.land], ["landuse_residential", "fill-color", "#131b2d"], ["park", "fill-color", "#12271f"],
+    ["background", "background-color", NIGHT.land], ["landuse_residential", "fill-color", "#131b2d"], ["parks", "fill-color", "#2f7a55"],
     ["landcover_wood", "fill-color", "#10221e"], ["water", "fill-color", NIGHT.water], ["waterway", "line-color", "#11505a"],
     ["aeroway-area", "fill-color", "#1a2238"], ["aeroway-runway", "line-color", "#2a3350"], ["aeroway-taxiway", "line-color", "#2a3350"],
     ["road_area_pier", "fill-color", NIGHT.land], ["road_pier", "line-color", NIGHT.land],

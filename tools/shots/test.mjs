@@ -1767,6 +1767,68 @@ await run("language button: top right of the card's header, visible at every she
   return { ok, out, fr, en, desk, inMapButtons };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
+// ------------------------------------------------------------------ the logo (2026-11-03): a white P with the bike chain on Piste blue (prototypes/icons/logo.svg, tools/shots/make_icons.mjs)
+const LOGO_BLUE = [11, 92, 255];
+// window.__logo(src) draws an image (a URL, or an inline <svg> serialised) at its own size and samples points given as fractions of its side: the P's stem (white), the hole in the
+// P's bowl and a spot near the bottom right (blue), and the top-left corner (blue on a full-bleed icon, see-through outside the header's disc); "white" is the share of white pixels.
+const logoPixels = `window.__logo = async (src) => {
+  const img = new Image(); img.src = src; await img.decode();
+  const s = img.naturalWidth, c = new OffscreenCanvas(s, img.naturalHeight), g = c.getContext("2d"); g.drawImage(img, 0, 0);
+  const at = (fx, fy) => [...g.getImageData(Math.min(s - 1, Math.round(fx * s)), Math.min(s - 1, Math.round(fy * s)), 1, 1).data];
+  const all = g.getImageData(0, 0, s, s).data; let white = 0; for (let i = 0; i < all.length; i += 4) if (Math.min(all[i], all[i + 1], all[i + 2]) > 200 && all[i + 3] > 200) white++;
+  return { size: [img.naturalWidth, img.naturalHeight], stem: at(0.40, 0.49), hole: at(0.52, 0.35), corner: at(0.78, 0.78), edge: at(0.01, 0.01), white: white / (s * s) };
+};`;
+const isBlue = (p) => p.slice(0, 3).every((v, i) => Math.abs(v - LOGO_BLUE[i]) <= 3) && p[3] === 255, isWhite = (p) => p.slice(0, 3).every((v) => v >= 250) && p[3] === 255;
+await run("logo: the header mark is the new blue disc with the white P and has a name; icons, favicon and manifest match it", `${APP}?safe=47,34`, async (page) => {
+  await page.evaluate(logoPixels);
+  await page.evaluate(idle);   // the map's first burst of tile requests is over (a fetch in the middle of it can be dropped by the dev server)
+  const header = async () => page.evaluate(async () => {
+    const svg = document.querySelector("#brand .mark"), r = svg.getBoundingClientRect(), circle = svg.querySelector("circle"), path = svg.querySelector("path");
+    const copy = svg.cloneNode(true); copy.setAttribute("width", 512); copy.setAttribute("height", 512);
+    const logoUrl = document.querySelector('link[rel="icon"][type="image/svg+xml"]').href, logo = await (await fetch(logoUrl)).text();
+    return { size: [Math.round(r.width), Math.round(r.height)], role: svg.getAttribute("role"), name: svg.getAttribute("aria-label"), hidden: svg.getAttribute("aria-hidden"), disc: circle && [circle.getAttribute("r"), circle.getAttribute("fill")],
+      path: path && [path.getAttribute("fill"), path.getAttribute("fill-rule")], sameShapeAsLogoSvg: !!path && logo.includes(` d="${path.getAttribute("d")}"`), oldMark: svg.outerHTML.includes("0095E6"),
+      px: await window.__logo("data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(copy))) };
+  });
+  const desk = await header();
+  const namedImg = await page.locator("#brand").getByRole("img", { name: "Piste" }).count();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await until(page, () => document.querySelector("#brand .mark").getBoundingClientRect().width === 28);
+  const phone = (await header()).size;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // the files: the home-screen icon, the manifest's icons (listed with the sizes they really have), the favicon (16, 32, 48) and the SVG one
+  const files = await page.evaluate(async () => {
+    const href = (sel) => document.querySelector(sel).href, bytes = async (u) => { const r = await fetch(u); return r.ok ? new Uint8Array(await r.arrayBuffer()) : null; };
+    const png = async (u) => { const b = await bytes(u); return b ? { ...(await window.__logo(URL.createObjectURL(new Blob([b], { type: "image/png" })))), signature: b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 } : null; };
+    const apple = await png(href('link[rel="apple-touch-icon"]'));
+    const manifestUrl = href('link[rel="manifest"]'), manifest = await (await fetch(manifestUrl)).json(), icons = [];
+    for (const i of manifest.icons) { const u = new URL(i.src, manifestUrl).href; icons.push({ sizes: i.sizes, type: i.type, purpose: i.purpose || "any", px: await png(u) }); }
+    // a bare /favicon.ico fetch fails while the test context intercepts requests (the fixtures): the query string makes it an ordinary fetch
+    const ico = await bytes(href('link[rel="icon"][sizes]') + "?check"), dv = ico && new DataView(ico.buffer), pics = [];
+    for (let i = 0; ico && i < dv.getUint16(4, true); i++) { const e = 6 + 16 * i, off = dv.getUint32(e + 12, true), len = dv.getUint32(e + 8, true);
+      pics.push({ w: ico[e], h: ico[e + 1], px: { ...(await window.__logo(URL.createObjectURL(new Blob([ico.slice(off, off + len)], { type: "image/png" })))), signature: ico[off + 1] === 0x50 } }); }
+    const svg = await (await fetch(href('link[rel="icon"][type="image/svg+xml"]'))).text();
+    return { apple, icons, theme: { meta: document.querySelector('meta[name="theme-color"]').content, manifest: manifest.theme_color }, ico: { reserved: ico && dv.getUint16(0, true), type: ico && dv.getUint16(2, true), pics },
+      svg: { viewBox: svg.includes('viewBox="0 0 512 512"'), blue: svg.includes('fill="#0B5CFF"'), white: svg.includes('fill="#fff"') && svg.includes('fill-rule="evenodd"') } };
+  });
+  const square = (px, side) => !!px && px.size[0] === side && px.size[1] === side && isBlue(px.edge) && isWhite(px.stem) && isBlue(px.hole) && isBlue(px.corner) && px.white > 0.1 && px.white < 0.3;
+  const icon = (side, purpose) => files.icons.find((i) => i.sizes === `${side}x${side}` && i.type === "image/png" && i.purpose.split(" ").includes(purpose));
+  const by = Object.fromEntries(files.ico.pics.map((p) => [p.w, p]));
+  const checks = {   // named, so a failure says which one
+    markSize: desk.size.join() === "34,34" && phone.join() === "28,28",
+    discAndP: !!desk.disc && desk.disc.join() === "256,#0B5CFF" && desk.path.join() === "#fff,evenodd" && isBlue(desk.px.hole) && isWhite(desk.px.stem) && isBlue(desk.px.corner) && desk.px.edge[3] === 0,
+    named: desk.role === "img" && desk.name === "Piste" && desk.hidden === null && namedImg === 1, noOldMark: !desk.oldMark, sameShapeAsLogoSvg: desk.sameShapeAsLogoSvg,
+    homeScreenIcon: square(files.apple, 180),
+    manifest192: square(icon(192, "any") && icon(192, "any").px, 192), manifest512: square(icon(512, "any") && icon(512, "any").px, 512), manifestMaskable: !!icon(512, "maskable") && square(icon(512, "maskable").px, 512),
+    manifestSizesAreReal: files.icons.length >= 3 && files.icons.every((i) => i.px && `${i.px.size[0]}x${i.px.size[1]}` === i.sizes),
+    themeColourMatches: files.theme.meta === files.theme.manifest,
+    favicon: files.ico.reserved === 0 && files.ico.type === 1 && [16, 32, 48].every((s) => by[s] && by[s].h === s && by[s].px.size[0] === s && by[s].px.signature && isBlue(by[s].px.edge) && by[s].px.white > 0.12 && by[s].px.white < 0.3),
+    svgFavicon: files.svg.viewBox && files.svg.blue && files.svg.white,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), desk, phone, namedImg, files };
+}, { width: 1440, height: 900 });
+
 // ------------------------------------------------------------------ the data-sources "i" (2026-10-31): bottom right, opens leftwards, turns into an x
 const creditsProbe = () => { const q = (s) => document.querySelector(s), btn = q(".maplibregl-ctrl-attrib-button"), b = btn.getBoundingClientRect(), box = q(".maplibregl-ctrl-attrib").getBoundingClientRect(),
     map = q("#map").getBoundingClientRect(), pr = q("#panel").getBoundingClientRect(), phone = matchMedia("(max-width: 760px)").matches, zoom = q(".maplibregl-ctrl-zoom-in"), cx = b.left + b.width / 2, cy = b.top + b.height / 2;
@@ -2077,6 +2139,69 @@ await run("night map: Auto/On/Off, dark basemap, route and bike-path colours unc
     && back === day.bg && both === "#0f1626" && winterBack === "#eef4f8" && sun.every(Boolean) && tap >= 44;
   return { ok, day, night, back, both, winterBack, sun, tap };
 }));
+
+// ------------------------------------------------------------------ parks (2026-11-03): tools/island_parks.py merges OpenStreetMap parks, nature reserves and public gardens over the whole
+// island into one see-through green fill (parks.pmtiles), under the water, hill shading, paths and labels. The basemap's own park layer (under the tint, so hidden) is gone.
+const PARK_SPOTS = { "Parc La Fontaine": [-73.5707, 45.5266], "Mont-Royal": [-73.5886, 45.5054], "Parc Jean-Drapeau": [-73.5343, 45.5139], "Jardin botanique": [-73.5636, 45.562],
+  "Parc Angrignon": [-73.6033, 45.4422], "Bois-de-l'Île-Bizard": [-73.8817, 45.5073], "Cap-Saint-Jacques": [-73.9316, 45.4649], "Pointe-aux-Prairies": [-73.5117, 45.6778] };
+const STREET_SPOT = [-73.57499, 45.5266];   // the Plateau's street grid, 330 m west of Parc La Fontaine's centre: no park there
+await run("parks: a muted see-through green over the whole island, under the water, paths and labels; day, night and winter colours; Parc La Fontaine is green", `${APP}?trip=montroyal`, async (page) => {
+  await page.evaluate((c) => window.__app.map.jumpTo({ center: c, zoom: 15 }), PARK_SPOTS["Parc La Fontaine"]);
+  await page.evaluate(idle);
+  const out = await page.evaluate(async ({ spots, street }) => {
+    const a = window.__app, m = a.map, ids = m.getStyle().layers.map((l) => l.id), at = (id) => ids.indexOf(id);
+    const above = (id) => at(id) < 0 || at("parks") < at(id);   // "id" is drawn over the parks (a layer the basemap lacks, offline, does not count)
+    const firstLabel = ids.findIndex((id) => m.getLayer(id).type === "symbol");
+    const layer = { exists: !!m.getLayer("parks"), type: m.getLayer("parks") && m.getLayer("parks").type, sourceLayer: m.getLayer("parks") && m.getLayer("parks").sourceLayer,
+      overTint: at("tint") >= 0 && at("tint") < at("parks"),
+      under: ["water", "waterway", "relief", "contours-index", "bld-flat", "net-casing", "net-ab", "route-solid", "stops", "ends"].filter((id) => !above(id)),
+      belowLabels: firstLabel < 0 || at("parks") < firstLabel, basemapParkGone: !m.getLayer("park") };
+    // pixels: the lawn of Parc La Fontaine turns green when the layer is shown; a street block does not change. A frame is read only once the map has settled
+    // (the same spot shown, hidden and shown again must read the same, or the first reading was taken while tiles were still arriving)
+    const mean = ([x, y]) => { m.redraw(); const gl = m.painter.context.gl, d = devicePixelRatio, w = Math.round(12 * d), px = new Uint8Array(w * w * 4);
+      gl.readPixels(Math.round((x - 6) * d), gl.drawingBufferHeight - Math.round((y - 6) * d) - w, w, w, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      const s = [0, 0, 0]; for (let i = 0; i < px.length; i += 4) for (let c = 0; c < 3; c++) s[c] += px[i + c]; return s.map((v) => v / (px.length / 4)); };
+    const settle = () => new Promise((r) => { const t0 = performance.now(); (function poll() { if ((m.loaded() && !m.isMoving()) || performance.now() - t0 > 20000) r(); else setTimeout(poll, 100); })(); });
+    const shown = async (ll) => {
+      for (let i = 0; ; i++) {
+        await settle();
+        const p = m.project(ll), pt = [p.x, p.y]; m.setLayoutProperty("parks", "visibility", "visible");
+        const on = mean(pt), features = m.queryRenderedFeatures(pt, { layers: ["parks"] }).length;   // asked while the frame just drawn has them
+        m.setLayoutProperty("parks", "visibility", "none"); const off = mean(pt); m.setLayoutProperty("parks", "visibility", "visible"); const again = mean(pt);
+        const stable = Math.max(...on.map((v, k) => Math.abs(v - again[k]))) < 3;
+        if (stable || i >= 5) return { on: on.map(Math.round), off: off.map(Math.round), features, stable };
+      }
+    };
+    const lawn = await shown(spots["Parc La Fontaine"]), streets = await shown(street);
+    const pixels = { lawn, streets, greener: lawn.on[1] - lawn.on[0] - (lawn.off[1] - lawn.off[0]), darker: lawn.off[0] - lawn.on[0], streetShift: Math.max(...streets.on.map((v, i) => Math.abs(v - streets.off[i]))) };
+    // colours: a muted green by day, deeper green at night, frosty green in winter; night wins when both are on; the fill stays see-through
+    const color = () => m.getPaintProperty("parks", "fill-color"), lum = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+    const day = color(), op = m.getPaintProperty("parks", "fill-opacity"), stops = op.slice(3).filter((_, i) => i % 2 === 1);
+    a.setWinter(true); const winter = color();
+    document.querySelector("input[name=night][value=on]").click(); const both = color();
+    a.setWinter(false); const night = color();
+    document.querySelector("input[name=night][value=off]").click(); const back = color();
+    const green = (hex) => { const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return g > r && g > b; };
+    const colours = { day, winter, night, both, back, distinct: new Set([day, winter, night]).size === 3, green: [day, winter, night].every(green), darkerAtNight: lum(night) < lum(day) * 0.7,
+      maxOpacity: Math.max(...stops), nightWins: both === night, restored: back === day };
+    // the tiles cover the whole island (west end, east end, downtown, south shore) and stay small for phones and the offline cache
+    const tile = (lon, lat, z) => { const n = 2 ** z, r = (lat * Math.PI) / 180; return [Math.floor(((lon + 180) / 360) * n), Math.floor(((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2) * n)]; };
+    const url = new URL("../shared/tiles/parks.pmtiles", location.href).href, pm = new pmtiles.PMTiles(url), covered = {};
+    for (const [name, [lon, lat]] of Object.entries(spots)) { const [x, y] = tile(lon, lat, 14), t = await pm.getZxy(14, x, y); covered[name] = t ? t.data.byteLength : 0; }
+    const head = await pm.getHeader(), size = +(await fetch(url, { method: "HEAD" })).headers.get("content-length");
+    return { layer, colours, pixels, covered, zooms: [head.minZoom, head.maxZoom], size };
+  }, { spots: PARK_SPOTS, street: STREET_SPOT });
+  const checks = {   // named, so a failure says which one
+    layerIsAFill: out.layer.exists && out.layer.type === "fill" && out.layer.sourceLayer === "parks", aboveTint: out.layer.overTint, underTheRest: out.layer.under.length === 0, belowLabels: out.layer.belowLabels,
+    notDrawnTwice: out.layer.basemapParkGone,
+    threeColours: out.colours.distinct && out.colours.green, nightIsDeeper: out.colours.darkerAtNight, nightWinsOverWinter: out.colours.nightWins, dayColourComesBack: out.colours.restored,
+    seeThrough: out.colours.maxOpacity > 0.1 && out.colours.maxOpacity <= 0.45,
+    lawnTurnsGreen: out.pixels.lawn.features > 0 && out.pixels.greener >= 8 && out.pixels.darker >= 15, streetsUntouched: out.pixels.streets.features === 0 && out.pixels.streetShift < 2,
+    wholeIsland: Object.values(out.covered).every((b) => b > 0), small: out.size > 0 && out.size < 1_000_000, zooms: out.zooms[0] <= 11 && out.zooms[1] >= 14,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), ...out };
+});
 
 // ------------------------------------------------------------------ route cards, sharing a route (2026-11-02)
 const shareStub = () => { window.__shared = []; window.__copied = null; window.__copyFails = false;
