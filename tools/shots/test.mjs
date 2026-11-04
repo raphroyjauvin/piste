@@ -146,6 +146,8 @@ const until = (page, fn, arg, ms = 15000) => page.waitForFunction(fn, arg, { tim
 // the card's height slides (a CSS transition): wait for it to end before measuring, as a slow machine is still mid-slide after 400 ms
 const panelStill = (page) => page.evaluate(() => Promise.all(document.querySelector("#panel").getAnimations().map((a) => a.finished.catch(() => {}))));
 // Read a layout measurement after it has stopped moving (two equal readings 100 ms apart, up to 10 s), for panels that slide into place.
+// "Let's ride!" once the route is drawn: clicked in the page, as the other ride groups do (a pointer click waits on overlays and timed out on CI)
+const rideGo = async (page) => { await page.waitForFunction(() => !!document.querySelector("#ride-go"), null, { timeout: 90000 }); await page.evaluate(() => document.querySelector("#ride-go").click()); };
 async function settled(page, fn) {
   let prev, same = 0;
   for (let i = 0; i < 100 && same < 2; i++) { const v = JSON.stringify(await page.evaluate(fn)); same = v === prev ? same + 1 : 0; prev = v; if (same < 2) await page.waitForTimeout(100); }
@@ -1180,14 +1182,14 @@ await run("wind badge on every ride: with the wind & rain button off the forecas
     badge: !document.querySelector("#wind-badge").hidden, toast: !document.querySelector("#toast").hidden, streaks: !document.querySelector("#wind").hidden }; });
   const before = await now();
   // offline: the ride starts and goes on, with no badge and no message
-  await page.click("#ride-go");
+  await rideGo(page);
   await until(page, () => window.__wxDone >= 1);
   await until(page, () => window.__app.state.ride && window.__app.state.ride.d > 5);
   const offlineRide = await now();
   await page.evaluate(() => window.__app.endRide());
   // back online: the next ride loads the forecast at its start and shows the badge, though the button is still off
   offline = false;
-  await page.click("#ride-go");
+  await rideGo(page);
   await until(page, () => !document.querySelector("#wind-badge").hidden, null, 30000);
   const online = await now();
   online.text = await page.evaluate(() => document.querySelector("#wind-speed").textContent + " | " + document.querySelector("#wind-kind").textContent);
@@ -1211,7 +1213,7 @@ await run("wind badge on every ride: with the wind & rain button off the forecas
 
 // ---- the rider's pin (2026-11-03): a plain pin, no bike ----
 await run("ride: the rider's pin is the plain blue pin of the start (no bike), and no bike wheels are drawn anywhere on the page", `${APP}?trip=montroyal`, async (page) => {
-  await page.click("#ride-go");   // desktop: the preview
+  await rideGo(page);   // desktop: the preview
   await until(page, () => !!window.__app.state.ride && getComputedStyle(document.querySelector(".rider-badge")).visibility !== "hidden" && document.querySelector(".rider-badge").getBoundingClientRect().width > 0);
   const pin = await page.evaluate(() => {
     const b = document.querySelector(".rider-badge"), svg = b.querySelector("svg"), start = document.querySelector(".field-row .pin svg"), r = b.getBoundingClientRect();
