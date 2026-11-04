@@ -35,10 +35,6 @@ jobs:
       - name: Install the test tools
         working-directory: tools/shots
         run: npm ci
-      # One test group (the double tap on the map buttons) runs in Playwright's WebKit, the iPhone's engine; the runner has no copy of it.
-      - name: Install WebKit for that test
-        working-directory: tools/shots
-        run: npx playwright-core install --with-deps webkit
       - name: Build the site
         run: python3 tools/build_site.py
       # Browser tests (tools/shots/test.mjs) on the built site, in the runner's Google Chrome with software WebGL and

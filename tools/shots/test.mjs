@@ -19,7 +19,8 @@
 //   PISTE_CPU_SLOWDOWN=4                             slow each page's CPU 4x (Chrome DevTools throttling) to try a slow machine
 //   PISTE_SHOT_DIR=<folder>                          the phone ride-summary group also saves a 390x844 screenshot there
 //   PISTE_NET_REPORT=1                               print, per group, which outside hosts the page called (to spot a new live dependency)
-// A group can ask for Playwright's WebKit (the iPhone's engine) with ctxOpts.webkit: true; it needs `npx playwright-core install webkit` (CI does it).
+// A group can ask for Playwright's WebKit (the iPhone's engine) with ctxOpts.webkit: true, for checks on this PC; it needs `npx playwright-core install webkit`.
+// None does in CI: the runner has no WebKit (the double-tap group runs in Chromium; its real guard is the touch-action check).
 import { chromium, webkit } from "playwright-core";
 import { readFileSync } from "node:fs";
 
@@ -718,7 +719,7 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
 // ---- no double-tap page zoom (2026-11-03): iPhone Safari zooms the page when a button outside the map is tapped twice quickly ----
 // Playwright's WebKit does not do that zoom itself (the scale check below also passes without the fix), so the real guard is the computed
 // touch-action of what you press; the quick double taps check that nothing else moves the page or the map, as a real iPhone is the final test.
-await run("phone (WebKit, the iPhone's engine): a quick double tap on Layers, wind & rain, winter and 3D zooms neither page nor map; what you press is touch-action: manipulation, the map keeps its own", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
+await run("phone: a quick double tap on Layers, wind & rain, winter and 3D zooms neither page nor map; what you press is touch-action: manipulation, the map keeps its own", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
   await page.waitForFunction(() => window.__app.map.loaded() && !window.__app.map.isMoving(), null, { timeout: 60000 });
   const css = await page.evaluate(() => {
     const ta = (el) => getComputedStyle(el).touchAction, queries = ["#layers-btn", "#wx-btn", "#winter-btn", "#view-btn", ".map-controls", "#from", "#to", ".tab", "#strict", ".route-card", ".clear", "#places .star", ".lang-btn", "#layers label"];
@@ -744,12 +745,13 @@ await run("phone (WebKit, the iPhone's engine): a quick double tap on Layers, wi
     mapKeepsItsOwn: css.map !== "manipulation" && css.map !== "auto" && css.canvas !== "manipulation" && css.canvas !== "auto",
     pinchNotBlocked: css.pinchOk,
     pageNotZoomed: start.scale === 1 && Object.values(taps).every((t) => t.scale === 1 && t.width === start.width),
-    mapNotZoomed: Object.values(taps).every((t) => t.zoom === start.zoom),
+    // the 3D button itself zooms in to at least 15.2 when it turns 3D on (set3d); nothing beyond that, and no zoom from the other buttons
+    mapNotZoomed: ["layers-btn", "wx-btn", "winter-btn"].every((id) => taps[id].zoom === start.zoom) && taps["view-btn"].zoom <= Math.max(start.zoom, 15.2) + 0.01,
     bothTapsClicked: Object.values(taps).every((t) => t.clicks === 2) && end.layersHidden && !end.wx && !end.winter && end.pitch === 0,
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), css, start, taps, end };
-}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, deviceScaleFactor: 2, webkit: true });
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 
 await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-center, arrives", `${APP}?trip=montroyal&gps=replay&gpsx=3`, async (page) => {
   const follow = await page.evaluate(async () => {
