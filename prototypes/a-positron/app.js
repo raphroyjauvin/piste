@@ -120,7 +120,7 @@
   const basemapCredit = !!style.sources.openmaptiles;
   const map = new maplibregl.Map({
     container: "map", style, center: [-73.585, 45.522], zoom: 12.8, maxPitch: 80,
-    attributionControl: { compact: true, customAttribution: "© 2026 Piste Montréal · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo · ECCC"
+    attributionControl: { compact: true, customAttribution: "© 2026 Piste Montréal · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo"
       + (basemapCredit ? "" : " · © OpenStreetMap contributors") },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
@@ -184,8 +184,6 @@
   if (window.REM) map.addSource("rem", { type: "geojson", data: { type: "Feature", geometry: { type: "MultiLineString", coordinates: window.REM.lines } } });
   map.addSource("pois", { type: "geojson", data: C.poisGeoJSON(window.POIS) });
   map.addSource("terrain", { type: "raster-dem", tiles: ["piste-dem://{z}/{x}/{y}"], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
-  map.addSource("radar", { type: "raster", tiles: [WX.radarTiles(false)], tileSize: 256, maxzoom: 10,
-    attribution: "Radar © Environment and Climate Change Canada" });
   for (const id of ["route", "route-alts", "gaps", "ends", "works-near", "stops", "bixi-live", "ridden"]) map.addSource(id, { type: "geojson", data: empty });
 
   // ------------------------------------------------------------------ layers (bottom to top)
@@ -222,7 +220,6 @@
   // 2026-11-03: the trees are drawn with WebGL instead ("tree pictures" below), so buildings hide the ones behind them; the symbol layer above
   // stays as the fallback. The map fetches a source's tiles only for a visible layer: this one loads the tree tiles for WebGL and draws nothing.
   add({ id: "trees-src", type: "circle", source: "trees", "source-layer": "trees", minzoom: 15.5, filter: false, layout: { visibility: "none" } });
-  add({ id: "radar", type: "raster", source: "radar", layout: { visibility: "none" }, paint: { "raster-opacity": 0.5, "raster-fade-duration": 300 } });
   // bike network (winter: 4-season lanes stay green, the rest turns grey and dashed)
   add({ id: "net-casing", type: "line", source: "network", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.6, 16, 6] } });
@@ -340,8 +337,8 @@
     const s4 = ["==", ["get", "s4"], 1];
     map.setFilter("net-ab", on ? ["all", ["<=", ["get", "t"], 1], s4] : ["<=", ["get", "t"], 1]);
     map.setFilter("net-c", on ? ["all", ["==", ["get", "t"], 2], s4] : ["==", ["get", "t"], 2]);
-    map.getSource("radar").setTiles([WX.radarTiles(on)]);
     setMapTexts(); applyLayers();
+    wind.set(state.wxData, on);   // what an untyped precipitation is: snow in winter mode
     if (on) loadWeather();   // snow and ice status
     renderWxCard();
     classicsRouted = false;   // the classics re-route on the 4-season network
@@ -490,12 +487,13 @@
 
   // ------------------------------------------------------------------ wind & rain
   const wind = new WX.WindLayer(map, $("#wind"));
-  wind.follow(new WX.PrecipLayer(map, $("#precip")));   // rain rings or snow dots, only when it falls now (2026-11-03); same on / off as the streaks
+  const precip = new WX.PrecipLayer(map, $("#precip"));   // rain lines or snow flakes (2026-11-03): they replace the wind streaks while it falls now
+  wind.follow(precip);
   let wxTimer = null;
   async function loadWeather(force) {
     try {
       state.wxData = await WX.load(force);
-      wind.set(state.wxData);
+      wind.set(state.wxData, state.winter);
     } catch (e) { state.wxData = null; wind.set(null); console.warn(e); }
     renderWxCard(); if (state.routes.length) renderRoutes();
     if (state.mode === "ride") updateWindBadge(true);   // new weather mid-ride
@@ -529,9 +527,9 @@
   }
   // The card's rain row, or the snow row: what is falling now decides, and with nothing falling winter mode asks for the snow outlook
   function precipRow(wx) {
-    const wet = WX.precipNow(wx);
+    const wet = WX.precipNow(wx, state.winter);
     if (wet ? wet.kind === "snow" : state.winter) {
-      const s = WX.snowOutlook(wx);
+      const s = WX.snowOutlook(wx, state.winter);
       const txt = s.now ? t("snowNow", { cm: I.num(s.cm) }) : s.at ? t("snowAt", { h: s.at, p: s.prob != null ? I.pct(s.prob / 100) : "" }).replace(" ()", "") : t("noSnowFor", { n: s.dryHours });
       return `<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg><span>${txt}</span></div>`;
     }
@@ -560,7 +558,6 @@
       }
       rows.push(`<div class="wx-row wx-note">${t("noClearing")}</div>`);
     }
-    if (state.wx) rows.push(`<div class="wx-row wx-note">${t("radarCredit")}</div>`);
     card.innerHTML = rows.join(""); card.hidden = false;
   }
   map.on("rotate", () => { const a = $("#wx-card .wx-arrow"); if (a && state.wxData) a.style.transform = `rotate(${(state.wxData.now.dir + 180) % 360 - map.getBearing()}deg)`; });
@@ -1425,10 +1422,10 @@
     state.terrainOn = on;
     map.setTerrain(on ? { source: "terrain", exaggeration: CAM.terrain } : null);
   }
-  // 3D trees: the WebGL layer (added the first time it is needed, under the radar and the bike paths), or the flat pictures as the fallback
+  // 3D trees: the WebGL layer (added the first time it is needed, under the bike paths), or the flat pictures as the fallback
   function showTrees(on) {
     if (on && state.treesGL && !map.getLayer("trees-gl")) {
-      try { map.addLayer(treeLayer, "radar"); } catch (e) { treesFallback(e.message); }
+      try { map.addLayer(treeLayer, "net-casing"); } catch (e) { treesFallback(e.message); }
     }
     vis("trees-gl", on && state.treesGL); vis("trees-src", on && state.treesGL); vis("trees", on && !state.treesGL);
   }
@@ -1459,7 +1456,6 @@
     ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
     vis("bld-flat", toggles.buildings && !state.is3d); vis("bld-3d", toggles.buildings && state.is3d);
     showTrees(toggles.trees && state.is3d);
-    vis("radar", state.wx);
     setTerrain(toggles.terrain && state.is3d);
     // with a route on screen, keep only the POIs and works along it (plus metro and REM stations) to cut clutter
     const sel = state.routes[state.sel];
@@ -2193,7 +2189,7 @@
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
-    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup, trees: treeLayer, treesFallback };
+    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup, trees: treeLayer, treesFallback, wind, precip };
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
     computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };

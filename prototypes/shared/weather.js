@@ -1,5 +1,5 @@
-/* Wind, rain and snow for the app: Open-Meteo forecast (no key, CORS open), Environment Canada radar tiles,
-   and the wind's effect along a route. Classic script: window.BikeWeather. */
+/* Wind, rain and snow for the app: Open-Meteo forecast (no key, CORS open), the wind's effect along a route, and the moving
+   wind streaks, rain lines and snow flakes drawn over the map. Classic script: window.BikeWeather. */
 (function () {
   "use strict";
   const { bearing } = window.BikeRouter;
@@ -8,9 +8,6 @@
     "&current=temperature_2m,precipitation,rain,snowfall,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code" +
     "&hourly=precipitation,precipitation_probability,snowfall,snow_depth,temperature_2m" +
     "&past_days=1&forecast_days=2&wind_speed_unit=kmh&timezone=America%2FToronto";
-  // Environment Canada GeoMet radar (1 km): rain rate in summer, snow in winter mode
-  const radarTiles = (winter) => "https://geo.weather.gc.ca/geomet?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image/png&TRANSPARENT=TRUE" +
-    `&LAYERS=${winter ? "RADAR_1KM_RSNO" : "RADAR_1KM_RRAI"}&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256`;
 
   let cache = null, cachedAt = 0, pending = null;
   async function load(force = false) {
@@ -47,19 +44,22 @@
   }
 
   // What falls right now, from Open-Meteo's current values (snow wins when both show): snow if snowfall > 0 or WMO code 71-77 / 85-86
-  // (snow, snow showers); rain if rain or precipitation > 0 or code 51-67 / 80-82 (drizzle, rain, freezing rain, showers).
-  // rate is per hour (the current values are 15-minute amounts, like rainOutlook). Returns null when nothing falls.
+  // (snow, snow showers); rain if rain > 0 or code 51-67 / 80-82 (drizzle, rain, freezing rain, showers, so the data says rain).
+  // Precipitation with no type at all (only the total is above 0) is rain, and snow in winter mode (2026-11-03: Raph's call).
+  // rate is per hour (the current values are 15-minute amounts, like rainOutlook): mm of rain, cm of snow (an untyped total in mm is
+  // about 0.7 cm of snow, Open-Meteo's own 7 cm = 10 mm). Returns null when nothing falls.
   const codeIn = (c, ranges) => ranges.some(([a, b]) => c >= a && c <= b);
-  function precipNow(wx) {
+  function precipNow(wx, winter = false) {
     const n = wx && wx.now; if (!n) return null;
     const code = Number.isFinite(n.code) ? n.code : -1;
     if (n.snow > 0 || codeIn(code, [[71, 77], [85, 86]])) return { kind: "snow", rate: (n.snow || 0) * 4 };
-    if (n.rain > 0 || n.precip > 0 || codeIn(code, [[51, 67], [80, 82]])) return { kind: "rain", rate: Math.max(n.rain || 0, n.precip || 0) * 4 };
+    if (n.rain > 0 || codeIn(code, [[51, 67], [80, 82]])) return { kind: "rain", rate: Math.max(n.rain || 0, n.precip || 0) * 4 };
+    if (n.precip > 0) return winter ? { kind: "snow", rate: n.precip * 4 * 0.7 } : { kind: "rain", rate: n.precip * 4 };
     return null;
   }
   // Snow outlook for winter mode's card: snowing now, or the first hour in the next 6 with snow likely
-  function snowOutlook(wx) {
-    const p = precipNow(wx);
+  function snowOutlook(wx, winter = false) {
+    const p = precipNow(wx, winter);
     if (p && p.kind === "snow") return { now: true, cm: p.rate };
     const h = wx.next.find((x) => x.snow >= 0.1 || ((x.prob ?? 0) >= 50 && x.temp <= 0.5));
     return h ? { at: h.hour, prob: h.prob } : { dryHours: wx.next.length };
@@ -104,13 +104,19 @@
     };
   }
 
-  // ---- wind particles: drifting streaks over the map, in screen space, turned with the map's bearing ----------
-  class WindLayer {
-    constructor(map, canvas) {
+  // ---- weather on the map: wind streaks, or rain lines, or snow flakes (2026-11-03) ------------------------------------------
+  // Two canvases over the map, both in screen space and turned with the map's bearing: #wind (WindLayer, the grey streaks that show where the
+  // wind blows) and #precip (PrecipLayer, rain or snow). Only one shows at a time: while rain or snow falls now, it replaces the streaks.
+  // WindLayer drives both (follow): same weather, same on / off. Neither runs during a ride (the app switches them off), while the page is
+  // hidden, or under prefers-reduced-motion (the card still tells the weather). Both are sized to the map, pixel ratio capped at 2.
+  class Overlay {
+    constructor(map, canvas, { minDt, maxDt }) {
       this.map = map; this.canvas = canvas; this.ctx = canvas.getContext("2d");
-      this.parts = []; this.on = false; this.wind = { speed: 0, to: 0 }; this.last = 0; this.followers = [];
-      addEventListener("resize", () => this.resize());
-      document.addEventListener("visibilitychange", () => { if (!document.hidden && this.on) this.loop(); });
+      this.minDt = minDt; this.maxDt = maxDt; this.raf = 0; this.last = 0; this.w = this.h = 0;
+      this.calm = matchMedia("(prefers-reduced-motion: reduce)");
+      this.calm.addEventListener("change", () => this.sync());
+      document.addEventListener("visibilitychange", () => this.sync());
+      map.on("resize", () => this.resize());
       this.resize();
     }
     resize() {
@@ -118,7 +124,35 @@
       this.w = r.width; this.h = r.height;
       this.canvas.width = Math.round(r.width * dpr); this.canvas.height = Math.round(r.height * dpr);
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const n = Math.min(240, Math.round((r.width * r.height) / 7000));
+    }
+    // Show or hide the canvas and start or stop the loop; called whenever something it depends on changes (wanted() is the subclass's condition)
+    sync() {
+      const go = this.wanted() && !this.calm.matches;
+      this.canvas.hidden = !go;
+      if (!go) { cancelAnimationFrame(this.raf); this.raf = 0; this.ctx.clearRect(0, 0, this.w, this.h); this.idle(); return; }
+      if (!document.hidden && !this.raf) { this.last = performance.now(); this.queue(); }
+    }
+    idle() {}   // a subclass lets go of what it was drawing
+    queue() { this.raf = requestAnimationFrame((t) => this.frame(t)); }
+    frame(t) {
+      this.raf = 0;
+      if (document.hidden) return;   // the loop starts again when the page is shown (sync)
+      this.queue();
+      const dt = (t - this.last) / 1000;
+      if (dt < this.minDt) return;
+      this.last = t; this.step(Math.min(dt, this.maxDt));
+    }
+  }
+
+  // Wind only (nothing falling): small grey streaks drift across the map the way the wind blows.
+  class WindLayer extends Overlay {
+    constructor(map, canvas) {
+      super(map, canvas, { minDt: 0, maxDt: 0.05 });
+      this.on = false; this.known = false; this.falling = false; this.wind = { speed: 0, to: 0 }; this.followers = [];
+    }
+    resize() {
+      super.resize();
+      const n = Math.min(240, Math.round((this.w * this.h) / 7000));
       this.parts = Array.from({ length: n }, () => this.spawn(true));
     }
     spawn(anywhere) {
@@ -126,22 +160,15 @@
     }
     // Layers that follow this one (PrecipLayer): they get the same weather and the same on / off (weather toggle on, not riding)
     follow(layer) { this.followers.push(layer); }
-    set(wx) {   // wx null: the weather could not be loaded
+    // wx null: the weather could not be loaded, so the wind is not known and no streak points anywhere. winter: the app's winter mode (see precipNow)
+    set(wx, winter = false) {
+      this.known = !!wx; this.falling = !!precipNow(wx, winter);
       if (wx) this.wind = { speed: wx.now.wind, to: (wx.now.dir + 180) % 360 };
-      for (const f of this.followers) f.set(wx);
+      for (const f of this.followers) f.set(wx, winter);
+      this.sync();
     }
-    show(on) {
-      for (const f of this.followers) f.show(on);
-      this.on = on; this.canvas.hidden = !on;
-      if (on) { this.last = performance.now(); this.loop(); } else this.ctx.clearRect(0, 0, this.w, this.h);
-    }
-    loop() {
-      if (!this.on || document.hidden) return;
-      requestAnimationFrame((t) => {
-        const dt = Math.min(0.05, (t - this.last) / 1000); this.last = t;
-        this.step(dt); this.loop();
-      });
-    }
+    show(on) { this.on = on; for (const f of this.followers) f.show(on); this.sync(); }
+    wanted() { return this.on && this.known && !this.falling; }   // rain or snow falling now takes the picture over
     step(dt) {
       const ctx = this.ctx, a = (this.wind.to - this.map.getBearing()) * D2R;
       const sp = 26 + this.wind.speed * 4;               // px per second: visible even in a light breeze
@@ -161,94 +188,94 @@
     }
   }
 
-  // ---- rain and snow on the map: sparse and quiet, nothing like the wind streaks ----------------------------------------
-  // Rain, seen from above: small rings that appear at random spots, widen a little and fade (they stay where they land: no lines).
-  // Snow: a few soft small dots that drift slowly downwind with a gentle sway, turned with the map's bearing like the streaks.
-  // One canvas, screen space, redrawn about 30 times a second (it is slow, so that is plenty) and only while something falls, the layer
-  // is on, the page is visible and the person has not asked for reduced motion. WindLayer drives it (follow): same weather, same on / off.
-  const RAIN_FULL = 6, SNOW_FULL = 2;   // mm/h and cm/h at which the animation reaches its fullest (still sparse)
-  const strength = (rate, full) => 0.4 + 0.6 * Math.min(1, rate / full);   // 0.4 (light) .. 1
-  class PrecipLayer {
+  // ---- rain and snow: sparse and quiet, nothing like the wind streaks ----------------------------------------------------
+  // Rain: thin straight lines, longer and fainter than the streaks, falling fast and steadily (far ones fainter and slower than near ones).
+  // Snow: soft flakes that fall slowly and sway a little. Calm air (under CALM_KMH): straight down the screen. Wind: the fall tilts toward where
+  // the wind blows on the screen (so it follows the map's bearing) and the tilt grows with the speed up to a limit: strong wind reads as rain or
+  // snow driven along it. The density grows lightly with the rate. Redrawn about 30 times a second (it is slow, so that is plenty).
+  const RAIN_FULL = 6, SNOW_FULL = 2;   // mm/h and cm/h at which the density reaches its fullest (still sparse)
+  const CALM_KMH = 5;
+  const FALL = { rain: { speed: 360, per: 7, cap: 0.7 }, snow: { speed: 50, per: 2.2, cap: 0.9 } };   // px/s straight down; px/s of drift per km/h above CALM_KMH; most drift, as a share of the fall speed (the fall never stops)
+  // The velocity of an average line or flake on the screen (px/s, y down) for wind of kmh blowing toward toDeg on a map turned to bearingDeg
+  function fallVelocity(kind, kmh, toDeg, bearingDeg) {
+    const f = FALL[kind], a = (toDeg - bearingDeg) * D2R || 0;
+    const drift = Math.min(f.cap * f.speed, Math.max(0, kmh - CALM_KMH) * f.per) || 0;   // || 0: a missing speed or direction means no drift
+    return { vx: Math.sin(a) * drift, vy: f.speed - Math.cos(a) * drift };
+  }
+  const wrap = (v, lo, size) => ((v - lo) % size + size) % size + lo;
+  const EDGE = 44;   // px beyond the map where a rain line comes round again: longer than the longest line, so it jumps while out of sight
+
+  class PrecipLayer extends Overlay {
     constructor(map, canvas) {
-      this.map = map; this.canvas = canvas; this.ctx = canvas.getContext("2d");
-      this.shown = false; this.fall = null; this.wind = { speed: 0, to: 0 };
-      this.rings = []; this.flakes = []; this.sprites = {}; this.debt = 0; this.last = 0; this.raf = 0;
-      this.calm = matchMedia("(prefers-reduced-motion: reduce)");
-      this.calm.addEventListener("change", () => this.sync());
-      document.addEventListener("visibilitychange", () => this.sync());
-      map.on("resize", () => this.resize());
-      this.resize();
+      super(map, canvas, { minDt: 0.03, maxDt: 0.1 });
+      this.shown = false; this.fall = null; this.wind = { speed: 0, to: 0 }; this.sprites = {};
     }
-    resize() {
-      const r = this.map.getContainer().getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
-      this.w = r.width; this.h = r.height;
-      this.canvas.width = Math.round(r.width * dpr); this.canvas.height = Math.round(r.height * dpr);
-      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      this.flakes.length = 0;   // refilled to suit the new size
-    }
-    set(wx) {   // wx null: the weather could not be loaded, so nothing is known to fall
-      const f = precipNow(wx), was = this.fall && this.fall.kind;
-      this.fall = f && { kind: f.kind, strength: strength(f.rate, f.kind === "snow" ? SNOW_FULL : RAIN_FULL) };
+    resize() { super.resize(); this.parts = []; }   // refilled to suit the new size
+    set(wx, winter = false) {   // wx null: the weather could not be loaded, so nothing is known to fall
+      const f = precipNow(wx, winter), was = this.fall && this.fall.kind;
+      this.fall = f && { kind: f.kind, level: Math.min(1, f.rate / (f.kind === "snow" ? SNOW_FULL : RAIN_FULL)) };
       if (wx) this.wind = { speed: wx.now.wind, to: (wx.now.dir + 180) % 360 };
-      if ((f && f.kind) !== was) { this.rings.length = 0; this.flakes.length = 0; }
+      if ((f && f.kind) !== was) this.parts = [];
       this.sync();
     }
     show(on) { this.shown = on; this.sync(); }
-    // Show or hide the canvas and start or stop the loop; called whenever something it depends on changes
+    wanted() { return this.shown && !!this.fall; }
+    idle() { this.parts = []; }
     sync() {
-      const go = this.shown && !!this.fall && !this.calm.matches;
-      this.canvas.hidden = !go;
-      if (go) this.canvas.dataset.kind = this.fall.kind; else delete this.canvas.dataset.kind;
-      if (!go) { cancelAnimationFrame(this.raf); this.raf = 0; this.rings.length = 0; this.flakes.length = 0; this.ctx.clearRect(0, 0, this.w, this.h); return; }
-      if (!document.hidden && !this.raf) { this.last = performance.now(); this.queue(); }
+      super.sync();
+      if (this.canvas.hidden) delete this.canvas.dataset.kind; else this.canvas.dataset.kind = this.fall.kind;
     }
-    queue() { this.raf = requestAnimationFrame((t) => this.frame(t)); }
-    frame(t) {
-      this.raf = 0;
-      if (document.hidden) return;   // the loop starts again when the page is shown (sync)
-      this.queue();
-      const dt = (t - this.last) / 1000;
-      if (dt < 0.03) return;         // about 30 drawn frames a second
-      this.last = t; this.step(Math.min(dt, 0.1));
-    }
+    velocity() { return fallVelocity(this.fall.kind, this.wind.speed, this.wind.to, this.map.getBearing()); }
+    // How many lines or flakes the map holds: by area, a little more as it falls harder
+    count(areaPer, max) { return Math.min(max, Math.round(((this.w * this.h) / areaPer) * (0.65 + 0.35 * this.fall.level))); }
     step(dt) {
       this.ctx.clearRect(0, 0, this.w, this.h);
-      const night = document.body.classList.contains("night");
-      if (this.fall.kind === "rain") this.rain(dt, night); else this.snow(dt, night);
+      const night = document.body.classList.contains("night"), v = this.velocity();
+      if (this.fall.kind === "rain") { this.moveRain(v, dt); this.drawRain(v, night); } else { this.moveSnow(v, dt); this.drawSnow(v, night); }
     }
-    rain(dt, night) {
-      const ctx = this.ctx, k = this.fall.strength, rings = this.rings;
-      this.debt += dt * (3 + 7 * k) * Math.min(2.5, (this.w * this.h) / 330000);   // new rings a second: 6 to 10 on a phone screen
-      for (; this.debt >= 1; this.debt--) rings.push({ x: Math.random() * this.w, y: Math.random() * this.h, age: 0, life: 1.1 + Math.random() * 0.8, reach: 7 + Math.random() * 7 });
-      ctx.lineWidth = 1.4;
-      for (let i = rings.length - 1; i >= 0; i--) {
-        const g = rings[i]; g.age += dt;
-        const u = g.age / g.life; if (u >= 1) { rings.splice(i, 1); continue; }
-        const a = (night ? 0.6 : 0.55) * Math.min(1, u / 0.1) * Math.pow(1 - u, 1.5);   // appears at once, then fades out
-        ctx.strokeStyle = night ? `rgba(170, 210, 240, ${a.toFixed(3)})` : `rgba(38, 92, 136, ${a.toFixed(3)})`;
-        ctx.beginPath(); ctx.arc(g.x, g.y, 1.5 + g.reach * (1 - (1 - u) * (1 - u)), 0, 6.2832); ctx.stroke();   // widens quickly, then slows
+    line() {
+      const near = Math.random() < 0.4;
+      return { x: -EDGE + Math.random() * (this.w + 2 * EDGE), y: -EDGE + Math.random() * (this.h + 2 * EDGE), near,
+        s: near ? 1.05 + Math.random() * 0.15 : 0.8 + Math.random() * 0.15, len: near ? 28 + Math.random() * 10 : 18 + Math.random() * 6 };
+    }
+    moveRain(v, dt) {
+      const L = this.parts, want = this.count(4200, 120);   // 51 to 78 lines on a phone screen
+      while (L.length < want) L.push(this.line());
+      L.length = want;
+      for (const p of L) { p.x = wrap(p.x + v.vx * p.s * dt, -EDGE, this.w + 2 * EDGE); p.y = wrap(p.y + v.vy * p.s * dt, -EDGE, this.h + 2 * EDGE); }
+    }
+    drawRain(v, night) {
+      const ctx = this.ctx, mag = Math.hypot(v.vx, v.vy), ux = v.vx / mag, uy = v.vy / mag;   // each line trails behind its head, along the fall
+      ctx.lineCap = "round";
+      for (const near of [false, true]) {
+        ctx.lineWidth = near ? 1.3 : 0.9;
+        ctx.strokeStyle = night ? `rgba(190, 214, 238, ${near ? 0.5 : 0.3})` : `rgba(56, 92, 132, ${near ? 0.6 : 0.4})`;
+        ctx.beginPath();
+        for (const p of this.parts) if (p.near === near) { ctx.moveTo(p.x - ux * p.len, p.y - uy * p.len); ctx.lineTo(p.x, p.y); }
+        ctx.stroke();
       }
     }
     flake(anywhere) {
       const life = 8 + Math.random() * 8;
       return { x: Math.random() * this.w, y: Math.random() * this.h, age: anywhere ? Math.random() * life * 0.8 : 0, life, r: 1.7 + Math.random() * 1.9,
-        v: 0.7 + Math.random() * 0.6, sway: 4 + Math.random() * 6, freq: 0.9 + Math.random() * 0.8, phase: Math.random() * 6.2832 };
+        v: 0.7 + Math.random() * 0.6, sway: 3 + Math.random() * 4, freq: 0.9 + Math.random() * 0.8, phase: Math.random() * 6.2832 };
     }
-    snow(dt, night) {
-      const ctx = this.ctx, k = this.fall.strength, fl = this.flakes, img = this.sprite(night);
-      const want = Math.min(60, Math.round(((this.w * this.h) / 12000) * (0.5 + 0.5 * k)));   // 19 to 27 on a phone screen
+    moveSnow(v, dt) {
+      const fl = this.parts, want = this.count(12000, 60);   // 18 to 27 flakes on a phone screen
       while (fl.length < want) fl.push(this.flake(true));
       fl.length = want;
-      const a = (this.wind.to - this.map.getBearing()) * D2R, speed = Math.min(36, 7 + this.wind.speed * 0.9);   // px a second, downwind
-      const ux = Math.sin(a), uy = -Math.cos(a);
       for (let i = 0; i < fl.length; i++) {
         const f = fl[i]; f.age += dt;
-        const u = f.age / f.life;
-        if (u >= 1 || f.x < -20 || f.y < -20 || f.x > this.w + 20 || f.y > this.h + 20) { fl[i] = this.flake(false); continue; }
-        const sway = f.sway * f.freq * Math.cos(f.phase + f.freq * f.age);   // sideways speed, across the wind
-        f.x += (ux * speed * f.v - uy * sway) * dt; f.y += (uy * speed * f.v + ux * sway) * dt;
+        f.x += v.vx * f.v * dt; f.y += v.vy * f.v * dt;   // x, y: where the flake would be without its sway
+        if (f.age >= f.life || f.x < -20 || f.y < -20 || f.x > this.w + 20 || f.y > this.h + 20) fl[i] = this.flake(false);
+      }
+    }
+    drawSnow(v, night) {
+      const ctx = this.ctx, img = this.sprite(night), mag = Math.hypot(v.vx, v.vy), px = -v.vy / mag, py = v.vx / mag;   // the sway runs across the fall
+      for (const f of this.parts) {
+        const u = f.age / f.life, sw = f.sway * Math.sin(f.phase + f.freq * f.age), d = f.r * 3.4;
         ctx.globalAlpha = (night ? 0.8 : 0.9) * Math.min(1, u / 0.12, (1 - u) / 0.25);   // fades in and out, never pops
-        const d = f.r * 3.4; ctx.drawImage(img, f.x - d / 2, f.y - d / 2, d, d);
+        ctx.drawImage(img, f.x + px * sw - d / 2, f.y + py * sw - d / 2, d, d);
       }
       ctx.globalAlpha = 1;
     }
@@ -266,5 +293,5 @@
     }
   }
 
-  window.BikeWeather = { load, rainOutlook, snowOutlook, precipNow, windOnRoute, radarTiles, WindLayer, PrecipLayer, speedWith };
+  window.BikeWeather = { load, rainOutlook, snowOutlook, precipNow, windOnRoute, fallVelocity, WindLayer, PrecipLayer, speedWith };
 })();

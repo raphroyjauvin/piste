@@ -43,7 +43,7 @@
 <main>
   <header>
     <h1>Piste</h1>
-    <p>A Montréal bike-commuter app, in the prototype stage. It routes you along bike paths as much as it can, warns you calmly before any stretch without one, and shows the hills before you reach them. It covers the whole island, in English and French, with a winter mode, a wind and rain layer and live BIXI bikes. Built on City of Montréal open data (bike network, Géobase, live bike-path tiles), OpenStreetMap, NRCan 2023 and 2024 LiDAR (terrain and building heights), STM, BIXI, Open-Meteo and Environment Canada radar.</p>
+    <p>A Montréal bike-commuter app, in the prototype stage. It routes you along bike paths as much as it can, warns you calmly before any stretch without one, and shows the hills before you reach them. It covers the whole island, in English and French, with a winter mode, a wind and rain layer and live BIXI bikes. Built on City of Montréal open data (bike network, Géobase, live bike-path tiles), OpenStreetMap, NRCan 2023 and 2024 LiDAR (terrain and building heights), STM, BIXI and Open-Meteo.</p>
     <div class="metro" aria-hidden="true"><i style="background:var(--green)"></i><i style="background:var(--orange)"></i><i style="background:var(--yellow)"></i><i style="background:var(--blue)"></i></div>
     <div class="actions"><a class="open" href="a-positron/">Open the app</a><a class="open alt" href="phone.html">See it on phone screens</a></div>
   </header>
@@ -135,7 +135,7 @@
     <div>
       <h2>Wind, rain and live BIXI</h2>
       <ul>
-        <li>One button shows Environment Canada radar, drifting wind streaks and a card with the wind, a rain outlook and what the wind does to your ride ("Headwind for 95% of the ride · about +1 min")</li>
+        <li>One button shows drifting wind streaks (rain lines or snow flakes instead while it rains or snows) and a card with the wind, a rain outlook and what the wind does to your ride ("Headwind for 95% of the ride · about +1 min")</li>
         <li>BIXI stations show the bikes available right now: green, orange when 1–2 are left, grey when empty; tap a station for e-bikes and free docks</li>
         <li>Forecast from Open-Meteo, BIXI from its public live feed</li>
       </ul>
@@ -212,7 +212,7 @@
       </tbody>
     </table></div>
     <h2 style="margin-top:18px">Run it locally</h2>
-    <p>Double-click <code>C:\bikeapp\prototypes\start-prototypes.bat</code>, then open <code>http://localhost:8765/</code>. The basemap tiles (OpenFreeMap), address search (Ville de Montréal), the weather (Open-Meteo forecast, Environment Canada radar) and live BIXI need an internet connection (so do terrain tiles beyond the island, from AWS, which are only a fallback); everything else, including the relief, contour, building and terrain tiles and the ride photos, is local.</p>
+    <p>Double-click <code>C:\bikeapp\prototypes\start-prototypes.bat</code>, then open <code>http://localhost:8765/</code>. The basemap tiles (OpenFreeMap), address search (Ville de Montréal), the weather (Open-Meteo forecast) and live BIXI need an internet connection (so do terrain tiles beyond the island, from AWS, which are only a fallback); everything else, including the relief, contour, building and terrain tiles and the ride photos, is local.</p>
   </section>
 </main>
 </body>
