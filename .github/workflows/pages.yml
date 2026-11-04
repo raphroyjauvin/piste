@@ -18,7 +18,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30   # the suite took 15-17 min on GitHub's runner by 2026-11-03 (69 groups)
     concurrency:
       group: test-${{ github.ref }}
       cancel-in-progress: true

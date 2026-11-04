@@ -129,6 +129,8 @@ async function run(name, url, fn, viewport = { width: 1440, height: 900 }, ctxOp
   clearTimeout(timer);
   if (NET_REPORT) console.log(`      outside hosts: ${[...hosts].sort().map((h) => (FIX && STUBBED.has(h) ? h + " (saved copy)" : h)).join(", ") || "none"}`);
   say(results.at(-1));
+  // on GitHub, a slow group shows up as a note on the run (readable without the full log), so a creeping job time can be traced
+  if (process.env.GITHUB_ACTIONS && +results.at(-1).secs > 60) console.log(`::warning title=Slow test group::${name}: ${results.at(-1).secs} s`);
   try { await ctx.close(); } catch (e) { /* the page may already be gone */ }
 }
 // Wait for the map to be idle (all tiles drawn). MapLibre fires 'idle' only once per burst of work, so if the map had already gone idle before
