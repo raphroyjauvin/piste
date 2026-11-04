@@ -2231,7 +2231,9 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
   // the share button: icon only, named, 44 px, not in the tour; Web Share gets the address that reopens the route
   await page.evaluate(shareStub);
   const btn = await page.evaluate(() => { const b = document.querySelector("#detail .share-btn"), r = b && b.getBoundingClientRect();
-    return b && { label: b.getAttribute("aria-label"), text: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), svg: !!b.querySelector("svg"), tour: window.pisteTour.steps.join() }; });
+    const g = document.querySelector("#ride-go").getBoundingClientRect();   // 2026-11-04: right of "Let's ride!", on its line, as tall
+    return b && { label: b.getAttribute("aria-label"), text: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), svg: !!b.querySelector("svg"), tour: window.pisteTour.steps.join(),
+      rightOfRide: r.left >= g.right && Math.abs(r.top - g.top) < 1 && Math.abs(r.height - g.height) < 1, nearHeading: !!b.closest(".det-head, h2") }; });
   await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1);
   const web = await page.evaluate(() => { const s = window.__app.state, ll = (p) => p.map((v) => +v.toFixed(5)).join(","); const d = window.__shared[0];
     return { url: d && d.url, want: `${location.origin}${location.pathname}?from=${ll(s.from)}&to=${ll(s.to)}` }; });
@@ -2255,7 +2257,7 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
   const loops = await page.evaluate(async () => { const a = window.__app; a.setSuggMode("custom"); await a.computeSuggestions(true); return !document.querySelector(".share-btn"); });
   const ok = cards.n >= 1 && cards.subs.every((x) => !/stretch|without a bike path|tronçon/i.test(x)) && cards.pct.every((x) => /on bike paths/.test(x))
     && wind.same && wind.customOnly && wind.hiddenInGo
-    && btn && btn.label === "Share this route" && btn.text === "" && btn.svg && btn.w >= 44 && btn.h >= 44 && !/share/i.test(btn.tour)
+    && btn && btn.label === "Share this route" && btn.text === "" && btn.svg && btn.w >= 44 && btn.h >= 44 && btn.rightOfRide && !btn.nearHeading && !/share/i.test(btn.tour)
     && web.url === web.want && !/welcome|notrack/.test(web.url) && copied.text === web.url && copied.toast === "Link copied" && failed === "Couldn't copy the link"
     && again === was && /\?classic=oldport$/.test(classic) && !/welcome|notrack/.test(classic) && loops;
   return { ok, cards, wind, btn, web, copied, failed, was, again, classic, loops };

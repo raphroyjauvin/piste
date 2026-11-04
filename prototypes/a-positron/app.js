@@ -1380,15 +1380,15 @@
       : `<div class="no-gaps">${t("lanesWhole")}</div>`;
     const turns = r.maneuvers.map((m) => `<li>${C.esc(I.maneuver(m))} <span class="turn-at">· ${C.fmtKm(m.at)}</span></li>`).join("");
     const share = canShare() ? `<button type="button" class="share-btn" aria-label="${t("share")}" title="${t("share")}">${SHARE_ICON}</button>` : "";
-    const withShare = (html) => (share ? `<div class="det-head">${html}${share}</div>` : html), elev = `<h2>${t("elevation")}</h2>`;
-    const classicHead = classic ? `<div class="classic-summary">${withShare(`<b>${C.esc(routeTitle(sel))}</b>`)}<span>${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t("climbM", { m: Math.round(r.climb) })}</span>${compBar(r)}<div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></div>` : "";
+    const elev = `<h2>${t("elevation")}</h2>`;   // share sits next to "Let's ride!" (2026-11-04): beside a heading it read as "share the elevation"
+    const classicHead = classic ? `<div class="classic-summary"><b>${C.esc(routeTitle(sel))}</b><span>${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t("climbM", { m: Math.round(r.climb) })}</span>${compBar(r)}<div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></div>` : "";
     const wl = state.wx && state.wxData ? `<p class="wind-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3"/></svg>${C.esc(windLine(r))}</p>` : "";
-    det.innerHTML = `${classicHead}${classic ? elev : withShare(elev)}<div class="profile">${C.profileSVG(r, { width: 336, height: 92, tierColors: TIER_BAR, gapShade: "rgba(239,143,69,.14)",
+    det.innerHTML = `${classicHead}${elev}<div class="profile">${C.profileSVG(r, { width: 336, height: 92, tierColors: TIER_BAR, gapShade: "rgba(239,143,69,.14)",
         fill: "#e6edf2", stroke: "#6f8799", text: "#7b858f", climbs: sel.climbs, climbFill: CLIMB.fill, climbText: "#7a5a3a", minRange: 30, headroom: 0.25, gaps })}</div>
       <p class="climb-note">${climbSummary(r, sel.climbs)}</p>${wl}
       <h2>${t(state.winter ? "withoutLaneWinter" : "withoutLane")}</h2>${gapHtml}
       <details class="turns"><summary>${t("turnByTurn", { n: r.maneuvers.length })}</summary><ol>${turns}</ol></details>
-      <button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>
+      <div class="ride-row"><button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>${share}</div>
       ${gpsDefault() ? `<button type="button" id="ride-preview" class="ride-preview">${t("previewRide")}</button>` : ""}`;
     det.querySelectorAll(".gap-item").forEach((b) => b.addEventListener("click", () => {
       const g = gaps[+b.dataset.g]; const cur = C.buildCursor(r); const p = cur.at(g.start + g.length / 2);

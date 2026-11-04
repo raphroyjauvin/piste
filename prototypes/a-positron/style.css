@@ -497,9 +497,11 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
 /* you are here (Use my location, or on opening the app) */
 .me-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--blue); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(0, 149, 230, .18), 0 1px 4px rgba(0, 40, 70, .35); pointer-events: none; }
 body.riding .me-dot { display: none; }
-.det-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -10px 0; }   /* the 44 px button lends its height to the gaps around it */
-.share-btn { flex: none; width: 44px; height: 44px; margin-right: -12px; padding: 0; border: 0; border-radius: 50%; background: none; display: grid; place-items: center; color: var(--ink-3); }
-.share-btn:hover { color: var(--blue-deep); }
+.ride-row { display: flex; gap: 8px; }
+.ride-row .ride-go { flex: 1; }
+/* next to "Let's ride!": the same height, a quiet secondary button */
+.share-btn { flex: none; width: 52px; min-height: 44px; padding: 0; border: 0; border-radius: 12px; background: var(--blue-soft); display: grid; place-items: center; color: var(--blue-deep); }
+.share-btn:hover { background: #d3eaf8; }
 .share-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #place-form .dialog-buttons { flex-wrap: wrap; }
 .pl-use { align-self: flex-start; min-height: 44px; padding: 0 2px; border: 0; background: none; color: var(--blue-deep); font: 700 14px/1 var(--font-ui); }
