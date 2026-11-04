@@ -665,7 +665,7 @@
       sugTarget = el.id; clearTimeout(sugTimer); closeList(false);
       sugTimer = setTimeout(async () => {
         const text = el.value;
-        if (recentMatches(text).length) showSuggest(text, []);   // recent places first, without waiting for the address service
+        if (recentMatches(text).length || savedMatches(text).length) showSuggest(text, []);   // saved and recent places first, without waiting for the address service
         showSuggest(text, text.trim() ? await geocoder.search(text) : []);
       }, 160);
     });
@@ -685,11 +685,20 @@
   // at most 3, then "Clear recent places", then the address results (leaving out any that are the same place as a recent one).
   const fold = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
   const recentMatches = (text) => { const q = fold(text.trim()); return q ? recents.filter((r) => fold(r.name).includes(q)).slice(0, 3) : []; };
+  // Saved places in the pop-up (2026-11-04), first of all: Home / Work when the typed text starts one of their words (2 letters or more,
+  // English or French, whatever the language shown), then the saved places whose name holds the text. Unset Home / Work don't show.
+  const HOME_WORK_WORDS = { home: ["home", "maison", "domicile"], work: ["work", "travail", "bureau"] };
+  function savedMatches(text) {
+    const q = fold(text.trim()); if (!q) return [];
+    const fixed = q.length < 2 ? [] : ["home", "work"].filter((k) => kindIndex(k) >= 0 && HOME_WORK_WORDS[k].some((w) => w.startsWith(q))).map((k) => places[kindIndex(k)]);
+    return [...fixed, ...custom().map((x) => x.p).filter((p) => fold(p.name).includes(q))];
+  }
   function showSuggest(text, geo) {
     sugText = text; sugGeo = geo; sugOffline = !!geo.offline; sugActive = -1;
+    const saved = savedMatches(text).map((p) => ({ label: placeName(p), sub: p.kind ? p.name : "", icon: p.kind || "star", place: p, lon: p.ll[0], lat: p.ll[1] }));
     const recent = recentMatches(text).map((r) => ({ label: r.name, sub: t("recentTag"), lon: r.ll[0], lat: r.ll[1] }));
-    const dup = (g) => recent.some((r) => r.label === g.label || (Math.abs(r.lon - g.lon) < 1e-4 && Math.abs(r.lat - g.lat) < 1e-4));
-    sugItems = [...recent, ...(recent.length ? [{ label: t("clearRecents"), clear: true }] : []), ...geo.filter((g) => !dup(g))];
+    const dup = (g) => [...saved, ...recent].some((r) => r.label === g.label || (Math.abs(r.lon - g.lon) < 1e-4 && Math.abs(r.lat - g.lat) < 1e-4));
+    sugItems = [...saved, ...recent, ...(recent.length ? [{ label: t("clearRecents"), clear: true }] : []), ...geo.filter((g) => !dup(g))];
     renderSuggest();
   }
   function clearRecents() { recents = []; writeList("recents", recents); showSuggest(sugText, sugGeo); }
@@ -697,7 +706,8 @@
     if (!sugItems.length && !sugOffline) { sug.hidden = true; return; }
     if (search.which) placeSuggest();
     else { const field = (sugTarget === "from" ? fromEl : toEl).closest(".field"); sug.style.top = field.offsetTop + field.offsetHeight + 4 + "px"; }
-    sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}${it.clear ? " clear" : ""}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("")
+    const text = (it) => `<span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small>`;
+    sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}${it.clear ? " clear" : ""}${it.icon ? " saved" : ""}">${it.icon ? `${PLACE_ICON[it.icon]}<span class="sg-text">${text(it)}</span>` : text(it)}</li>`).join("")
       + (sugOffline ? `<li class="note">${t("searchOffline")}</li>` : "");   // no signal: the address service is out of reach
     sug.hidden = false;
     sug.querySelectorAll("li[data-i]").forEach((li) => {
@@ -708,6 +718,7 @@
   }
   function choose(it) {
     if (it.clear) { clearRecents(); return; }   // the pop-up stays, minus the recent places
+    if (it.place) { usePlace(it.place); return; }   // a saved place: used exactly as in the ★ menu
     sug.hidden = true; sugItems = [];
     const which = sugTarget;
     setPoint(which, [it.lon, it.lat], it.label);
@@ -785,9 +796,8 @@
   function clearField(which) {   // the x: that place goes (field, marker, route and route cards); the other place stays
     const had = !!state[which];
     clearPoint(which);
-    if (search.which) leaveSearch(search.before);   // phones: the keyboard closes, and the x never opens it
-    else if (!isPhone()) (which === "from" ? fromEl : toEl).focus({ preventScroll: true });
-    if (had) recompute(true);
+    if (search.which === which) { clearTimeout(sugTimer); closeList(false); sug.hidden = true; sugItems = []; }   // typing: stay in the bar, as if the text were deleted by hand
+    if (had) recompute(true);   // the x never moves the focus: an unfocused bar stays unfocused (no keyboard), a bar being typed in keeps it
   }
   function abandonSearch(sheetAfter) {   // leave the typing state with the places as they were
     const which = search.which; if (!which) return;
@@ -862,9 +872,10 @@
   // A tap that opens search moves the card up before the finger lifts. iPhone Safari then sends that tap's mouse events to whatever
   // is under the finger by then (the card's background), takes it as a tap outside and closes the keyboard, which closes search.
   // So the rest of that tap is cancelled: its touchend, and any mouse events it still produces in the next moment.
-  let tapOpenedSearch = false, swallowUntil = 0;
+  let tapOpenedSearch = false, swallowUntil = 0, clearSwallowUntil = 0;   // clearSwallowUntil: after a finger's ✕, see below
   for (const t of ["mousedown", "mouseup", "click"]) document.addEventListener(t, (e) => {
-    if (performance.now() < swallowUntil && e.target !== fromEl && e.target !== toEl) { e.preventDefault(); e.stopPropagation(); }
+    const now = performance.now();
+    if ((now < swallowUntil && e.target !== fromEl && e.target !== toEl) || now < clearSwallowUntil) { e.preventDefault(); e.stopPropagation(); }
   }, true);
   for (const el of [fromEl, toEl]) {
     el.addEventListener("pointerdown", (e) => {
@@ -881,7 +892,13 @@
       sugTarget = el.id;
     });
   }
-  document.querySelectorAll(".clear").forEach((b) => onPress(b, () => clearField(b.dataset.target)));
+  // The ✕ hides itself as it clears, so the mouse events a finger's tap still sends land on the bar now under it and would focus it
+  // (the keyboard opens). A finger's ✕ therefore cancels its touchend and swallows any mouse events that follow.
+  document.querySelectorAll(".clear").forEach((b) => {
+    onPress(b, () => clearField(b.dataset.target));
+    b.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") clearSwallowUntil = performance.now() + 400; });
+    b.addEventListener("touchend", (e) => e.preventDefault(), { passive: false });
+  });
 
   // start bar, left button: "Use my location" (the browser asks once; a refusal or failure gets a calm message)
   const locateBtn = $("#locate");

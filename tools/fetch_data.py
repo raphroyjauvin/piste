@@ -329,15 +329,56 @@ out center tags;""")
     print(f"ok {out.name}: {len(data.get('elements', []))} elements, {out.stat().st_size / 1e6:.1f} MB in {time.time() - t:.0f}s")
 
 
+# ---- Closed businesses (2026-11-04): fresher OSM places, and the City's food-establishment registry ----
+# Both go to NEW dated files, never over an older raw file; the POI builders read the newest (tools/poi_closed.py, latest_raw).
+FOOD_REGISTRY = "https://donnees.montreal.ca/dataset/c1d65779-d3cb-44e8-af0a-b9f2c5f7766d/resource/28a4957d-732e-48f9-8adb-0624867d9bb0/download/businesses.csv"
+
+
+def task_food_registry(refresh):
+    """Ville de Montréal, "Établissements alimentaires" (food inspections; CC BY 4.0): every establishment with its status (Ouvert / Fermé) and coordinates."""
+    rel = f"mtl_etablissements_alimentaires/businesses_{dt.date.today().isoformat()}.csv"
+    download(rel, FOOD_REGISTRY, "Ville de Montreal (donnees.montreal.ca), Etablissements alimentaires", "CC BY 4.0", False)
+
+
+def task_osm_fresh(refresh):
+    """The island POI and shop queries again, into pois_island_<date>.json / shops_island_<date>.json. Public Overpass servers are often
+    overloaded: overpass() tries three of them with growing pauses. If none answers, the task stops and the older files stay in use."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # python -I does not put the script folder on sys.path
+    import island_tiles as it   # imported here only: it needs numpy and rasterio, which the other tasks here do not
+    import poi_closed
+    pc_latest = lambda stem: poi_closed.latest_raw(RAW / "osm_overpass", stem)   # noqa: E731 - what the builders will read
+    day = dt.date.today().isoformat()
+    for stem, q in (("pois_island", it._q_pois), ("shops_island", it._q_shops)):
+        out = RAW / "osm_overpass" / f"{stem}_{day}.json"
+        if out.exists():
+            print(f"skip (exists) {out.name}")
+            continue
+        before = [len(json.loads(f.read_text(encoding="utf-8")).get("elements", [])) for f in sorted((RAW / "osm_overpass").glob(f"{stem}*.json"))[-1:]]
+        t = time.time()
+        try:
+            data = it._overpass_island(q, it.ISLAND)
+        except Exception as ex:  # noqa: BLE001 - the public servers answer 502/504 for hours at a time
+            print(f"No Overpass server answered for {stem} ({ex}). Nothing saved: the POI builders keep using {pc_latest(stem).name}.")
+            return
+        n = len(data.get("elements", []))
+        if before and n < 0.5 * before[0]:   # a half-empty answer is a server fault, not a city that lost half its places
+            raise RuntimeError(f"{stem}: only {n} elements against {before[0]} before; not saved")
+        out.write_text(json.dumps(data), encoding="utf-8")
+        log("osm_overpass\\" + out.name, OVERPASS + " (query in tools/island_tiles.py, island bbox)", "OpenStreetMap contributors", "ODbL 1.0", out)
+        print(f"ok {out.name}: {n} elements, {out.stat().st_size / 1e6:.1f} MB in {time.time() - t:.0f}s")
+        time.sleep(5)
+
+
 TASKS = {"opendata": task_opendata, "gtfs": task_gtfs, "osm": task_osm, "mtl_tiles": task_mtl_tiles,
-         "dem": task_dem, "island": task_island, "rem": task_rem}
+         "dem": task_dem, "island": task_island, "rem": task_rem, "food_registry": task_food_registry, "osm_fresh": task_osm_fresh}
+ON_DEMAND = {"osm_fresh"}   # not part of "all": each run on a new day makes another dated file
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("task", choices=[*TASKS, "all"])
     ap.add_argument("--refresh", action="store_true")
     a = ap.parse_args()
-    for name in (TASKS if a.task == "all" else [a.task]):
+    for name in ([k for k in TASKS if k not in ON_DEMAND] if a.task == "all" else [a.task]):
         print(f"== {name}")
         sys.stdout.flush()
         TASKS[name](a.refresh)

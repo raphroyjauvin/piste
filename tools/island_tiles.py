@@ -41,6 +41,7 @@ from pyproj import Transformer
 from PIL import Image
 
 import build_layers as bl
+import poi_closed as pc
 import fetch_data as fd
 
 ROOT = bl.ROOT
@@ -883,8 +884,12 @@ def poi_kind(t):
 
 
 def task_pois():
-    els = json.loads((RAW / "osm_overpass" / "pois_island.json").read_text(encoding="utf-8"))["elements"]
-    shop_els = json.loads((RAW / "osm_overpass" / "shops_island.json").read_text(encoding="utf-8"))["elements"]
+    osm = RAW / "osm_overpass"
+    pois_file, shops_file = pc.latest_raw(osm, "pois_island"), pc.latest_raw(osm, "shops_island")   # the newest download of each
+    print(f"  OSM files: {pois_file.name}, {shops_file.name}")
+    els, why1 = pc.split_open(json.loads(pois_file.read_text(encoding="utf-8"))["elements"])   # closed by their own OSM tags: left out
+    shop_els, why2 = pc.split_open(json.loads(shops_file.read_text(encoding="utf-8"))["elements"])
+    closed_osm = collections.Counter(why1) + collections.Counter(why2)
     chains = bl.poi_chain_names([el.get("tags", {}) for el in els + shop_els])   # a chain's branches without a brand tag
     out, n_parking_dropped = [], 0
     for el in els:
@@ -930,6 +935,9 @@ def task_pois():
     for name, lon, lat, lines in bl.metro_stations():
         if in_box(lon, lat, ISLAND, 0.01):
             out.append(["metro", name, lon, lat, lines])
+    registry, registry_file = pc.Registry.load(RAW / "mtl_etablissements_alimentaires")
+    out, closed_report = pc.drop_registry_closed(out, registry)   # food places the City's registry shows as closed
+    pc.print_report(closed_report, closed_osm, registry_file)
     c = collections.Counter(p[0] for p in out)
     print("  POIs:", dict(c.most_common()), f"(bike racks outside the study area left out: {n_parking_dropped})")
     tails = [p[4:] for p in out if p[0] not in ("bixi", "metro") and len(p) > 4]

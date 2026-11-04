@@ -22,7 +22,8 @@
 // A group can ask for Playwright's WebKit (the iPhone's engine) with ctxOpts.webkit: true, for checks on this PC; it needs `npx playwright-core install webkit`.
 // None does in CI: the runner has no WebKit (the double-tap group runs in Chromium; its real guard is the touch-action check).
 import { chromium, webkit } from "playwright-core";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const BASE = process.env.PISTE_BASE || "http://localhost:8765/";
 const APP = process.env.PISTE_APP || "a-positron/index.html";   // PISTE_APP=index.html: a site built by tools/build_site.py (the app at the root)
@@ -691,10 +692,10 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   await page.keyboard.press("Control+A"); await page.keyboard.type("marché jean"); await until(page, suggestShown);
   const list = await page.evaluate(() => { const l = document.querySelector("#suggest"), p = document.querySelector("#panel");
     return { shown: !l.hidden, aboveCard: l.getBoundingClientRect().bottom <= p.getBoundingClientRect().top + 1, n: l.children.length }; });
-  // the x (2026-10-31) clears the destination: field, point and route go, the search ends, and the keyboard is not opened
+  // the x (2026-10-31) clears the destination: field, point and route go. While typing (2026-11-04) the search and the focus stay as they are
   await page.click('.clear[data-target="to"]'); await page.waitForTimeout(500);
   const cancelled = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), cleared: window.__app.state.to === null && document.querySelector("#to").value === "" && window.__app.state.routes.length === 0,
-    noKeyboard: !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName), startKept: !!window.__app.state.from && document.querySelectorAll(".end-pin").length === 1 }));
+    stillTyping: document.activeElement.id === "to", startKept: !!window.__app.state.from && document.querySelectorAll(".end-pin").length === 1 }));
   // with no destination yet, the return key on a typed start moves straight on to the destination bar
   await page.evaluate(() => { const s = window.__app.state; s.to = null; s.toLabel = ""; document.querySelector("#to").value = ""; });
   const fr = await page.locator("#from").boundingBox();
@@ -709,7 +710,7 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   const done = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), routes: window.__app.state.routes.length, sheet: document.querySelector("#panel").dataset.sheet }));
   return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW
       && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.chipsTop && docked.chipsBottom <= docked.kbTop && docked.chipsBottom >= docked.kbTop - 30
-      && list.shown && list.aboveCard && !cancelled.searching && cancelled.cleared && cancelled.noKeyboard && cancelled.startKept && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
+      && list.shown && list.aboveCard && cancelled.searching && cancelled.cleared && cancelled.stillTyping && cancelled.startKept && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
     half, full, peek, ...layout, docked, list, cancelled, moved, done };
 }, { width: 402, height: 874 });
 
@@ -1729,14 +1730,24 @@ await run("search bars (phone): x never opens the keyboard, bars keep their layo
   const fit = await page.evaluate(() => { const panel = document.querySelector("#panel").getBoundingClientRect();
     return ["from", "to"].map((w) => { const f = document.querySelector("#" + w).closest(".field").getBoundingClientRect(), i = document.querySelector("#" + w).getBoundingClientRect();
       return { insideCard: f.left >= panel.left && f.right <= panel.right, inputW: Math.round(i.width), font: parseFloat(getComputedStyle(document.querySelector("#" + w)).fontSize), h: Math.round(f.height) }; }); });
+  const card = () => ({ sheet: document.querySelector("#panel").dataset.sheet, h: Math.round(document.querySelector("#panel").getBoundingClientRect().height), searching: document.body.classList.contains("searching") });
+  const before = await page.evaluate(card);
   await page.tap('.clear[data-target="to"]'); await page.waitForTimeout(400);
   const afterTo = await page.evaluate(searchSnap);
   const kb = await page.evaluate(() => ({ active: document.activeElement.tagName, searching: document.body.classList.contains("searching") }));
   await page.tap('.clear[data-target="from"]'); await page.waitForTimeout(400);
   const afterBoth = await page.evaluate(searchSnap);
+  const kept = { ...(await page.evaluate(card)), active: await page.evaluate(() => document.activeElement.tagName) };
+  // typing in the bar (2026-11-04): the x empties it but the bar keeps the focus and the search stays open
+  await page.tap("#to"); await until(page, () => document.body.classList.contains("searching") && document.activeElement.id === "to");
+  await page.keyboard.type("abc"); await until(page, () => document.querySelector('.clear[data-target="to"]').getBoundingClientRect().width > 0);
+  await page.tap('.clear[data-target="to"]'); await page.waitForTimeout(400);
+  const typing = await page.evaluate(() => ({ active: document.activeElement.id, searching: document.body.classList.contains("searching"), value: document.querySelector("#to").value }));
   const ok = fit.every((f) => f.insideCard && f.inputW >= 150 && f.font >= 16 && f.h >= 44) && afterTo.to === null && afterTo.routes === 0 && afterTo.pins === 1 && !/^(INPUT|TEXTAREA)$/.test(kb.active) && !kb.searching
-    && afterBoth.from === null && afterBoth.pins === 0 && afterBoth.routes === 0;
-  return { ok, fit, afterTo, kb, afterBoth };
+    && afterBoth.from === null && afterBoth.pins === 0 && afterBoth.routes === 0
+    && !before.searching && !kept.searching && kept.h === before.h && kept.sheet === before.sheet && !/^(INPUT|TEXTAREA)$/.test(kept.active)
+    && typing.active === "to" && typing.searching && typing.value === "";
+  return { ok, fit, afterTo, kb, afterBoth, before, kept, typing };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ the language button in the card's header (2026-10-31)
@@ -2442,6 +2453,61 @@ await run("search: recent destinations show in the typing pop-up only (matching 
     remembered: out.remembered === "Rue Rachel Est & Avenue Papineau" && out.again.rows[0].name === out.remembered && out.again.rows[0].sub === "Recent",
     clearRecents: out.cleared.stored === 0 && out.cleared.focus === "to" && out.cleared.text === "parc" && !out.cleared.rows.includes("Recent") && !out.cleared.clearRow,
     french: out.fr.rows[0].sub === "Récent" && out.fr.rows.some((r) => r.clear && r.name === "Effacer les lieux récents"),
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), ...out };
+}, { width: 1440, height: 900 });
+
+// ---- closed businesses (2026-11-04): the POI builder drops places closed by their OSM tags or by the City's food registry; none is in pois.js ----
+// No browser needed, so the page is only the group's frame. tools/check_pois_closed.py is plain standard-library Python (no raw data needed on CI).
+await run("closed businesses: the POI builder drops known closure tags and registry-closed food places; pois.js holds none", `${APP}`, async () => {
+  const venv = new URL("../../.venv/Scripts/python.exe", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const py = process.env.PISTE_PYTHON || (existsSync(venv) ? venv : "python3");
+  const r = spawnSync(py, ["-I", new URL("../check_pois_closed.py", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")], { encoding: "utf8" });
+  const out = (r.stdout || "") + (r.stderr || "");
+  return { ok: r.status === 0, ...(r.status === 0 ? {} : { error: out.trim().split(/\r?\n/).filter((l) => /^FAIL|Error/.test(l)).slice(0, 3).join(" | ") || "exit " + r.status }), out: out.trim().slice(0, 600) };
+});
+
+// ---- Home / Work in the typing pop-up (2026-11-04): "home", "work", "maison", "travail", ... (2 letters or more) list the saved one first ----
+await run("search: typing home / work (EN and FR, 2+ letters) lists the saved Home / Work first, with icon and address, then saved places, then recent places; unset ones stay out", `${APP}`, async (page) => {
+  await page.evaluate(() => {
+    localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "4500 rue Saint-Denis", ll: [-73.5745, 45.5163] }, { kind: "", name: "Homebase", ll: [-73.59, 45.53] }]));
+    localStorage.setItem("piste-recents", JSON.stringify([{ name: "Hometown Cafe", ll: [-73.6, 45.5] }]));
+  });
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  const rows = () => page.evaluate(() => ({ shown: !document.querySelector("#suggest").hidden, rows: [...document.querySelectorAll("#suggest li[data-i]")].map((li) => ({ name: (li.querySelector(".sg-text > span") || li.querySelector("span")).textContent,
+    sub: li.querySelector("small").textContent, icon: !!li.querySelector("svg"), clear: li.classList.contains("clear") })) }));
+  const typeNow = async (text) => {   // the saved rows show at once; wait for the pop-up to hold the typed text's rows
+    await page.fill("#to", text);
+    await until(page, () => !document.querySelector("#suggest").hidden && document.querySelectorAll("#suggest li[data-i]").length > 0);
+    await page.waitForTimeout(450);   // and the address results, if any, have joined
+    return rows();
+  };
+  const out = {};
+  await page.click("#to");
+  out.empty = await rows();
+  out.ho = await typeNow("ho");   out.h = await typeNow("h");   out.hello = await typeNow("hom");
+  out.work = await typeNow("wor"); out.mai = await typeNow("mai");
+  // an unset Work never shows, a set one does; the same words work in either language
+  await page.evaluate(() => window.__app.setLang("fr"));
+  out.frMaison = await typeNow("maison"); out.frDom = await typeNow("dom");
+  await page.evaluate(() => localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "4500 rue Saint-Denis", ll: [-73.5745, 45.5163] }, { kind: "work", name: "100 rue Peel", ll: [-73.5665, 45.5006] }, { kind: "", name: "Homebase", ll: [-73.59, 45.53] }])));
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(() => window.__app.setLang("fr")); await page.click("#to");
+  out.frTrav = await typeNow("trav"); out.frBureau = await typeNow("bureau"); out.frWork = await typeNow("work");
+  // picking Work uses it as the ★ menu does: the destination (here), named "Travail", at its place
+  await page.keyboard.press("Enter");
+  out.picked = await page.evaluate(() => ({ to: window.__app.state.toLabel, ll: window.__app.state.to && window.__app.state.to.map((v) => +v.toFixed(4)), shown: !document.querySelector("#suggest").hidden }));
+  const first = (r) => r.rows[0] && r.rows[0].name, names = (r) => r.rows.slice(0, 3).map((x) => x.name).join();
+  const checks = {
+    emptyNoList: !out.empty.shown || out.empty.rows.length === 0,
+    homeFirst: first(out.ho) === "Home" && out.ho.rows[0].sub === "4500 rue Saint-Denis" && out.ho.rows[0].icon && out.hello.rows[0].name === "Home",
+    thenSavedThenRecent: names(out.ho) === "Home,Homebase,Hometown Cafe" && out.ho.rows[1].icon && out.ho.rows[2].sub === "Recent" && out.ho.rows[3].clear,
+    oneLetterNoHome: first(out.h) !== "Home" && !out.h.rows.some((r) => r.name === "Home"),
+    unsetWorkAbsent: !out.work.rows.some((r) => r.name === "Work" || r.name === "Travail") && first(out.mai) === "Home",   // "mai" starts maison: Home, in English too
+    frHome: first(out.frMaison) === "Maison" && out.frMaison.rows[0].sub === "4500 rue Saint-Denis" && first(out.frDom) === "Maison" && out.frMaison.rows[0].icon,
+    frWork: first(out.frTrav) === "Travail" && out.frTrav.rows[0].sub === "100 rue Peel" && first(out.frBureau) === "Travail" && first(out.frWork) === "Travail",
+    picked: out.picked.to === "Travail" && out.picked.ll[0] === -73.5665 && out.picked.ll[1] === 45.5006 && !out.picked.shown,
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), ...out };

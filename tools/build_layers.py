@@ -32,6 +32,9 @@ from pyproj import Transformer
 from shapely.geometry import LineString, MultiPolygon, Polygon, mapping, shape
 from shapely.ops import polygonize, transform as shp_transform, unary_union
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))      # python -I does not put the script folder on sys.path
+import poi_closed   # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
 BUILD = ROOT / "data" / "build"
@@ -196,9 +199,9 @@ def poi_tail(kind, tags, chain_names=frozenset()):
 
 
 def layer_pois():
-    els = json.loads((RAW / "osm_overpass" / "pois.json").read_text(encoding="utf-8"))["elements"]
+    els, _ = poi_closed.split_open(json.loads((RAW / "osm_overpass" / "pois.json").read_text(encoding="utf-8"))["elements"])   # closed by their own OSM tags: left out
     shops = RAW / "osm_overpass" / "shops.json"
-    shop_els = json.loads(shops.read_text(encoding="utf-8"))["elements"] if shops.exists() else []
+    shop_els = poi_closed.split_open(json.loads(shops.read_text(encoding="utf-8"))["elements"])[0] if shops.exists() else []
     chains = poi_chain_names([el.get("tags", {}) for el in els + shop_els])
     out = []
 
@@ -260,6 +263,9 @@ def layer_pois():
     for name, lon, lat, lines in metro_stations():
         if in_bbox(lon, lat, 0.01):
             out.append(["metro", name, lon, lat, lines])
+    registry, registry_file = poi_closed.Registry.load(RAW / "mtl_etablissements_alimentaires")
+    out, closed_report = poi_closed.drop_registry_closed(out, registry)   # food places the City's registry shows as closed
+    poi_closed.print_report(closed_report, {}, registry_file)
     c = collections.Counter(p[0] for p in out)
     print("  POIs:", dict(c.most_common()))
     write_js("pois.js", "POIS", out)

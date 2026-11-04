@@ -129,6 +129,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .suggest li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; }
 .suggest li:hover, .suggest li.active { background: var(--blue-soft); }
 .suggest li small { color: var(--ink-3); }
+.suggest li.saved { flex-direction: row; align-items: center; gap: 12px; }   /* Home, Work and saved places: their icon, then name and address */
+.suggest li.saved svg { width: 20px; height: 20px; flex: none; fill: none; stroke: var(--blue-deep); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.suggest li.saved .sg-text { display: flex; flex-direction: column; min-width: 0; }
 .suggest li.note { cursor: default; font-size: 13px; color: var(--ink-3); }
 .suggest li.clear { min-height: 44px; justify-content: center; font-size: 13px; color: var(--ink-2); }   /* "Clear recent places", after the recent ones */
 .suggest li.note:hover { background: none; }
