@@ -1,7 +1,7 @@
 /* Piste service worker (2026-11-02): routing and navigation keep working when the signal drops mid-ride.
  *  - Installing caches the app itself (pages, scripts, styles, routing graph, data, icons), so it opens and plans routes offline.
  *  - While browsing, the basemap, our map tiles, the terrain and the photos you look at are kept too, for the next time.
- *  - Address search, weather, radar, BIXI, the feedback form and Umami always go to the network; they are never stored.
+ *  - Address search, weather, BIXI, the feedback form and Umami always go to the network; they are never stored.
  * One file for both layouts: paths are relative to this file, and tools/build_site.py moves the ones that climb a folder for the site root.
  * It registers only on pistemtl.ca or with ?sw=1 (app.js). A new version installs in the background and takes over the next
  * time the app is opened, never while a tab is open, so a ride is never interrupted. */
