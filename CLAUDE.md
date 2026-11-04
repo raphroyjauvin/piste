@@ -27,7 +27,7 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   - `node tools/shots/shoot.mjs [prefix]` takes screenshots into `prototypes/screens/` (A = desktop, P = phone).
   - `node tools/shots/smoke.mjs "?winter=1"` is a quick load check: it opens one app URL and prints console errors and a few state values (the dev server must be running).
   - These all use headless Edge via playwright-core, because the in-app browser pauses when its pane is hidden (`PISTE_BROWSER=chrome` and `PISTE_BROWSER_ARGS` pick another browser; GitHub uses Chrome).
-  - `PISTE_FIXTURES=1` answers the weather, radar, BIXI and address requests from saved copies in `tools/shots/fixtures`, so results don't depend on today's data (GitHub sets it).
+  - `PISTE_FIXTURES=1` answers the weather, BIXI and address requests from saved copies in `tools/shots/fixtures`, so results don't depend on today's data (GitHub sets it).
   - The published site has the app at its root: `python tools/build_site.py` builds `_site/`; `PISTE_APP=index.html` makes the tests use that layout (with `PISTE_BASE=<site address>` for a built or live site); `node tools/shots/site_check.mjs <base url> [...]` checks a built site (old links forward, about page, manifest, no 404s).
   - Test gate: GitHub runs the route checks, the browser tests and `site_check.mjs` on every push, and publishes only if all pass (see Publish). Run them here first.
   - `prototypes/phone.html` shows the app in iPhone-sized screens; the real iPhone (GitHub Pages) is the final check.
@@ -52,7 +52,6 @@ Read `README.md` first: decisions, open questions, folder map. Details are in `d
   - Canopée 2019, Ville de Montréal (CC BY 4.0), the tree mask for the 3D trees
   - BIXI GBFS (station locations and live status)
   - Open-Meteo forecast (CC BY 4.0; free for non-commercial use: check the terms before a public launch)
-  - Environment and Climate Change Canada radar (GeoMet)
   - Wikimedia Commons photo authors (credited on each card; see `prototypes/shared/photos/credits.json`)
 - **Moving the camera every frame** (the ride, any animation): move the markers and call `map.redraw()` in the same step, so the map and its icons are drawn together. Markers use `subpixelPositioning: true`, and nothing may CSS-transition a marker's position. Why: `docs/06_prototypes.md`, Ride, "No shaking icons".
 - **Product rules from Raph:**

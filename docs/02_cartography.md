@@ -23,7 +23,7 @@ The look is unchanged; the same layers now cover the whole island (files, sizes 
   - bike paths that aren't cleared turn grey and dotted (`#aebbc6`). They look faded, not alarming. The warnings ("without a winter-cleared bike path") use the same soft orange as any other gap: the dashed orange line and the panel list.
 - **Weather card and wind streaks:**
   - Wind streaks are thin slate-blue lines (`rgba(52, 92, 124, 0.5)`, 1.6 px). They drift across the map the way the wind blows and turn with the map. They fade slowly, which leaves short trails, and they stay quiet so the route and labels remain readable.
-  - The radar is a half-transparent overlay (50%) under the bike network and the route.
+  - No radar overlay since 2026-11-03: rain and snow show as an animation that replaces the wind streaks while something is falling.
   - The weather card is a small white card at the top of the map, in the same style as the other cards: an arrow pointing the way the wind blows, the wind, the rain outlook and, last, the line about the selected route (headwind or tailwind, and minutes). In winter mode it adds the snow and ice lines.
 - **BIXI badge colours:** green `#1d6a2c` (3 or more bikes), orange `#c26b12` (1–2), grey `#8a929a` (empty), dark grey `#5a6168` (not renting). The number is written in the badge, so colour is never the only signal (principle 4 below). The badge sits at the top right of the station icon and never hides it.
 - **Location pins:** the search fields and the map use the same two pins, so the ends are easy to tell apart. The start is mostly blue (blue pin, white dot); the destination is mostly white (white pin with a blue outline and dot).

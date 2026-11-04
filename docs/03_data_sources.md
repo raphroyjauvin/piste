@@ -1,5 +1,11 @@
 # Data sources and quirks (checked 2026-10-25, updated 2026-10-29)
 
+## Update 2026-11-03: parks
+
+| Source | What | Notes |
+|---|---|---|
+| **OpenStreetMap park polygons** from BBBike's Montréal extract of 2026-10-24 (`data/raw/osm_bbbike`, already downloaded; ODbL) | 3,003 polygons, 2,730 kept, 2,574 after merging | `tools/island_parks.py` → `prototypes/shared/tiles/parks.pmtiles` (0.27 MB, z11-14). Overpass returned 502/504 that day. The City's park dataset (CC BY 4.0, 1,495 parks) doesn't cover the linked cities, so OSM was used. |
+
 ## Update 2026-11-02: REM, canopy, trees
 | Source | What it gives | Freshness | Use |
 |---|---|---|---|
@@ -12,7 +18,7 @@
 | Source | What it gives | Freshness | Use |
 |---|---|---|---|
 | **Open-Meteo forecast**: `api.open-meteo.com/v1/forecast` (no key; open to any website) | One point for central Montréal (45.52, −73.58). Now: temperature, rain, snowfall, wind speed, direction and gusts at 10 m, weather code. Hourly: precipitation and its probability, snowfall, snow depth, temperature, for the last day and the next two | Live; the app refreshes every 10 min | Wind and rain card, wind effect on routes, "Avoid headwinds", winter snow status (snowfall in the last 24 h, freeze–thaw warning). Free for non-commercial use; data CC BY 4.0 (verify before a public launch) |
-| **Environment Canada GeoMet radar**: `geo.weather.gc.ca/geomet` (WMS 1.3.0, 256 px tiles) | 1 km radar images: `RADAR_1KM_RRAI` (rain) and `RADAR_1KM_RSNO` (snow) | Live | Radar layer: rain in summer, snow in winter mode. Open Government Licence – Canada; the map credits "Environment and Climate Change Canada" |
+| ~~Environment Canada GeoMet radar~~ (removed 2026-11-03) | Was the 1 km rain / snow radar overlay; replaced by the rain and snow animation from the Open-Meteo forecast | Not used | Radar layer: rain in summer, snow in winter mode. Open Government Licence – Canada; the map credits "Environment and Climate Change Canada" |
 | **BIXI GBFS, live status**: `https://gbfs.velobixi.com/gbfs/2-2/en/` (`station_information.json` and `station_status.json`; open to any website) | About 1,100 stations, island-wide: bikes, e-bikes and free docks available, and whether the station is renting | Live; the app refreshes every minute | Badge with the bikes available on each station icon. Listed as CC BY 4.0 on donnees.montreal.ca; check BIXI's own terms before a public launch |
 | **City bike network, fields `SAISONS4` and `PROTEGE_4S`** (`mtl_reseau_cyclable`, the file we already have) | `SAISONS4` = "Oui" when a segment is in the 4-season network, cleared in winter (753 of the 1,101 km; see the summary below). `PROTEGE_4S` = "Oui" when a protected bike path keeps its separators in winter | File of 2026-10-01 | Winter tiers in the router; grey dotted "not cleared" bike paths on the map |
 | **Planif-Neige** (`deneigement`) | Street snow-removal status. It needs an access token. The City's open-data team answered on 2026-10-30: no tokens before the winter season; they will send one when the 2026-2027 version restarts. Streets only, not bike paths or sidewalks | Live | Not used. Shelved until winter (Raph, 2026-10-30); it may help later for streets without a bike path. A token can't ship in a web page, so it would need a small server |
@@ -117,4 +123,4 @@ All Montreal datasets below are CC BY 4.0 (credit "Ville de Montréal"), from do
 | Protomaps basemap (PMTiles) | ODbL produced work | Self-hosted base tiles. Not used for the basemap yet (it is still OpenFreeMap). Since 2026-10-29 the PMTiles format carries our own layers (relief, tint, contours, buildings), read in the page by the pmtiles library (Protomaps, BSD-3, vendored 4.5.0 in `prototypes/vendor/pmtiles/`) |
 | NRCan Automatically Extracted Buildings | Open Government Licence – Canada | Building heights (min/max) from LiDAR |
 | Can-BICS (2018 and 2023) | verify | Comfort classes, for comparison |
-| Environment Canada (MSC Datamart / GeoMet) | Open Government Licence – Canada | Radar layers (GeoMet) since 2026-10-29. The wind and rain forecast comes from Open-Meteo instead (see above) |
+| Environment Canada (MSC Datamart / GeoMet) | Open Government Licence – Canada | Radar layers (GeoMet) from 2026-10-29 to 2026-11-03, then removed; nothing from Environment Canada is used now. The forecast comes from Open-Meteo (see above) |
