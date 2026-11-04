@@ -1,5 +1,11 @@
 # Data sources and quirks (checked 2026-10-25, updated 2026-10-29)
 
+## Update 2026-11-04: closed businesses
+
+| Source | What | Notes |
+|---|---|---|
+| **Ville de Montréal, Établissements alimentaires** (https://donnees.montreal.ca/dataset/etablissements-alimentaires; CC BY 4.0): `data/raw/mtl_etablissements_alimentaires/businesses_2026-11-04.csv` (54,893 rows; `tools/fetch_data.py food_registry`) | The food-inspection registry: name, coordinates, status (Ouvert / Fermé / Fermé changement d'exploitant) and its date | `tools/poi_closed.py`: an OSM food place (café, restaurant, bakery, ice cream, bar, market) is dropped when every registry entry with the same normalised name within 60 m says plain "Fermé" and none is open (7,178 checked, 2,646 matched, 214 dropped). "Fermé changement d'exploitant" doesn't count: the business often goes on under a new registered name (e.g. Café Oui Mais Non → "La Graine Brûlée (Oui Mais Non)"). OSM closure tags (vacant, disused=yes, opening_hours closed, past end_date, a name saying fermé / closed) drop 7 more. Fresh Overpass downloads (`osm_fresh`) failed on 2026-11-04 (502/504 on three mirrors): the 2026-10-30 download stays. Checked by `tools/check_pois_closed.py` (a test group). |
+
 ## Update 2026-11-03: parks
 
 | Source | What | Notes |
