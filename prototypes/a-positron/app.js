@@ -651,14 +651,18 @@
 
   // ------------------------------------------------------------------ UI: search
   const fromEl = $("#from"), toEl = $("#to"), sug = $("#suggest"), sugHome = sug.parentElement;
-  let sugItems = [], sugOffline = false, sugActive = -1, sugTarget = null, sugTimer = null;
+  let sugItems = [], sugGeo = [], sugText = "", sugOffline = false, sugActive = -1, sugTarget = null, sugTimer = null;   // sugItems: what the pop-up lists; sugGeo: the address results in it
   const syncFieldLabels = () => { for (const el of [fromEl, toEl]) el.setAttribute("aria-label", el.placeholder); };   // the placeholder is the only visible name
   syncFieldLabels();
   for (const el of [fromEl, toEl]) {
     el.addEventListener("input", () => {
       if (!el.value.trim() && state[el.id]) { clearPoint(el.id); recompute(true); }   // all the text deleted: that place, and the route, go
       sugTarget = el.id; clearTimeout(sugTimer); closeList(false);
-      sugTimer = setTimeout(async () => { sugItems = el.value.trim() ? await geocoder.search(el.value) : []; sugOffline = !!sugItems.offline; sugActive = -1; renderSuggest(); }, 160);
+      sugTimer = setTimeout(async () => {
+        const text = el.value;
+        if (recentMatches(text).length) showSuggest(text, []);   // recent places first, without waiting for the address service
+        showSuggest(text, text.trim() ? await geocoder.search(text) : []);
+      }, 160);
     });
     el.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown" && !sug.hidden) { sugActive = Math.min(sugItems.length - 1, sugActive + 1); renderSuggest(); e.preventDefault(); }
@@ -672,11 +676,23 @@
     });
     el.addEventListener("blur", () => setTimeout(() => blurred(el), 180));
   }
+  // Recent destinations live here only (2026-11-03): those whose name holds the typed text (any case, any accent) come first, tagged "Recent",
+  // at most 3, then "Clear recent places", then the address results (leaving out any that are the same place as a recent one).
+  const fold = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+  const recentMatches = (text) => { const q = fold(text.trim()); return q ? recents.filter((r) => fold(r.name).includes(q)).slice(0, 3) : []; };
+  function showSuggest(text, geo) {
+    sugText = text; sugGeo = geo; sugOffline = !!geo.offline; sugActive = -1;
+    const recent = recentMatches(text).map((r) => ({ label: r.name, sub: t("recentTag"), lon: r.ll[0], lat: r.ll[1] }));
+    const dup = (g) => recent.some((r) => r.label === g.label || (Math.abs(r.lon - g.lon) < 1e-4 && Math.abs(r.lat - g.lat) < 1e-4));
+    sugItems = [...recent, ...(recent.length ? [{ label: t("clearRecents"), clear: true }] : []), ...geo.filter((g) => !dup(g))];
+    renderSuggest();
+  }
+  function clearRecents() { recents = []; writeList("recents", recents); showSuggest(sugText, sugGeo); }
   function renderSuggest() {
     if (!sugItems.length && !sugOffline) { sug.hidden = true; return; }
     if (search.which) placeSuggest();
     else { const field = (sugTarget === "from" ? fromEl : toEl).closest(".field"); sug.style.top = field.offsetTop + field.offsetHeight + 4 + "px"; }
-    sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("")
+    sug.innerHTML = sugItems.map((it, i) => `<li data-i="${i}" class="${i === sugActive ? "active" : ""}${it.clear ? " clear" : ""}"><span>${C.esc(it.label)}</span><small>${C.esc(it.sub || "")}</small></li>`).join("")
       + (sugOffline ? `<li class="note">${t("searchOffline")}</li>` : "");   // no signal: the address service is out of reach
     sug.hidden = false;
     sug.querySelectorAll("li[data-i]").forEach((li) => {
@@ -686,6 +702,7 @@
     });
   }
   function choose(it) {
+    if (it.clear) { clearRecents(); return; }   // the pop-up stays, minus the recent places
     sug.hidden = true; sugItems = [];
     const which = sugTarget;
     setPoint(which, [it.lon, it.lat], it.label);
@@ -945,36 +962,25 @@
     catch (e) { return []; }
   };
   const writeList = (key, list) => store.set(key, JSON.stringify(list));
-  let places = readList("places"), recents = readList("recents").slice(0, 5);   // places: { kind: "home" | "work" | "", name, ll }; recents: { name, ll }
-  const placeBox = $("#places"), listEl = $("#place-list"), pl = { layer: $("#place-dialog"), name: $("#pl-name"), status: $("#pl-status"), i: -1 };
+  // places: { kind: "home" | "work" | "", name, ll } (a saved place's own name; for Home and Work, the address they were set from); recents: { name, ll }
+  let places = readList("places"), recents = readList("recents").slice(0, 5);
+  const placeBox = $("#places"), listEl = $("#place-list"), star = placeBox.querySelector(".star"), pl = { layer: $("#place-dialog"), name: $("#pl-name"), status: $("#pl-status"), i: -1 };
   const placeName = (p) => (p.kind ? t(p.kind === "home" ? "placeHome" : "placeWork") : p.name);
   const placeIcon = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const PLACE_ICON = { home: placeIcon('<path d="M4 11 12 4l8 7M6 9.5V20h12V9.5M10 20v-5.5h4V20"/>'),
     work: placeIcon('<rect x="3.5" y="7.5" width="17" height="12" rx="2"/><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5M3.5 13h17"/>'), add: placeIcon('<path d="M12 5v14M5 12h14"/>'),
     star: placeIcon('<path d="m12 4.6 2.2 4.5 4.9.7-3.6 3.5.9 4.9-4.4-2.3-4.4 2.3.9-4.9-3.6-3.5 4.9-.7z"/>'),
     edit: placeIcon('<path d="M14.5 5.5l4 4M4.5 19.5l1-4.5 10-10 3.5 3.5-10 10z"/>') };
-  // The chip row (2026-11-03): Home, Work, ★ and +, all round icon chips (their names in aria-label and title). ★ shows once there is
-  // a saved place or a recent destination, and opens the list of both (placeList below); unset Home and Work have a dashed edge.
+  // One chip, ★ (2026-11-03), always under the search bars. It opens the menu below: Home, Work, the saved places, "Add to saved locations".
+  // Recent destinations are not in it: they come up in the pop-up while typing an address (renderSuggest).
+  const kindIndex = (kind) => places.findIndex((p) => p.kind === kind);
   const custom = () => places.map((p, i) => ({ p, i })).filter((x) => !x.p.kind);
-  const hasList = () => custom().length > 0 || recents.length > 0;
-  function renderPlaces() {
-    const chip = (attr, icon, name, cls = "") => `<button type="button" class="place round ${cls}" ${attr} aria-label="${C.esc(name)}" title="${C.esc(name)}">${icon}</button>`;
-    const fixed = ["home", "work"].map((k) => {
-      const i = places.findIndex((p) => p.kind === k);
-      return i < 0 ? chip(`data-kind="${k}"`, PLACE_ICON[k], t(k === "home" ? "setHome" : "setWork"), "unset") : chip(`data-i="${i}"`, PLACE_ICON[k], placeName(places[i]));
-    });
-    const star = hasList() ? chip(`aria-expanded="${!listEl.hidden}" aria-controls="place-list"`, PLACE_ICON.star, t("placeList"), "star") : "";
-    placeBox.setAttribute("aria-label", t("placesLabel"));
-    placeBox.after(listEl);   // out of the way while the chips are redrawn; it goes back right after ★, so Tab reaches its rows next
-    placeBox.innerHTML = fixed.join("") + star + chip("", PLACE_ICON.add, t("placeAdd"), "add");
-    const starChip = placeBox.querySelector(".star");
-    if (starChip) { starChip.after(listEl); if (!listEl.hidden) { renderPlaceList(); placeList(); } }
-    else closeList(false);
-  }
-  const commitPlaces = () => { writeList("places", places); renderPlaces(); };
+  const refreshList = () => { if (!listEl.hidden) { renderPlaceList(); placeList(); } };   // an open menu follows a change (or the language)
+  const commitPlaces = () => { writeList("places", places); refreshList(); };
   // the place on the bars: the destination, or the start when there is no destination
   const currentPlace = () => { const w = state.to ? "to" : state.from ? "from" : null; return w && { name: state[w + "Label"] || t("droppedPin"), ll: state[w].map((v) => +v.toFixed(6)) }; };
-  function placeTarget() {   // the bar a chip fills: the one being typed in, else the destination (the start, when only the destination is set)
+  const addressOf = (cur) => (cur.name === t("myLocation") ? "" : cur.name);   // "My location" would not say where Home is later on
+  function placeTarget() {   // the bar a saved place fills: the one being typed in, else the destination (the start, when only the destination is set)
     if (state.tab === "suggest") return "from";
     const a = document.activeElement;
     if (a === fromEl || a === toEl) return a.id;
@@ -988,36 +994,39 @@
     if (state.tab !== "go" || (state.from && state.to)) recompute(true);
     else showPlace(p.ll);   // one end only: show where it is
   }
-  function setHomeOrWork(kind) {
+  function setHomeOrWork(kind) {   // true when the place on the bars was saved
     const cur = currentPlace();
-    if (!cur) { toast(t("pickPlaceFirst")); return; }
-    places = places.filter((p) => p.kind !== kind).concat({ kind, name: "", ll: cur.ll });
+    if (!cur) { toast(t("pickPlaceFirst")); return false; }
+    places = places.filter((p) => p.kind !== kind).concat({ kind, name: addressOf(cur), ll: cur.ll });
     commitPlaces();
+    return true;
   }
   function remember(name, ll) {   // a chosen destination goes on top of the last five
     const same = (r) => r.ll.every((v, k) => Math.abs(v - ll[k]) < 1e-4);
     recents = [{ name, ll }, ...recents.filter((r) => !same(r))].slice(0, 5);
     writeList("recents", recents);
-    renderPlaces();   // ★ shows from the first recent destination
   }
 
-  // ---- the ★ list (2026-11-03): saved places first, then the last two destinations. A row uses its place as a chip does; a saved
-  // row's pencil opens the place form. A popover: aria-expanded on ★, Esc or a tap outside closes it, and focus goes back to ★ when
+  // ---- the ★ menu (2026-11-03): Home, Work, the saved places (each with its pencil), then "Add to saved locations". A row uses its place
+  // as before; the pencil opens the place form. A popover: aria-expanded on ★, Esc or a tap outside closes it, and focus goes back to ★ when
   // it was inside. It floats (position: fixed) just below ★, or above it when there is no room below; while typing on a phone, over the map above the card.
   function renderPlaceList() {
-    const row = (attr, name, tag, edit) => `<li><button type="button" class="pl-row" ${attr}><span>${C.esc(name)}</span><small>${t(tag)}</small></button>${edit}</li>`;
-    const saved = custom().map(({ p, i }) => row(`data-use="saved" data-p="${i}"`, p.name, "savedTag",
-      `<button type="button" class="pl-edit" data-edit="${i}" aria-label="${C.esc(t("placeEditOne", { name: p.name }))}" title="${C.esc(t("placeEditT"))}">${PLACE_ICON.edit}</button>`));
-    const recent = recents.slice(0, 2).map((p, k) => row(`data-use="recent" data-r="${k}"`, p.name, "recentTag", ""));
+    const row = ({ attr, icon, name, sub = "", edit = -1, cls = "" }) => `<li><button type="button" class="pl-row ${cls}" ${attr}>${PLACE_ICON[icon]}<span class="pl-text"><span>${C.esc(name)}</span>${sub ? `<small>${C.esc(sub)}</small>` : ""}</span></button>`
+      + (edit < 0 ? "" : `<button type="button" class="pl-edit" data-edit="${edit}" aria-label="${C.esc(t("placeEditOne", { name }))}" title="${C.esc(t("placeEditT"))}">${PLACE_ICON.edit}</button>`) + "</li>";
+    const fixed = ["home", "work"].map((k) => {   // set: the place's name or address under "Home"; unset: "Set home" saves the place on the bars
+      const i = kindIndex(k);
+      return i < 0 ? row({ attr: `data-k="${k}" data-set="${k}"`, icon: k, name: t(k === "home" ? "setHome" : "setWork"), cls: "unset" })
+        : row({ attr: `data-k="${k}" data-p="${i}"`, icon: k, name: placeName(places[i]), sub: places[i].name, edit: i });
+    });
+    const saved = custom().map(({ p, i }) => row({ attr: `data-p="${i}"`, icon: "star", name: p.name, edit: i }));
     listEl.setAttribute("aria-label", t("placeList"));
-    listEl.innerHTML = `<ul>${saved.join("")}${recent.join("")}</ul>` + (recents.length ? `<button type="button" class="pl-clear">${t("clearRecents")}</button>` : "");
+    listEl.innerHTML = `<ul>${fixed.join("")}${saved.join("")}${row({ attr: "data-add", icon: "add", name: t("placeAddTo") })}</ul>`;
   }
-  const starBtn = () => placeBox.querySelector(".star");
-  function placeList() {   // put the open list next to ★, inside what the screen shows (above a phone keyboard)
-    const b = starBtn(); if (!b || listEl.hidden) return;
-    const r = b.getBoundingClientRect(), inset = 7;   // the chip's drawn circle sits 7 px inside its 44 px button
+  function placeList() {   // put the open menu next to ★, inside what the screen shows (above a phone keyboard)
+    if (listEl.hidden) return;
+    const r = star.getBoundingClientRect(), inset = 7;   // the chip's drawn circle sits 7 px inside its 44 px button
     const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
-    const typing = !!search.which || kbOpen();   // phones, typing: the keyboard is (or is about to be) right under the chips
+    const typing = !!search.which || kbOpen();   // phones, typing: the keyboard is (or is about to be) right under the chip
     const top = (window.visualViewport ? visualViewport.offsetTop : 0) + safeTop + 8, bottom = (typing ? keyboardTop() : innerHeight) - 8;
     // typing: over the map just above the card, like the suggestions, so the bars stay in view
     const upTo = typing ? $("#panel").getBoundingClientRect().top - 2 : r.top + inset;
@@ -1032,7 +1041,7 @@
     renderPlaceList();
     sug.hidden = true;   // not both lists at once
     listEl.hidden = false;
-    const b = starBtn(); if (b) b.setAttribute("aria-expanded", "true");
+    star.setAttribute("aria-expanded", "true");
     placeList();
     if (focusFirst) { const first = listEl.querySelector("button"); if (first) first.focus({ preventScroll: true }); }
   }
@@ -1040,18 +1049,20 @@
     if (listEl.hidden) return;
     const inside = listEl.contains(document.activeElement);
     listEl.hidden = true;
-    const b = starBtn(); if (b) b.setAttribute("aria-expanded", "false");
-    if (b && (refocus || inside)) b.focus({ preventScroll: true });
+    star.setAttribute("aria-expanded", "false");
+    if (refocus || inside) star.focus({ preventScroll: true });
   }
   function listChoice(btn) {
-    if (btn.classList.contains("pl-clear")) {
-      const hadFocus = listEl.contains(document.activeElement);
-      recents = []; writeList("recents", recents); closeList(false); renderPlaces();
-      if (hadFocus) (starBtn() || placeBox.querySelector(".add")).focus({ preventScroll: true });
+    if (btn.dataset.edit) { closeList(false); openPlace(+btn.dataset.edit, star); return; }
+    if (btn.hasAttribute("data-add")) { closeList(false); openPlace(-1, star); return; }   // names the place on the bars (or says to pick one first)
+    if (btn.dataset.set) {
+      const kind = btn.dataset.set;
+      if (!setHomeOrWork(kind)) { closeList(false); return; }   // nothing to save: the message shows and the menu goes
+      const saved = listEl.querySelector(`[data-k="${kind}"]`);   // the menu stays open and shows the saved place; the keyboard stays on its row
+      if (saved) saved.focus({ preventScroll: true });
       return;
     }
-    if (btn.dataset.edit) { const i = +btn.dataset.edit; closeList(false); openPlace(i, starBtn()); return; }
-    const p = btn.dataset.use === "saved" ? places[+btn.dataset.p] : recents[+btn.dataset.r];
+    const p = places[+btn.dataset.p];
     closeList(false);
     if (p) usePlace(p);
   }
@@ -1062,12 +1073,12 @@
     if (i < 0) return;
     e.preventDefault(); all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length].focus();
   });
-  listEl.addEventListener("focusout", (e) => { if (!listEl.hidden && e.relatedTarget && !listEl.contains(e.relatedTarget) && e.relatedTarget !== starBtn()) closeList(false); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !listEl.hidden) { e.preventDefault(); e.stopPropagation(); closeList(listEl.contains(document.activeElement) || document.activeElement === starBtn()); } }, true);
-  document.addEventListener("pointerdown", (e) => { if (!listEl.hidden && !listEl.contains(e.target) && !(starBtn() && starBtn().contains(e.target))) closeList(false); }, true);
+  listEl.addEventListener("focusout", (e) => { if (!listEl.hidden && e.relatedTarget && !listEl.contains(e.relatedTarget) && e.relatedTarget !== star) closeList(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !listEl.hidden) { e.preventDefault(); e.stopPropagation(); closeList(listEl.contains(document.activeElement) || document.activeElement === star); } }, true);
+  document.addEventListener("pointerdown", (e) => { if (!listEl.hidden && !listEl.contains(e.target) && !star.contains(e.target)) closeList(false); }, true);
   addEventListener("resize", placeList);
   if (window.visualViewport) for (const ev of ["resize", "scroll"]) visualViewport.addEventListener(ev, placeList);
-  // The small form: name the current place (new), or rename, move to the current place, or delete a saved one
+  // The small form: name the current place (new), or rename, move to the current place, or delete a saved one (Home and Work: move or delete)
   function openPlace(i, opener) {
     const p = places[i], cur = currentPlace();
     if (!p && !cur) { toast(t("pickPlaceFirst")); return; }
@@ -1077,10 +1088,7 @@
     $("#pl-name-field").hidden = !!(p && p.kind);   // Home and Work keep their names
     $("#pl-delete").hidden = !p; $("#pl-use").hidden = !(p && cur);
     const first = !isPhone() && !(p && p.kind) ? pl.name : null;   // phones: no keyboard until the field is tapped
-    const back = () => {   // when the opener has gone: Home or Work's chip, else ★ (saved places live in its list), else +
-      const q = places[pl.i] && places[pl.i].kind ? `[data-i="${pl.i}"]` : ".star";
-      const chip = placeBox.querySelector(q) || placeBox.querySelector(".add"); if (chip) chip.focus({ preventScroll: true });
-    };
+    const back = () => star.focus({ preventScroll: true });   // when the opener has gone
     if (window.pisteDialog.open(pl.layer, opener, first, back) && first) pl.name.select();
   }
   const closePlace = () => window.pisteDialog.close();
@@ -1092,31 +1100,16 @@
     commitPlaces(); closePlace();
   });
   $("#pl-delete").addEventListener("click", () => { places.splice(pl.i, 1); pl.i = -1; commitPlaces(); closePlace(); });
-  $("#pl-use").addEventListener("click", () => { places[pl.i].ll = currentPlace().ll; commitPlaces(); closePlace(); });
+  $("#pl-use").addEventListener("click", () => {
+    const p = places[pl.i], cur = currentPlace();
+    p.ll = cur.ll; if (p.kind) p.name = addressOf(cur);
+    commitPlaces(); closePlace();
+  });
   $("#pl-cancel").addEventListener("click", closePlace);
   pl.layer.addEventListener("click", (e) => { if (e.target === pl.layer) closePlace(); });
-  // chips: a tap uses the place; a long press (touch), right click, the menu key or F2 edits it
-  let held = false, holdT = 0, holdAt = null;
-  const editFrom = (e) => { const b = e.target.closest("[data-i]"); if (b) openPlace(+b.dataset.i, b); return !!b; };
-  placeBox.addEventListener("pointerdown", (e) => {
-    held = false; holdAt = [e.clientX, e.clientY]; clearTimeout(holdT);
-    if (e.pointerType !== "mouse") holdT = setTimeout(() => { held = editFrom(e); }, 500);
-  });
-  placeBox.addEventListener("pointermove", (e) => { if (holdAt && Math.hypot(e.clientX - holdAt[0], e.clientY - holdAt[1]) > 8) clearTimeout(holdT); });
-  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) placeBox.addEventListener(ev, () => clearTimeout(holdT));
-  placeBox.addEventListener("contextmenu", (e) => { e.preventDefault(); editFrom(e); });
-  placeBox.addEventListener("keydown", (e) => { if (e.key === "F2" && editFrom(e)) e.preventDefault(); });
   placeBox.addEventListener("mousedown", (e) => e.preventDefault());   // a click keeps the focus on the search bar it fills
-  placeBox.addEventListener("click", (e) => {
-    const b = e.target.closest("button"); if (!b || listEl.contains(b)) return;   // the ★ list handles its own rows
-    if (held) { held = false; return; }   // the press that opened the editor
-    if (b.classList.contains("star")) { if (listEl.hidden) openList(e.detail === 0); else closeList(e.detail === 0); }   // keyboard: focus moves into the list
-    else if (b.dataset.i) usePlace(places[+b.dataset.i]);
-    else if (b.dataset.kind) setHomeOrWork(b.dataset.kind);
-    else openPlace(-1, b);
-  });
+  star.addEventListener("click", (e) => { if (listEl.hidden) openList(e.detail === 0); else closeList(e.detail === 0); });   // keyboard: focus moves into the menu
   for (const ev of ["scroll", "transitionend"]) $("#panel").addEventListener(ev, placeList, { passive: true });   // ★ moves with the card
-  renderPlaces();
 
   // ------------------------------------------------------------------ map clicks
   let layersJustClosed = false;
@@ -1508,7 +1501,7 @@
     classicCache.clear(); classicsRouted = false;   // sight names are part of the route
     if (state.tab === "suggest" && state.smode === "classics") showClassic(state.classic, false); else renderClassicCards();
     if (state.from) fromEl.value = state.fromLabel; if (state.to) toEl.value = state.toLabel;
-    setMapTexts(); renderRoutes(); renderPlaces(); renderWxCard(); renderSound(); buildElevationLegend(); renderSummary(); if (state.mode === "ride") updateWindBadge(true);
+    setMapTexts(); renderRoutes(); refreshList(); renderWxCard(); renderSound(); buildElevationLegend(); renderSummary(); if (state.mode === "ride") updateWindBadge(true);
     if (!state.ride) $("#ride-pause").textContent = t("pause");
     if (state.gpsState) gpsStatus(state.gpsState);
     document.dispatchEvent(new Event("piste:lang"));   // tour.js redraws its text
@@ -1629,12 +1622,12 @@
   };
   const turnIcon = (m) => ({ stop: "arrive", sight: "arrive", left: "left", sharpL: "left", right: "right", sharpR: "right", slightL: "slightL", slightR: "slightR" }[m.kind] || "straight");
 
-  // you: a heading cone lying on the street + an upright cyclist badge facing the camera
+  // you: a heading cone lying on the street + an upright pin facing the camera
   const coneEl = document.createElement("div"); coneEl.className = "rider-cone";
   coneEl.innerHTML = '<svg viewBox="0 0 120 120"><defs><radialGradient id="cg" cx="50%" cy="100%" r="90%"><stop offset="0" stop-color="#0095E6" stop-opacity=".55"/><stop offset="1" stop-color="#0095E6" stop-opacity="0"/></radialGradient></defs><path d="M60 64 28 6h64z" fill="url(#cg)"/><circle cx="60" cy="64" r="13" fill="#0095E6" stroke="#fff" stroke-width="5"/></svg>';
   const riderMarker = new maplibregl.Marker({ element: coneEl, rotationAlignment: "map", pitchAlignment: "map", ...MARKER_SHOW });
   const badgeEl = document.createElement("div"); badgeEl.className = "rider-badge";
-  badgeEl.innerHTML = '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="3.5"/><g fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="21.5" cy="38" r="6.5"/><circle cx="42.5" cy="38" r="6.5"/><path d="M21.5 38l6-12h9.5l5.5 12M27.5 26l5 12h-11M34.5 21.5h5"/></g></svg>';
+  badgeEl.innerHTML = PIN.from;   // the same plain blue pin as the start (2026-11-03: it had a bike in it)
   const badgeMarker = new maplibregl.Marker({ element: badgeEl, anchor: "bottom", pitchAlignment: "viewport", rotationAlignment: "viewport", ...MARKER_SHOW });
   const poiMarkers = new Map();
   let smoothBearing = 0, afterGapUntil = 0, lastGapId = null, sparkAt = -1e9;
@@ -1659,7 +1652,7 @@
   function prepareRide(view, gps) {
     const sel = state.routes[state.sel]; if (!sel) return null;
     const r = sel.r;
-    hideNotice(); hideSummary(); windBadge.at = -1e9; $("#wind-badge").hidden = true;
+    hideNotice(); hideSummary(); windBadge.at = -1e9; $("#wind-badge").hidden = true; rideWeather(true);
     state.rideEnd = placeText(sel.end) || state.toLabel || t("destination");
     state.rideView = view;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
@@ -1975,15 +1968,23 @@
   // every frame) are off for the whole ride: they cost battery and make the 3D camera choppy. A still badge in the ride bar says what the
   // wind does instead: an arrow for where it blows relative to the way you ride (up = the way you go), its speed, and head / tail / cross.
   // It is redrawn every 10 s, within 2 s of a corner, and when new weather arrives (never every frame).
+  // It shows on every ride (2026-11-03), whether or not the wind & rain button is on: rideWeather loads the forecast at the start. Offline or
+  // a failed load: no badge and no message (loadWeather only notes it in the console).
   const windBadge = { at: -1e9, h: 0 };
-  let rideHeading = 0;
+  let rideHeading = 0, rideWxTimer = null;
+  function rideWeather(on) {
+    clearInterval(rideWxTimer); rideWxTimer = null;
+    if (!on) return;
+    loadWeather();   // the saved copy if it is under 10 minutes old
+    if (!state.wx) rideWxTimer = setInterval(() => loadWeather(true), 10 * 60e3);   // with the button on, its own timer keeps it fresh
+  }
   function windRelative(heading, from) {   // from: the direction the wind comes from (deg)
     const ang = Math.abs(((from - heading + 540) % 360) - 180);   // 0 = wind from dead ahead, 180 = from behind (the same cut-offs as WX.windOnRoute)
     return { rot: (from + 180 - heading + 720) % 360, kind: ang < 60 ? "head" : ang > 120 ? "tail" : "cross" };
   }
   function updateWindBadge(force = false) {
     const el = $("#wind-badge"), wx = state.wxData;
-    if (!state.wx || !wx) { el.hidden = true; windBadge.at = -1e9; return; }
+    if (!wx) { el.hidden = true; windBadge.at = -1e9; return; }
     const now = performance.now(), turned = Math.abs(((rideHeading - windBadge.h + 540) % 360) - 180) > 35;
     if (!force && now - windBadge.at < (turned ? 2000 : 10000)) return;
     windBadge.at = now; windBadge.h = rideHeading;
@@ -2069,7 +2070,7 @@
     if (map.terrain) map.terrain.exaggeration = CAM.terrain;
     state.hillK = 0; state.follow = true; glide = null; showRider(true);
     riderMarker.remove(); badgeMarker.remove(); for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
-    $("#ride-hud").hidden = true; $("#wind-badge").hidden = true; $("#hill-card").hidden = true; $("#ride-recenter").hidden = true;
+    $("#ride-hud").hidden = true; $("#wind-badge").hidden = true; $("#hill-card").hidden = true; $("#ride-recenter").hidden = true; rideWeather(false);
     $("#panel").hidden = $("#legend").hidden = document.querySelector(".map-controls").hidden = showSum;   // the summary card takes their place until "Done"
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     hideSummary();

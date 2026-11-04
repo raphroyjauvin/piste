@@ -63,9 +63,9 @@
         <button type="button" class="field-btn clear" data-target="to" data-i18n-title="clearField"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
       </div>
     </div>
-    <div id="places" class="places" role="group"></div>
-    <!-- the ★ chip's list: saved places, then the last two destinations (app.js renderPlaceList); it floats, so it shows over the keyboard too -->
-    <div id="place-list" class="place-list" role="group" hidden></div>
+    <!-- one chip, ★, opens the saved-places menu (app.js renderPlaceList): Home, Work, the saved places, Add; the menu floats, so it shows over the keyboard too -->
+    <div id="places" class="places"><button type="button" class="place star" aria-expanded="false" aria-controls="place-list" data-i18n-title="placeList"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4.6 2.2 4.5 4.9.7-3.6 3.5.9 4.9-4.4-2.3-4.4 2.3.9-4.9-3.6-3.5 4.9-.7z"/></svg></button>
+      <div id="place-list" class="place-list" role="group" hidden></div></div>
     <ul id="suggest" class="suggest" hidden></ul>
   </section>
 
