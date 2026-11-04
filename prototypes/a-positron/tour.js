@@ -149,7 +149,7 @@
   function openFeedback(opener) {
     if (openDialog(fb.layer, opener, P.isPhone() ? null : fb.subject, fbReset)) {   // phones: no keyboard until a field is tapped
       fbSyncMail();
-      P.track("feedback", { from: opener.id === "welcome-feedback" ? "welcome" : "panel" });
+      P.track("feedback", { from: "panel" });
     }
   }
   function initDialogs() {
@@ -163,7 +163,7 @@
     $("#about-close").addEventListener("click", closeDialog);
     about.addEventListener("click", (e) => { if (e.target === about) closeDialog(); });
     $("#about-link").addEventListener("click", (e) => openDialog(about, e.currentTarget, null));
-    for (const id of ["#feedback-link", "#welcome-feedback"]) $(id).addEventListener("click", (e) => openFeedback(e.currentTarget));
+    $("#feedback-link").addEventListener("click", (e) => openFeedback(e.currentTarget));
     fbSyncMail();
   }
   function refreshDialogText() { if (!fb.status) return; fbStatus(fb.msg, fb.kind); fb.send.textContent = t(fb.busy ? "fbSending" : "fbSend"); fbSyncMail(); }
@@ -212,8 +212,8 @@
   // targets: CSS selectors (an array = one highlight around all of them) or "@route" (the route on the map); the first is the main one.
   // sheet: the phone card size for the step. place: where the callout goes, in order of preference.
   const STEPS = [
-    { k: 1, id: "search", sheet: "half", scroll: ".search", targets: [".search"], place: ["right", "above", "below"] },
-    { k: 2, id: "style", sheet: "half", scroll: ".prefs", targets: [".prefs"], place: ["right", "above", "below"] },
+    // 2026-11-04: one step for the search bars and the route choices together (the separate "Where to?" step is gone)
+    { k: 2, id: "style", sheet: "half", scroll: ".search", targets: [[".search", ".prefs"]], place: ["right", "above", "below"] },
     { k: 3, id: "colours", sheet: "peek", route: true, legend: true, camera: "route", swatches: true, scroll: "#routes .route-card.sel",
       targets: ["@route", "#routes", "#legend details"], phoneTargets: ["@route", "#routes .route-card.sel"], place: ["right", "below", "above", "left"] },
     { k: 4, id: "suggest", tab: "suggest", sheet: "half", scroll: ".tabs", targets: ["#tab-suggest", "#classics"], place: ["right", "above", "below"] },

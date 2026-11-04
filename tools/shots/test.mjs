@@ -1390,7 +1390,8 @@ const tourStepCheck = () => {
   if (phone && panel.dataset.sheet !== x.sheet) problems.push(`sheet ${panel.dataset.sheet}, wanted ${x.sheet}`);
   if (/^(INPUT|TEXTAREA)$/.test((document.activeElement || {}).tagName || "")) problems.push("a text field has focus");
   const words = (s) => s.trim().split(/\s+/).length;
-  if (words(x.title) > 4 || words(x.text) > 20) problems.push(`too wordy: ${words(x.title)} / ${words(x.text)} words`);
+  // 20 words a step, except "Your kind of route": Raph's own 27-word text for the search bars and route choices together (2026-11-04)
+  if (words(x.title) > 4 || words(x.text) > (x.id === "style" ? 28 : 20)) problems.push(`too wordy: ${words(x.title)} / ${words(x.text)} words`);
   return { i: x.i, id: x.id, ok: !problems.length, problems, sheet: phone ? panel.dataset.sheet : undefined, card: [c.x, c.y, c.w, c.h].map(Math.round), targets: targets.map(({ spec, r, hole }) => ({ spec, r, hole })) };
 };
 const tourAt = (page, i) => until(page, (i) => { const x = window.pisteTour.info(); return x.open && x.i === i && x.settled; }, i, 20000);
@@ -1417,20 +1418,15 @@ await run("welcome: first visit", APP, async (page, ctx) => {
   await until(page, welcomeUp, null, 30000);
   const en = await page.evaluate(() => {
     const c = document.querySelector(".welcome-card");
-    return { title: c.querySelector("h2").textContent, mark: !!c.querySelector(".mark"), beta: c.querySelector(".beta-pill").textContent, betaText: c.querySelector(".beta-note p").textContent,
-      tour: document.querySelector("#welcome-tour").textContent, explore: document.querySelector("#welcome-skip").textContent,
-      fbTags: ["#welcome-feedback", "#feedback-link"].map((x) => document.querySelector(x).tagName).join(), tourTime: document.querySelector("#welcome-tour small").textContent,
+    // 2026-11-04: logo, a centred "Welcome to Piste!" with a small Beta tag in the card's top right corner, one line of text, no beta box, no feedback button
+    const pill = c.querySelector(".beta-pill"), pr = pill.getBoundingClientRect(), cr = c.getBoundingClientRect(), mr = c.querySelector(".mark").getBoundingClientRect();
+    return { title: c.querySelector("h2").textContent, mark: !!c.querySelector(".mark"), beta: pill.textContent, text: document.querySelector("#welcome-text").textContent,
+      centred: getComputedStyle(document.querySelector("#welcome-text")).textAlign === "center" && getComputedStyle(c.querySelector("h2")).textAlign === "center" && Math.abs((mr.left + mr.right) / 2 - (cr.left + cr.right) / 2) < 2,
+      betaTopRight: cr.right - pr.right <= 24 && pr.top - cr.top <= 24 && pr.left > (cr.left + cr.right) / 2, noBetaBox: !c.querySelector(".beta-note"),
+      noFeedbackHere: !document.querySelector("#welcome-feedback") && !c.querySelector(".feedback-link"), panelFeedback: !!document.querySelector("#feedback-link"),
+      tour: document.querySelector("#welcome-tour").textContent, explore: document.querySelector("#welcome-skip").textContent, tourTime: document.querySelector("#welcome-tour small").textContent,
       dialog: c.getAttribute("role") === "dialog" && c.getAttribute("aria-modal") === "true", focusInside: c.contains(document.activeElement), flag: localStorage.getItem("piste-welcomed") };
   });
-  // "Send feedback" opens the dialog over the welcome card; Esc closes only the dialog and focus goes back to the link
-  await page.click("#welcome-feedback");
-  await until(page, () => !document.querySelector("#feedback").hidden);
-  const overWelcome = await page.evaluate(() => ({ dialog: !document.querySelector("#feedback").hidden, welcomeShown: !document.querySelector("#welcome").hidden, welcomeInert: document.querySelector("#welcome").inert,
-    focusInside: document.querySelector("#feedback-form").contains(document.activeElement), mail: document.querySelector("#fb-mail").getAttribute("href").startsWith("mailto:support@pistemtl.ca") }));
-  await page.keyboard.press("Escape");
-  await until(page, () => document.querySelector("#feedback").hidden);
-  const afterEsc = await page.evaluate(() => ({ dialog: !document.querySelector("#feedback").hidden, welcomeShown: !document.querySelector("#welcome").hidden && window.pisteTour.welcome === "shown",
-    focus: document.activeElement && document.activeElement.id }));
   await page.click("#welcome-skip");   // "Explore on my own"
   await until(page, welcomeGone);
   const closed = await page.evaluate(() => ({ hidden: document.querySelector("#welcome").hidden, flag: localStorage.getItem("piste-welcomed") }));
@@ -1468,16 +1464,14 @@ await run("welcome: first visit", APP, async (page, ctx) => {
   const blocked = { shown: blockedShown, closed: await p2.evaluate(() => document.querySelector("#welcome").hidden), errors: errs2 };
   await p2.close();
   const checks = {   // named, so a failure says which one
-    feedbackOverWelcome: overWelcome.dialog && overWelcome.welcomeShown && overWelcome.welcomeInert && overWelcome.focusInside && overWelcome.mail,
-    escBackToWelcome: !afterEsc.dialog && afterEsc.welcomeShown && afterEsc.focus === "welcome-feedback",
-    feedbackButtons: en.fbTags === "BUTTON,BUTTON", tourTime: en.tourTime === "1 min" && fr.tourTime === "1 min",
-    english: en.title === "Welcome to Piste" && en.mark && en.beta === "Beta" && /can be wrong/.test(en.betaText) && /follow the road/i.test(en.betaText) && /Take the tour/.test(en.tour) && en.explore === "Explore on my own",
+    layout: en.centred && en.betaTopRight && en.noBetaBox, noFeedbackHere: en.noFeedbackHere && en.panelFeedback, tourTime: en.tourTime === "1 min" && fr.tourTime === "1 min",
+    english: en.title === "Welcome to Piste!" && en.mark && en.beta === "Beta" && en.text === "An app for Montréal cyclists, by Montréal cyclists." && /Take the tour/.test(en.tour) && en.explore === "Explore on my own",
     firstVisit: en.dialog && en.focusInside && en.flag === null, closes: closed.hidden && closed.flag === "1", notAfterReload: reload.decided === "seen" && reload.hidden,
-    french: fr.title === "Bienvenue dans Piste" && fr.beta === "Bêta" && fr.tour === "Faire la visite" && frClosed.hidden && frClosed.flag === "1",
+    french: fr.title === "Bienvenue dans Piste!" && fr.beta === "Bêta" && fr.tour === "Faire la visite" && frClosed.hidden && frClosed.flag === "1",
     ...Object.fromEntries(phones.map((p, i) => [`phone${i + 1}Fits`, p.ok])), storageBlocked: blocked.shown && blocked.closed && !blocked.errors.length,
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
-  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), en, overWelcome, afterEsc, closed, reload, fr, frClosed, phones, blocked };
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), en, closed, reload, fr, frClosed, phones, blocked };
 }, { width: 1440, height: 900 }, { fresh: true });
 
 await run("tour: every step", APP, async (page) => {
@@ -1488,10 +1482,11 @@ await run("tour: every step", APP, async (page) => {
   const pass1 = [];
   await tourAt(page, 0); pass1.push(await page.evaluate(tourStepCheck));
   await page.keyboard.press("ArrowRight"); await tourAt(page, 1); pass1.push(await page.evaluate(tourStepCheck));
-  await page.keyboard.press("Enter"); await tourAt(page, 2); pass1.push(await page.evaluate(tourStepCheck));
+  // step 1 is "Colours that matter", with the demo route (2026-11-04: the separate search step is gone)
   const demo = await page.evaluate(() => { const s = window.__app.state, bt = s.routes.length ? s.routes[s.sel].r.byTier.map(Math.round) : [0, 0, 0, 0, 0, 0];
     return { demo: window.pisteTour.info().demo, routes: s.routes.length, from: document.querySelector("#from").value, to: document.querySelector("#to").value, km: s.routes.length ? +(s.routes[s.sel].r.length / 1000).toFixed(1) : 0,
       protectedM: bt[0], sharedM: bt[2], noPathM: bt[3] + bt[4] }; });
+  await page.keyboard.press("Enter"); await tourAt(page, 2); pass1.push(await page.evaluate(tourStepCheck));
   const stepIds = await page.evaluate(() => window.pisteTour.steps.join());
   await page.keyboard.press("ArrowLeft"); await tourAt(page, 1);
   const leftKey = await page.evaluate(() => window.pisteTour.info().i);
@@ -1502,7 +1497,7 @@ await run("tour: every step", APP, async (page) => {
   const afterEsc = await page.evaluate(appSnapshot);
   // second pass: replay from the panel's footer, every step with Back and Next, and finish with "Let's go"
   await page.click("#tour-again");
-  const pass2 = await tourWalk(page, 0, 8, true);
+  const pass2 = await tourWalk(page, 0, 7, true);
   const lastLabel = await page.evaluate(() => document.querySelector(".tour-next").textContent);
   await page.click(".tour-next");
   await tourClosed(page);
@@ -1514,7 +1509,7 @@ await run("tour: every step", APP, async (page) => {
   await page.waitForFunction(() => !!window.pisteTour, null, { timeout: 90000 });
   await page.evaluate(idle);   // the app's own move to the trip has ended
   const own0 = await page.evaluate(appSnapshot);
-  await page.evaluate(() => window.pisteTour.start(2)); await tourAt(page, 2);
+  await page.evaluate(() => window.pisteTour.start(1)); await tourAt(page, 1);
   const own = await page.evaluate(() => ({ demo: window.pisteTour.info().demo, from: document.querySelector("#from").value }));
   own.check = await page.evaluate(tourStepCheck);
   await page.keyboard.press("Escape"); await tourClosed(page);
@@ -1522,12 +1517,12 @@ await run("tour: every step", APP, async (page) => {
   const own1 = await page.evaluate(appSnapshot);
   const riding = await page.evaluate(() => { const a = window.__app; a.startRide("topdown"); const r = { button: document.querySelector("#tour-again").getClientRects().length > 0, started: window.pisteTour.start(0) }; a.endRide(); return r; });
   // one step per map button, top to bottom: 3D, weather, winter, layers
-  const buttonSteps = pass2.slice(4, 8).map((st) => st.targets[0]);
+  const buttonSteps = pass2.slice(3, 7).map((st) => st.targets[0]);
   const buttonsDown = buttonSteps.map((tg) => tg.spec).join() === "#view-btn,#wx-btn,#winter-btn,#layers-btn" && buttonSteps.every((tg, k) => k === 0 || tg.r[1] > buttonSteps[k - 1].r[1]);
   // the colours step's demo route shows all three kinds: protected, shared and no bike path, DEMO_MIN metres or more of each, 2 to 5 km long
   const threeKinds = demo.protectedM >= DEMO_MIN && demo.sharedM >= DEMO_MIN && demo.noPathM >= DEMO_MIN && demo.km >= 2 && demo.km <= 5;
-  const ok = stepIds === "search,style,colours,suggest,view3d,weather,winter,layers,feedback" && buttonsDown && threeKinds
-    && pass1.every((s) => s.ok) && pass2.length === 9 && pass2.every((s) => s.ok) && demo.demo && demo.routes > 0 && demo.from === "Georges-Vanier metro" && leftKey === 1
+  const ok = stepIds === "style,colours,suggest,view3d,weather,winter,layers,feedback" && buttonsDown && threeKinds
+    && pass1.every((s) => s.ok) && pass2.length === 8 && pass2.every((s) => s.ok) && demo.demo && demo.routes > 0 && demo.from === "Georges-Vanier metro" && leftKey === 1
     && sameState(before, afterEsc) && sameState(before, afterDone) && afterDone.drawn === 0 && afterDone.pins === 0 && lastLabel === "Let's go" && focusBack === "tour-again"
     && !own.demo && own.from === "Mont-Royal metro" && own.check.ok && sameState(own0, own1) && !riding.button && riding.started === false;
   return { ok, stepIds, buttonsDown, threeKinds, pass1: brief(pass1), pass2: brief(pass2), demo, leftKey, before, afterEsc, afterDone, lastLabel, focusBack, own: { demo: own.demo, from: own.from, check: own.check.problems }, ownRestored: sameState(own0, own1) || [own0, own1], riding,
@@ -1539,10 +1534,10 @@ await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
   await until(page, welcomeUp, null, 30000);
   const before = await page.evaluate(appSnapshot);
   await page.click("#welcome-tour");
-  const big = await tourWalk(page, 0, 8, false);
-  await page.click(".tour-back"); await tourAt(page, 7);
+  const big = await tourWalk(page, 0, 7, false);
+  await page.click(".tour-back"); await tourAt(page, 6);
   const back = await page.evaluate(() => ({ i: window.pisteTour.info().i, sheet: document.querySelector("#panel").dataset.sheet }));
-  await page.click(".tour-next"); await tourAt(page, 8);
+  await page.click(".tour-next"); await tourAt(page, 7);
   await page.click(".tour-next");
   await tourClosed(page);
   await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before);
@@ -1556,13 +1551,13 @@ await run("phone: tour", `${APP}?safe=47,34`, async (page) => {
     return ["#feedback-link", "#tour-again"].map((s) => { const b = document.querySelector(s).getBoundingClientRect(); return b.top >= r.top && b.bottom <= r.bottom && b.height >= 44; }); });
   const before2 = await page.evaluate(appSnapshot);
   await page.click("#tour-again");
-  const small = await tourWalk(page, 0, 8, false);
+  const small = await tourWalk(page, 0, 7, false);
   await page.click(".tour-next");
   await tourClosed(page);
   await until(page, (b) => { const m = window.__app.map; return !m.isMoving() && Math.abs(m.getZoom() - b.zoom) < 0.01; }, before2);
   const after2 = await page.evaluate(appSnapshot);
-  const ok = big.length === 9 && big.every((s) => s.ok) && back.i === 7 && sameState(before, after) && after.drawn === 0 && foot.every(Boolean)
-    && small.length === 9 && small.every((s) => s.ok) && sameState(before2, after2);
+  const ok = big.length === 8 && big.every((s) => s.ok) && back.i === 6 && sameState(before, after) && after.drawn === 0 && foot.every(Boolean)
+    && small.length === 8 && small.every((s) => s.ok) && sameState(before2, after2);
   return { ok, phone390: brief(big), sheets390: big.map((s) => s.sheet).join(","), back, restored390: sameState(before, after), foot, phone360: brief(small),
     sheets360: small.map((s) => s.sheet).join(","), restored360: sameState(before2, after2), before2, after2, detail390: big.map((s) => ({ id: s.id, card: s.card, targets: s.targets })) };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, fresh: true });

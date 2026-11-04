@@ -215,14 +215,13 @@
 <!-- first visit only (tour.js): what Piste is, a beta note, the tour or explore alone -->
 <div id="welcome" class="welcome" hidden>
   <div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title" aria-describedby="welcome-text" tabindex="-1">
+    <span class="beta-pill welcome-beta" data-i18n="beta"></span>
     <div class="welcome-head"><h2 id="welcome-title" data-i18n="welcomeTitle"></h2></div>
     <p id="welcome-text" class="welcome-text" data-i18n="welcomeText"></p>
-    <div class="beta-note"><span class="beta-pill" data-i18n="beta"></span><p data-i18n="betaText"></p></div>
     <div class="welcome-buttons">
       <button type="button" id="welcome-tour" class="primary welcome-go"><span data-i18n="tourStart"></span><small data-i18n="tourTime"></small></button>
       <button type="button" id="welcome-skip" class="welcome-alt" data-i18n="exploreAlone"></button>
     </div>
-    <button type="button" id="welcome-feedback" class="feedback-link welcome-feedback" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M7.5 9.5h9M7.5 12.7h5.5"/></svg><span data-i18n="sendFeedback"></span></button>
   </div>
 </div>
 
