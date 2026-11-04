@@ -17,7 +17,7 @@ const svgAt = (px, scale) => LOGO.replace('width="512" height="512"', `width="${
 const browser = await chromium.launch({ channel: "msedge", headless: true });
 async function render(px, scale) {
   const page = await browser.newPage({ viewport: { width: px, height: px }, deviceScaleFactor: 1 });
-  await page.setContent(`<html><body style="margin:0;background:#0B5CFF">${svgAt(px, scale)}</body></html>`);
+  await page.setContent(`<html><body style="margin:0;background:#0095E6">${svgAt(px, scale)}</body></html>`);
   const png = await page.screenshot({ clip: { x: 0, y: 0, width: px, height: px } });
   await page.close();
   return png;

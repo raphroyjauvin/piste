@@ -1768,7 +1768,7 @@ await run("language button: top right of the card's header, visible at every she
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ the logo (2026-11-03): a white P with the bike chain on Piste blue (prototypes/icons/logo.svg, tools/shots/make_icons.mjs)
-const LOGO_BLUE = [11, 92, 255];
+const LOGO_BLUE = [0, 149, 230];   // #0095E6, the app's --blue
 // window.__logo(src) draws an image (a URL, or an inline <svg> serialised) at its own size and samples points given as fractions of its side: the P's stem (white), the hole in the
 // P's bowl and a spot near the bottom right (blue), and the top-left corner (blue on a full-bleed icon, see-through outside the header's disc); "white" is the share of white pixels.
 const logoPixels = `window.__logo = async (src) => {
@@ -1787,7 +1787,7 @@ await run("logo: the header mark is the new blue disc with the white P and has a
     const copy = svg.cloneNode(true); copy.setAttribute("width", 512); copy.setAttribute("height", 512);
     const logoUrl = document.querySelector('link[rel="icon"][type="image/svg+xml"]').href, logo = await (await fetch(logoUrl)).text();
     return { size: [Math.round(r.width), Math.round(r.height)], role: svg.getAttribute("role"), name: svg.getAttribute("aria-label"), hidden: svg.getAttribute("aria-hidden"), disc: circle && [circle.getAttribute("r"), circle.getAttribute("fill")],
-      path: path && [path.getAttribute("fill"), path.getAttribute("fill-rule")], sameShapeAsLogoSvg: !!path && logo.includes(` d="${path.getAttribute("d")}"`), oldMark: svg.outerHTML.includes("0095E6"),
+      path: path && [path.getAttribute("fill"), path.getAttribute("fill-rule")], sameShapeAsLogoSvg: !!path && logo.includes(` d="${path.getAttribute("d")}"`), oldMark: svg.getAttribute("viewBox") === "0 0 32 32",   // the old mark's box (both use the app blue since 2026-11-03)
       px: await window.__logo("data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(copy))) };
   });
   const desk = await header();
@@ -1809,14 +1809,14 @@ await run("logo: the header mark is the new blue disc with the white P and has a
       pics.push({ w: ico[e], h: ico[e + 1], px: { ...(await window.__logo(URL.createObjectURL(new Blob([ico.slice(off, off + len)], { type: "image/png" })))), signature: ico[off + 1] === 0x50 } }); }
     const svg = await (await fetch(href('link[rel="icon"][type="image/svg+xml"]'))).text();
     return { apple, icons, theme: { meta: document.querySelector('meta[name="theme-color"]').content, manifest: manifest.theme_color }, ico: { reserved: ico && dv.getUint16(0, true), type: ico && dv.getUint16(2, true), pics },
-      svg: { viewBox: svg.includes('viewBox="0 0 512 512"'), blue: svg.includes('fill="#0B5CFF"'), white: svg.includes('fill="#fff"') && svg.includes('fill-rule="evenodd"') } };
+      svg: { viewBox: svg.includes('viewBox="0 0 512 512"'), blue: svg.includes('fill="#0095E6"'), white: svg.includes('fill="#fff"') && svg.includes('fill-rule="evenodd"') } };
   });
   const square = (px, side) => !!px && px.size[0] === side && px.size[1] === side && isBlue(px.edge) && isWhite(px.stem) && isBlue(px.hole) && isBlue(px.corner) && px.white > 0.1 && px.white < 0.3;
   const icon = (side, purpose) => files.icons.find((i) => i.sizes === `${side}x${side}` && i.type === "image/png" && i.purpose.split(" ").includes(purpose));
   const by = Object.fromEntries(files.ico.pics.map((p) => [p.w, p]));
   const checks = {   // named, so a failure says which one
     markSize: desk.size.join() === "34,34" && phone.join() === "28,28",
-    discAndP: !!desk.disc && desk.disc.join() === "256,#0B5CFF" && desk.path.join() === "#fff,evenodd" && isBlue(desk.px.hole) && isWhite(desk.px.stem) && isBlue(desk.px.corner) && desk.px.edge[3] === 0,
+    discAndP: !!desk.disc && desk.disc.join() === "256,#0095E6" && desk.path.join() === "#fff,evenodd" && isBlue(desk.px.hole) && isWhite(desk.px.stem) && isBlue(desk.px.corner) && desk.px.edge[3] === 0,
     named: desk.role === "img" && desk.name === "Piste" && desk.hidden === null && namedImg === 1, noOldMark: !desk.oldMark, sameShapeAsLogoSvg: desk.sameShapeAsLogoSvg,
     homeScreenIcon: square(files.apple, 180),
     manifest192: square(icon(192, "any") && icon(192, "any").px, 192), manifest512: square(icon(512, "any") && icon(512, "any").px, 512), manifestMaskable: !!icon(512, "maskable") && square(icon(512, "maskable").px, 512),
