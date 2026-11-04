@@ -19,7 +19,8 @@
 //   PISTE_CPU_SLOWDOWN=4                             slow each page's CPU 4x (Chrome DevTools throttling) to try a slow machine
 //   PISTE_SHOT_DIR=<folder>                          the phone ride-summary group also saves a 390x844 screenshot there
 //   PISTE_NET_REPORT=1                               print, per group, which outside hosts the page called (to spot a new live dependency)
-import { chromium } from "playwright-core";
+// A group can ask for Playwright's WebKit (the iPhone's engine) with ctxOpts.webkit: true; it needs `npx playwright-core install webkit` (CI does it).
+import { chromium, webkit } from "playwright-core";
 import { readFileSync } from "node:fs";
 
 const BASE = process.env.PISTE_BASE || "http://localhost:8765/";
@@ -79,6 +80,13 @@ async function stubOutsideData(ctx) {
   });
 }
 
+let webkitBrowser = null;   // launched the first time a group asks for it
+async function webkitEngine() {
+  if (webkitBrowser) return webkitBrowser;
+  try { webkitBrowser = await webkit.launch({ headless: true }); }
+  catch (e) { throw new Error("WebKit could not start (install it with: npx playwright-core install webkit): " + e.message.split("\n")[0]); }
+  return webkitBrowser;
+}
 const results = [];
 function say(r) {
   const why = r.error || (r.errors && r.errors.length ? "console/page error: " + r.errors[0].slice(0, 200) : "a check was false (see the JSON line)");
@@ -92,9 +100,9 @@ async function run(name, url, fn, viewport = { width: 1440, height: 900 }, ctxOp
   const t = Date.now(), errors = [], hosts = new Set();
   let ctx, timer;
   const secs = () => ((Date.now() - t) / 1000).toFixed(1);
-  const { fresh, night, ...opts } = ctxOpts;
+  const { fresh, night, webkit: useWebkit, ...opts } = ctxOpts;
   try {
-    ctx = await browser.newContext({ viewport, serviceWorkers: "block", ...opts });   // a service worker would serve stale files (the offline group allows it)
+    ctx = await (useWebkit ? await webkitEngine() : browser).newContext({ viewport, serviceWorkers: "block", ...opts });   // a service worker would serve stale files (the offline group allows it)
     if (!fresh) await ctx.addInitScript(() => { try { localStorage.setItem("piste-welcomed", "1"); } catch (e) { /* storage blocked */ } });
     await ctx.addInitScript(() => { try { localStorage.setItem("umami.disabled", "1"); } catch (e) { /* storage blocked */ } });   // tests never count as visits
     if (!ctxOpts.night) await ctx.addInitScript(() => { try { localStorage.setItem("piste-night", "off"); } catch (e) { /* storage blocked */ } });   // Auto would turn the map dark when the tests run at night
@@ -106,7 +114,7 @@ async function run(name, url, fn, viewport = { width: 1440, height: 900 }, ctxOp
     page.on("pageerror", (e) => errors.push(String(e)));
     page.on("console", (m) => { if (m.type() === "error" && !/favicon|404|Failed to load resource/.test(m.text())) errors.push(m.text()); });
     if (NET_REPORT) page.on("request", (r) => { const u = new URL(r.url()); if (/^https?:$/.test(u.protocol) && u.host !== new URL(BASE).host) hosts.add(u.host); });
-    if (SLOWDOWN > 1) await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: SLOWDOWN });
+    if (SLOWDOWN > 1 && !useWebkit) await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: SLOWDOWN });
     const body = (async () => {
       await page.goto(BASE + url, { waitUntil: "load", timeout: 90000 });
       await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
@@ -584,6 +592,42 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
 // ------------------------------------------------------------------ GPS ride (2026-10-30)
 // ?gps=replay feeds a pretend ride (1 fix a second, sped up by gpsx, a few metres of noise, a poor fix now and then)
 // through navigator.geolocation's interface, so it runs the same code as a real phone.
+// ---- no double-tap page zoom (2026-11-03): iPhone Safari zooms the page when a button outside the map is tapped twice quickly ----
+// Playwright's WebKit does not do that zoom itself (the scale check below also passes without the fix), so the real guard is the computed
+// touch-action of what you press; the quick double taps check that nothing else moves the page or the map, as a real iPhone is the final test.
+await run("phone (WebKit, the iPhone's engine): a quick double tap on Layers, wind & rain, winter and 3D zooms neither page nor map; what you press is touch-action: manipulation, the map keeps its own", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
+  await page.waitForFunction(() => window.__app.map.loaded() && !window.__app.map.isMoving(), null, { timeout: 60000 });
+  const css = await page.evaluate(() => {
+    const ta = (el) => getComputedStyle(el).touchAction, queries = ["#layers-btn", "#wx-btn", "#winter-btn", "#view-btn", ".map-controls", "#from", "#to", ".tab", "#strict", ".route-card", ".clear", "#places .star", ".lang-btn", "#layers label"];
+    const named = Object.fromEntries(queries.map((q) => [q, document.querySelector(q) ? ta(document.querySelector(q)) : "missing"]));
+    const pressable = [...document.querySelectorAll("button, a[href], label, input, select, textarea, summary")].filter((el) => !el.closest("#map")), other = pressable.filter((el) => ta(el) !== "manipulation").map((el) => el.id || el.className || el.tagName);   // the map's own controls keep MapLibre's
+    const meta = (document.querySelector('meta[name="viewport"]') || {}).content || "";
+    return { named, count: pressable.length, other, map: ta(window.__app.map.getCanvasContainer()), canvas: ta(window.__app.map.getCanvas()), pinchOk: !/user-scalable\s*=\s*(no|0)|maximum-scale\s*=\s*1(\.0)?\b/i.test(meta), meta };
+  });
+  await page.evaluate(() => { window.__clicks = {}; for (const id of ["layers-btn", "wx-btn", "winter-btn", "view-btn"]) document.getElementById(id).addEventListener("click", () => { window.__clicks[id] = (window.__clicks[id] || 0) + 1; }, true); });
+  const view = () => page.evaluate(() => { const m = window.__app.map; return { scale: visualViewport.scale, width: Math.round(visualViewport.width), zoom: +m.getZoom().toFixed(3) }; });
+  const start = await view(), taps = {};
+  for (const id of ["layers-btn", "wx-btn", "winter-btn", "view-btn"]) {
+    const b = await page.locator("#" + id).boundingBox(), x = b.x + b.width / 2, y = b.y + b.height / 2;
+    await page.touchscreen.tap(x, y); await page.touchscreen.tap(x, y);   // as fast as the browser lets two taps go
+    await until(page, () => !window.__app.map.isMoving());
+    await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));   // fades and slides done before measuring
+    taps[id] = { ...(await view()), clicks: await page.evaluate((i) => window.__clicks[i] || 0, id) };
+  }
+  const end = await page.evaluate(() => { const s = window.__app.state; return { layersHidden: document.querySelector("#layers").hidden, wx: s.wx, winter: s.winter, pitch: Math.round(window.__app.map.getPitch()) }; });
+  const allManipulation = Object.values(css.named).every((v) => v === "manipulation");
+  const checks = {
+    pressedThingsManipulation: allManipulation && css.other.length === 0 && css.count > 20,
+    mapKeepsItsOwn: css.map !== "manipulation" && css.map !== "auto" && css.canvas !== "manipulation" && css.canvas !== "auto",
+    pinchNotBlocked: css.pinchOk,
+    pageNotZoomed: start.scale === 1 && Object.values(taps).every((t) => t.scale === 1 && t.width === start.width),
+    mapNotZoomed: Object.values(taps).every((t) => t.zoom === start.zoom),
+    bothTapsClicked: Object.values(taps).every((t) => t.clicks === 2) && end.layersHidden && !end.wx && !end.winter && end.pitch === 0,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), css, start, taps, end };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, deviceScaleFactor: 2, webkit: true });
+
 await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-center, arrives", `${APP}?trip=montroyal&gps=replay&gpsx=3`, async (page) => {
   const follow = await page.evaluate(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -995,6 +1039,61 @@ await run("wind & rain during a ride: radar stays, streaks stop, a still wind ba
     && (calmOk || kindsFr.test(fr)) && changes <= 12 && after.radar === "visible" && after.streaks && !after.badge;
   return { ok, before, during, fr, changes, after, wind: s.wxData && s.wxData.now };
 }));
+
+// ---- the wind badge on every ride (2026-11-03): not only when the wind & rain button was on before the ride ----
+await run("wind badge on every ride: with the wind & rain button off the forecast loads at the start; offline or a failed load: no badge, no message", `${APP}?trip=montroyal`, async (page, ctx) => {
+  let offline = true;
+  await ctx.route("https://api.open-meteo.com/**", (route) => (offline ? route.abort() : route.fallback()));   // fallback: the saved copy (or the live service)
+  await page.evaluate(() => {   // count the forecast requests that have finished, good or bad
+    window.__wxDone = 0; const f = window.fetch;
+    window.fetch = (...a) => { const p = f.apply(window, a); if (/open-meteo/.test(String(a[0]))) p.then(() => window.__wxDone++, () => window.__wxDone++); return p; };
+  });
+  const now = () => page.evaluate(() => { const s = window.__app.state; return { mode: s.mode, d: s.ride ? s.ride.d : -1, button: s.wx, pressed: document.querySelector("#wx-btn").getAttribute("aria-pressed"), data: !!s.wxData,
+    badge: !document.querySelector("#wind-badge").hidden, toast: !document.querySelector("#toast").hidden, streaks: !document.querySelector("#wind").hidden }; });
+  const before = await now();
+  // offline: the ride starts and goes on, with no badge and no message
+  await page.click("#ride-go");
+  await until(page, () => window.__wxDone >= 1);
+  await until(page, () => window.__app.state.ride && window.__app.state.ride.d > 5);
+  const offlineRide = await now();
+  await page.evaluate(() => window.__app.endRide());
+  // back online: the next ride loads the forecast at its start and shows the badge, though the button is still off
+  offline = false;
+  await page.click("#ride-go");
+  await until(page, () => !document.querySelector("#wind-badge").hidden, null, 30000);
+  const online = await now();
+  online.text = await page.evaluate(() => document.querySelector("#wind-speed").textContent + " | " + document.querySelector("#wind-kind").textContent);
+  online.calls = await page.evaluate(() => window.__wxDone);
+  // the same calm cadence as with the button on: the badge changes every 10 s or after a corner, never every frame
+  const changes = await page.evaluate(async () => { const badge = document.querySelector("#wind-badge"); let n = 0; const mo = new MutationObserver((l) => (n += l.length));
+    mo.observe(badge, { subtree: true, childList: true, characterData: true, attributes: true }); await new Promise((r) => setTimeout(r, 3000)); mo.disconnect(); return n; });
+  await page.evaluate(() => window.__app.endRide());
+  const after = await now();
+  const checks = {
+    startsWithoutIt: !before.button && before.pressed === "false" && !before.data && !before.badge,
+    offlineNoBadge: offlineRide.mode === "ride" && offlineRide.d > 5 && !offlineRide.data && !offlineRide.badge && !offlineRide.toast,
+    onlineBadge: online.mode === "ride" && !online.button && online.pressed === "false" && online.data && online.badge && !online.streaks && online.calls >= 2
+      && /^(Calm \| |\d+ km\/h \| (Headwind|Tailwind|Crosswind))$/.test(online.text),
+    calm: changes <= 12,
+    restored: !after.badge && after.pressed === "false" && !after.streaks && !after.button,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), before, offlineRide, online, changes, after };
+});
+
+// ---- the rider's pin (2026-11-03): a plain pin, no bike ----
+await run("ride: the rider's pin is the plain blue pin of the start (no bike), and no bike wheels are drawn anywhere on the page", `${APP}?trip=montroyal`, async (page) => {
+  await page.click("#ride-go");   // desktop: the preview
+  await until(page, () => !!window.__app.state.ride && getComputedStyle(document.querySelector(".rider-badge")).visibility !== "hidden" && document.querySelector(".rider-badge").getBoundingClientRect().width > 0);
+  const pin = await page.evaluate(() => {
+    const b = document.querySelector(".rider-badge"), svg = b.querySelector("svg"), start = document.querySelector(".field-row .pin svg"), r = b.getBoundingClientRect();
+    return { circles: svg.querySelectorAll("circle").length, groups: svg.querySelectorAll("g").length, paths: svg.querySelectorAll("path").length, sameAsStart: svg.innerHTML === start.innerHTML,
+      fill: svg.querySelector("path").getAttribute("fill"), w: Math.round(r.width), h: Math.round(r.height), wheels: document.querySelectorAll('svg circle[r="6.5"]').length, cone: !!document.querySelector(".rider-cone svg circle") };
+  });
+  const checks = { plainPin: pin.circles === 1 && pin.groups === 0 && pin.paths === 1 && pin.sameAsStart && pin.fill === "#0095E6", sized: pin.w === 46 && pin.h === 56, noWheels: pin.wheels === 0, coneKept: pin.cone };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), pin };
+});
 
 // ---- the end-of-ride summary ----
 await run("ride summary: numbers, ridden path, Done clears it; End shows it; the preview doesn't", `${APP}?trip=montroyal&gps=replay&gpsx=4`, async (page) => {
@@ -1900,116 +1999,208 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
 }, { width: 1440, height: 900 });
 
 // ------------------------------------------------------------------ saved places (2026-11-02): Home, Work, others; recents; all on this device
-// 2026-11-03: the chips are Home, Work, ★ and +, icon only (names in aria-label and title); ★ (once there is a saved place or a recent
-// destination) opens the list of saved places and the last two destinations; an empty search bar shows no list.
-const placeChips = () => [...document.querySelectorAll("#places .place")].map((b) => b.textContent.trim() || b.getAttribute("aria-label"));
-const listRows = () => [...document.querySelectorAll("#place-list .pl-row")].map((b) => b.textContent.trim());
-await run("saved places: icon chips, set Home, use it, ★ list (saved, last 2 destinations), edit and delete from it, no list on an empty bar, nothing sent", `${APP}`, async (page, ctx) => {
+// 2026-11-03: one chip, ★ (always there, name in aria-label and title), opens the menu: Home, Work, the saved places (each with its pencil),
+// "Add to saved locations". Recent destinations are not in it: they show in the pop-up while typing an address. An empty bar shows no list.
+const placeChips = () => [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label"));
+// the menu's rows: name, what sits under it (the place or address saved as Home or Work), the pencil's name, and whether the row has its icon
+const menuRows = () => [...document.querySelectorAll("#place-list li")].map((li) => { const t = li.querySelector(".pl-text"), e = li.querySelector(".pl-edit");
+  return { name: t.querySelector("span").textContent, sub: (t.querySelector("small") || {}).textContent || "", edit: e ? e.getAttribute("aria-label") : "", icon: !!li.querySelector(".pl-row > svg") }; });
+const rowNames = (rows) => rows.map((r) => r.name).join();
+
+await run("saved places: one ★ chip whose menu holds Home, Work, the saved places and Add; set, use, edit, delete; no recent destinations in it; nothing sent", `${APP}`, async (page, ctx) => {
   const seen = []; ctx.on("request", (r) => seen.push(r.url() + " " + (r.postData() || "")));
   const out = {};
-  const chipLook = () => page.evaluate(() => [...document.querySelectorAll("#places .place")].map((b) => ({ name: b.getAttribute("aria-label"), title: b.title, text: b.textContent.trim(), svg: !!b.querySelector("svg"),
-    edge: getComputedStyle(b, "::before").borderTopStyle, w: Math.round(b.getBoundingClientRect().width), h: Math.round(b.getBoundingClientRect().height) })));
-  out.start = await page.evaluate(placeChips);
-  out.look = await chipLook();
-  await page.click('#places [data-kind="home"]');   // nothing chosen yet
-  out.nothingToast = await page.evaluate(() => (document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent));
-  // choose a place, then "Set home" keeps it; Home keeps working after a reload
+  const menuClosed = () => page.evaluate(() => document.querySelector("#place-list").hidden);
+  const openMenu = async () => { await page.click("#places .star"); await until(page, () => !document.querySelector("#place-list").hidden); };
+  const rows = () => page.evaluate(menuRows);
+  const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem("piste-places") || "[]"));
+  const toast = () => page.evaluate(() => (document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent));
+  const hideToast = () => page.evaluate(() => { document.querySelector("#toast").hidden = true; });
+  const dialogOpen = () => until(page, () => !document.querySelector("#place-dialog").hidden);
+  const dialogShut = () => until(page, () => document.querySelector("#place-dialog").hidden);
+  const onStar = () => page.evaluate(() => document.activeElement.classList.contains("star"));
+  // the chip: one, ★ in a circle, 44 px to tap, its name in aria-label and title, the menu closed
+  out.chip = await page.evaluate(() => { const all = [...document.querySelectorAll("#places .place")], s = all[0], r = s.getBoundingClientRect();
+    return { n: all.length, name: s.getAttribute("aria-label"), title: s.title, text: s.textContent.trim(), svg: !!s.querySelector("svg"), w: Math.round(r.width), h: Math.round(r.height),
+      ring: getComputedStyle(s, "::before").borderTopStyle, expanded: s.getAttribute("aria-expanded"), controls: s.getAttribute("aria-controls"), menuHidden: document.querySelector("#place-list").hidden }; });
+  // nothing saved yet: Home, Work, Add; no pencils; an icon on the left of each row
+  await openMenu();
+  out.fresh = { expanded: await page.getAttribute("#places .star", "aria-expanded"), rows: await rows() };
+  // "Set home" with nothing on the bars: the pick-a-place message, the menu closes, nothing is saved
+  await page.click('#place-list [data-set="home"]');
+  out.nothing = { toast: await toast(), closed: await menuClosed(), stored: await stored() };
+  await hideToast(); await openMenu(); await page.click("#place-list [data-add]");
+  out.nothingAdd = { toast: await toast(), dialog: await page.evaluate(() => !document.querySelector("#place-dialog").hidden), closed: await menuClosed() };
+  // a place on the bars: "Set home" saves it as Home; the menu stays open, shows it under Home and keeps the keyboard on that row
   await page.evaluate(() => { window.piste.setPoint("to", [-73.5745, 45.5163], "Zorglub"); });
-  await page.click('#places [data-kind="home"]');
-  out.afterSet = await chipLook();
+  await openMenu(); await page.click('#place-list [data-set="home"]');
+  out.homeSet = { rows: await rows(), open: !(await menuClosed()), focus: await page.evaluate(() => document.activeElement.dataset.k || ""), stored: await stored() };
+  await page.keyboard.press("Escape");
+  // Home survives a reload, with its address
   await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
-  out.afterReload = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")), store: JSON.parse(localStorage.getItem("piste-places")) }));
-  // a start only: the Home chip becomes the destination and the route is made
+  await openMenu(); out.afterReload = await rows(); await page.keyboard.press("Escape");
+  // a start only: the Home row becomes the destination and the route is made
   await page.evaluate(() => { window.piste.setPoint("from", [-73.5875, 45.5231], "Start place"); });
-  await page.click('#places [data-i="0"]');
+  await openMenu(); await page.click('#place-list .pl-row[data-k="home"]');
   await until(page, () => window.__app.state.routes.length > 0);
-  out.routed = await page.evaluate(() => { const s = window.__app.state; return { to: s.to && s.to.map((v) => +v.toFixed(4)), label: s.toLabel, routes: s.routes.length }; });
-  // "+": name the destination; it is not a chip of its own, ★ appears and lists it
-  await page.click("#places .add");
-  out.dialog = await page.evaluate(() => ({ open: !document.querySelector("#place-dialog").hidden, name: document.querySelector("#pl-name").value, del: document.querySelector("#pl-delete").hidden }));
-  await page.fill("#pl-name", "Café Zorglub"); await page.keyboard.press("Enter");
-  await until(page, () => document.querySelector("#place-dialog").hidden);
-  out.named = await page.evaluate(placeChips);
-  await page.click("#places .star");
-  out.list = await page.evaluate(() => ({ open: !document.querySelector("#place-list").hidden, expanded: document.querySelector("#places .star").getAttribute("aria-expanded"),
-    rows: [...document.querySelectorAll("#place-list .pl-row")].map((b) => b.textContent.trim()), edit: document.querySelector("#place-list .pl-edit") && document.querySelector("#place-list .pl-edit").getAttribute("aria-label") }));
-  // its pencil: the place form (rename), then focus back on ★
-  await page.click("#place-list .pl-edit"); await until(page, () => !document.querySelector("#place-dialog").hidden);
-  out.editOpen = await page.evaluate(() => ({ title: document.querySelector("#pl-title").textContent, name: document.querySelector("#pl-name").value, listClosed: document.querySelector("#place-list").hidden }));
-  await page.fill("#pl-name", "Café 2"); await page.click('#place-form button[type="submit"]');
-  await until(page, () => document.querySelector("#place-dialog").hidden);
-  out.renamed = await page.evaluate(() => ({ focus: document.activeElement.classList.contains("star"), names: JSON.parse(localStorage.getItem("piste-places")).map((p) => p.name) }));
-  // move it to the current place, then delete it: ★ goes with it (no recent destinations yet)
+  out.routed = await page.evaluate(() => { const s = window.__app.state; return { to: s.to && s.to.map((v) => +v.toFixed(4)), label: s.toLabel, routes: s.routes.length, closed: document.querySelector("#place-list").hidden }; });
+  // "Add to saved locations": the name form for the place on the bars; not a chip of its own, a row in the menu with its pencil; focus back on ★
+  await openMenu(); await page.click("#place-list [data-add]"); await dialogOpen();
+  out.dialog = await page.evaluate(() => ({ open: !document.querySelector("#place-dialog").hidden, name: document.querySelector("#pl-name").value, del: document.querySelector("#pl-delete").hidden, menuClosed: document.querySelector("#place-list").hidden }));
+  await page.fill("#pl-name", "Café Zorglub"); await page.keyboard.press("Enter"); await dialogShut();
+  out.chipsAfter = await page.evaluate(placeChips); out.focusAfterAdd = await onStar();
+  await openMenu(); out.named = await rows();
+  // a saved place's pencil: the place form (rename), then focus back on ★
+  await page.click('#place-list .pl-edit[aria-label="Edit Café Zorglub"]'); await dialogOpen();
+  out.editOpen = await page.evaluate(() => ({ title: document.querySelector("#pl-title").textContent, name: document.querySelector("#pl-name").value, menuClosed: document.querySelector("#place-list").hidden }));
+  await page.fill("#pl-name", "Café 2"); await page.click('#place-form button[type="submit"]'); await dialogShut();
+  out.renamed = { focus: await onStar(), names: (await stored()).map((p) => p.name).join() };
+  // move it to the current place, then Home too (its form has no name, only Use the current place and Delete)
   await page.evaluate(() => { window.piste.setPoint("to", [-73.6, 45.53], "Elsewhere"); });
-  await page.click("#places .star"); await page.click("#place-list .pl-edit"); await until(page, () => !document.querySelector("#place-dialog").hidden);
-  await page.click("#pl-use"); await until(page, () => document.querySelector("#place-dialog").hidden);
-  out.moved = await page.evaluate(() => JSON.parse(localStorage.getItem("piste-places"))[1].ll);
-  await page.click("#places .star"); await page.click("#place-list .pl-edit"); await until(page, () => !document.querySelector("#place-dialog").hidden);
-  await page.click("#pl-delete"); await until(page, () => document.querySelector("#place-dialog").hidden);
-  out.deleted = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")), n: JSON.parse(localStorage.getItem("piste-places")).length, focus: document.activeElement.className }));
-  // an empty bar shows no list (2026-11-03); typing still searches, and a chosen destination becomes a recent one
-  await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
-  await page.click("#to");
-  out.emptyBar = await page.evaluate(() => ({ focus: document.activeElement.id, list: !document.querySelector("#suggest").hidden && document.querySelectorAll("#suggest li").length }));
-  await page.keyboard.type("Rachel & Papineau");
-  await until(page, () => /Rachel/.test((document.querySelector("#suggest li") || {}).textContent || ""));
-  await page.keyboard.press("Enter");
-  out.recent = await page.evaluate(() => ({ recents: JSON.parse(localStorage.getItem("piste-recents")).length, chips: [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")) }));
-  await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
-  await page.click("#to"); await page.keyboard.press("Backspace");
-  out.emptyAgain = await page.evaluate(() => !document.querySelector("#suggest").hidden && document.querySelectorAll("#suggest li").length);
-  // the list holds saved places first, then only the last two destinations; a row is used as a chip would be
+  await openMenu(); await page.click('#place-list .pl-edit[aria-label="Edit Café 2"]'); await dialogOpen();
+  await page.click("#pl-use"); await dialogShut();
+  out.moved = (await stored()).find((p) => !p.kind).ll;
+  await openMenu(); await page.click('#place-list .pl-edit[aria-label="Edit Home"]'); await dialogOpen();
+  out.homeForm = await page.evaluate(() => ({ nameField: !document.querySelector("#pl-name-field").hidden, use: !document.querySelector("#pl-use").hidden, del: !document.querySelector("#pl-delete").hidden }));
+  await page.click("#pl-use"); await dialogShut();
+  out.homeMoved = (await stored()).find((p) => p.kind === "home");
+  await openMenu(); out.homeRow = (await rows())[0];
+  // delete Home, then the saved place: back to Set home
+  await page.click('#place-list .pl-edit[aria-label="Edit Home"]'); await dialogOpen(); await page.click("#pl-delete"); await dialogShut();
+  await openMenu(); await page.click('#place-list .pl-edit[aria-label="Edit Café 2"]'); await dialogOpen(); await page.click("#pl-delete"); await dialogShut();
+  await openMenu(); out.deleted = { rows: await rows(), n: (await stored()).length }; await page.keyboard.press("Escape");
+  // Work works the same; a start called "My location" says nothing about where Home is, so no address is kept for it
+  await page.evaluate(() => { window.piste.setPoint("to", [-73.58, 45.52], "Workplace"); });
+  await openMenu(); await page.click('#place-list [data-set="work"]'); out.work = (await rows())[1];
+  await page.evaluate(() => { window.piste.setPoint("to", [-73.57, 45.51], window.BikeI18n.t("myLocation")); });
+  await page.click('#place-list [data-set="home"]'); out.myLocation = (await rows())[0]; await page.keyboard.press("Escape");
+  // the menu: Home, Work, saved places, Add; the last destinations are not in it
   await page.evaluate(() => {
-    localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "", ll: [-73.5745, 45.5163] }, { kind: "", name: "Atelier Bravo", ll: [-73.59, 45.53] }]));
+    localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "4500 rue Saint-Denis", ll: [-73.5745, 45.5163] }, { kind: "", name: "Atelier Bravo", ll: [-73.59, 45.53] }]));
     localStorage.setItem("piste-recents", JSON.stringify(["Rec One", "Rec Two", "Rec Three"].map((name, i) => ({ name, ll: [-73.57 - i / 100, 45.51] }))));
   });
   await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
   await page.evaluate(() => { window.piste.setPoint("from", [-73.5875, 45.5231], "Start place"); });
-  await page.click("#places .star");
-  out.rows = await page.evaluate(listRows);
-  await page.click('#place-list .pl-row[data-use="recent"]');
+  await openMenu(); out.rows = await rows();
+  await page.click('#place-list .pl-row[data-p="1"]');
   await until(page, () => window.__app.state.routes.length > 0);
   out.used = await page.evaluate(() => ({ to: window.__app.state.toLabel, closed: document.querySelector("#place-list").hidden, expanded: document.querySelector("#places .star").getAttribute("aria-expanded") }));
-  // keyboard: Enter on ★ opens it with focus on the first row, arrows move, Esc closes it and focus goes back to ★; a click outside closes it too
+  // keyboard: Enter on ★ opens it with focus on the first row, arrows move (the pencil is next), Esc closes it and focus goes back to ★; a tap outside closes it too
   await page.focus("#places .star"); await page.keyboard.press("Enter");
-  out.kb = await page.evaluate(() => ({ open: !document.querySelector("#place-list").hidden, focus: document.activeElement.textContent.trim() }));
+  out.kb = await page.evaluate(() => ({ open: !document.querySelector("#place-list").hidden, focus: document.activeElement.dataset.k }));
   await page.keyboard.press("ArrowDown");
   out.kb.next = await page.evaluate(() => document.activeElement.className);
   await page.keyboard.press("Escape");
   out.kb.esc = await page.evaluate(() => ({ closed: document.querySelector("#place-list").hidden, onStar: document.activeElement.classList.contains("star"), expanded: document.activeElement.getAttribute("aria-expanded") }));
   await page.click("#places .star"); await page.mouse.click(900, 450);
   out.outside = await page.evaluate(() => document.querySelector("#place-list").hidden);
-  // clearing the recent places from the list
-  await page.click("#places .star"); await page.click("#place-list .pl-clear");
-  out.cleared = await page.evaluate(() => ({ recents: JSON.parse(localStorage.getItem("piste-recents")).length, star: !!document.querySelector("#places .star") }));
+  // French, also while the menu is open
+  await openMenu();
   await page.evaluate(() => window.__app.setLang("fr"));
-  out.fr = await page.evaluate(() => [...document.querySelectorAll("#places .place")].map((b) => b.getAttribute("aria-label")));
+  out.fr = { chip: await page.evaluate(placeChips), rows: await page.evaluate(menuRows), title: await page.getAttribute("#places .star", "title") };
   const safe = (u) => { try { return decodeURIComponent(u); } catch (e) { return u; } };
-  const leaked = seen.filter((u) => /Zorglub|Elsewhere|Bravo|45\.5163|73\.5745/.test(safe(u)));
+  const leaked = seen.filter((u) => /Zorglub|Elsewhere|Bravo|Workplace|45\.5163|73\.5745/.test(safe(u)));
   const checks = {
-    firstVisit: out.start.join() === "Set home,Set work,Save a place",
-    iconOnly: out.look.every((c) => c.text === "" && c.svg && c.title === c.name && c.w >= 44 && c.h >= 44) && out.look[0].edge === "dashed" && out.look[1].edge === "dashed" && out.look[2].edge === "solid",
-    pickFirst: /pick a place first/i.test(out.nothingToast), homeSet: out.afterSet.map((c) => c.name).join() === "Home,Set work,Save a place" && out.afterSet[0].edge === "solid" && out.afterSet[0].title === "Home",
-    reload: out.afterReload.chips.join() === "Home,Set work,Save a place" && out.afterReload.store.length === 1 && out.afterReload.store[0].kind === "home",
-    homeUsed: out.routed.to.join() === "-73.5745,45.5163" && out.routed.label === "Home" && out.routed.routes > 0,
-    plusDialog: out.dialog.open && out.dialog.name === "Home" && out.dialog.del, noCustomChip: out.named.join() === "Home,Set work,Saved and recent places,Save a place",
-    starList: out.list.open && out.list.expanded === "true" && out.list.rows.length === 1 && /^Café Zorglub\s*Saved$/.test(out.list.rows[0]) && out.list.edit === "Edit Café Zorglub",
-    editFromList: out.editOpen.title === "Edit place" && out.editOpen.name === "Café Zorglub" && out.editOpen.listClosed && out.renamed.focus && out.renamed.names.join() === ",Café 2",
-    moveFromList: out.moved.join() === "-73.6,45.53", deleteFromList: out.deleted.n === 1 && out.deleted.chips.join() === "Home,Set work,Save a place",
-    noEmptyBarList: out.emptyBar.focus === "to" && !out.emptyBar.list && !out.emptyAgain, typedSearch: out.recent.recents === 1 && out.recent.chips.includes("Saved and recent places"),
-    savedThenTwoRecents: out.rows.length === 3 && /^Atelier Bravo\s*Saved$/.test(out.rows[0]) && /^Rec One\s*Recent$/.test(out.rows[1]) && /^Rec Two\s*Recent$/.test(out.rows[2]),
-    rowUsed: out.used.to === "Rec One" && out.used.closed && out.used.expanded === "false",
-    keyboard: out.kb.open && /^Atelier Bravo/.test(out.kb.focus) && out.kb.next === "pl-edit" && out.kb.esc.closed && out.kb.esc.onStar && out.kb.esc.expanded === "false", outsideCloses: out.outside,
-    clearRecents: out.cleared.recents === 0 && out.cleared.star, french: out.fr.join() === "Maison,Ajouter le travail,Lieux enregistrés et récents,Enregistrer un lieu", nothingSent: leaked.length === 0,
+    oneChip: out.chip.n === 1 && out.chip.name === "Saved places" && out.chip.title === "Saved places" && out.chip.text === "" && out.chip.svg && out.chip.w >= 44 && out.chip.h >= 44 && out.chip.ring === "solid"
+      && out.chip.expanded === "false" && out.chip.controls === "place-list" && out.chip.menuHidden,
+    freshMenu: out.fresh.expanded === "true" && rowNames(out.fresh.rows) === "Set home,Set work,Add to saved locations" && out.fresh.rows.every((r) => r.icon && !r.edit && !r.sub),
+    pickFirst: /pick a place first/i.test(out.nothing.toast) && out.nothing.closed && out.nothing.stored.length === 0,
+    pickFirstAdd: /pick a place first/i.test(out.nothingAdd.toast) && !out.nothingAdd.dialog && out.nothingAdd.closed,
+    homeSet: out.homeSet.open && out.homeSet.focus === "home" && rowNames(out.homeSet.rows) === "Home,Set work,Add to saved locations" && out.homeSet.rows[0].sub === "Zorglub" && out.homeSet.rows[0].edit === "Edit Home"
+      && out.homeSet.stored.length === 1 && out.homeSet.stored[0].kind === "home" && out.homeSet.stored[0].name === "Zorglub",
+    reload: out.afterReload[0].name === "Home" && out.afterReload[0].sub === "Zorglub" && out.afterReload.length === 3,
+    homeUsed: out.routed.to.join() === "-73.5745,45.5163" && out.routed.label === "Home" && out.routed.routes > 0 && out.routed.closed,
+    addDialog: out.dialog.open && out.dialog.name === "Home" && out.dialog.del && out.dialog.menuClosed && out.focusAfterAdd,
+    noExtraChip: out.chipsAfter.join() === "Saved places" && rowNames(out.named) === "Home,Set work,Café Zorglub,Add to saved locations" && out.named[2].edit === "Edit Café Zorglub" && out.named[2].icon,
+    editFromMenu: out.editOpen.title === "Edit place" && out.editOpen.name === "Café Zorglub" && out.editOpen.menuClosed && out.renamed.focus && out.renamed.names === "Zorglub,Café 2",
+    moveSaved: out.moved.join() === "-73.6,45.53",
+    homeForm: !out.homeForm.nameField && out.homeForm.use && out.homeForm.del && out.homeMoved.ll.join() === "-73.6,45.53" && out.homeMoved.name === "Elsewhere" && out.homeRow.sub === "Elsewhere",
+    deleted: out.deleted.n === 0 && rowNames(out.deleted.rows) === "Set home,Set work,Add to saved locations",
+    workSet: out.work.name === "Work" && out.work.sub === "Workplace" && out.work.edit === "Edit Work",
+    myLocationNoAddress: out.myLocation.name === "Home" && out.myLocation.sub === "",
+    homeWorkSavedAdd: rowNames(out.rows) === "Home,Set work,Atelier Bravo,Add to saved locations" && out.rows[0].sub === "4500 rue Saint-Denis" && out.rows.every((r) => !/^Rec /.test(r.name)),
+    rowUsed: out.used.to === "Atelier Bravo" && out.used.closed && out.used.expanded === "false",
+    keyboard: out.kb.open && out.kb.focus === "home" && out.kb.next === "pl-edit" && out.kb.esc.closed && out.kb.esc.onStar && out.kb.esc.expanded === "false", outsideCloses: out.outside,
+    french: out.fr.chip.join() === "Lieux enregistrés" && out.fr.title === "Lieux enregistrés" && rowNames(out.fr.rows) === "Maison,Ajouter le travail,Atelier Bravo,Ajouter aux lieux enregistrés" && out.fr.rows[0].edit === "Modifier Maison",
+    nothingSent: leaked.length === 0,
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), ...out, requests: seen.length, leaked };
 }, { width: 1440, height: 900 });
 
-await run("saved places (phone): four chips fit, long press edits Home, typing shows the chips and no list, ★ works with the keyboard up", `${APP}?safe=47,34`, async (page) => {
+// ---- recent destinations (2026-11-03): only in the pop-up that opens while typing an address ----
+await run("search: recent destinations show in the typing pop-up only (matching the text, at most 3, tagged Recent, then Clear recent places); an empty bar shows no list", `${APP}`, async (page) => {
+  const out = {};
+  const names = ["Parc Le Boutillier", "Parc Jarry", "Parc Laurier", "Parc Molson", "Marché Atwater"];   // most recent first ("Parc Le Boutillier" is also a map result for "parc")
+  await page.evaluate((list) => localStorage.setItem("piste-recents", JSON.stringify(list.map((name, i) => ({ name, ll: [-73.6 + i / 100, 45.5 + i / 100] })))), names);
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  const popup = () => page.evaluate(() => ({ shown: !document.querySelector("#suggest").hidden, rows: [...document.querySelectorAll("#suggest li[data-i]")].map((li) => ({ name: li.querySelector("span").textContent, sub: li.querySelector("small").textContent, clear: li.classList.contains("clear") })) }));
+  // count the address-service requests that have finished (good or bad), to know when the pop-up has the answer for the typed text
+  const watchGeo = () => page.evaluate(() => { window.__geo = 0; const f = window.fetch; window.fetch = (...a) => { const p = f.apply(window, a); if (/api\.montreal\.ca/.test(String(a[0]))) p.then(() => window.__geo++, () => window.__geo++); return p; }; });
+  const typeInto = async (text) => {
+    const n = await page.evaluate(() => window.__geo);
+    await page.fill("#to", text);
+    await until(page, (k) => window.__geo > k, n);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));   // and the pop-up has been redrawn
+  };
+  await watchGeo();
+  const recentsStored = () => page.evaluate(() => JSON.parse(localStorage.getItem("piste-recents") || "[]").map((r) => r.name));
+  // the ★ menu has none of them, though five are saved
+  await page.click("#places .star"); await until(page, () => !document.querySelector("#place-list").hidden);
+  out.starMenu = await page.evaluate(menuRows); await page.keyboard.press("Escape");
+  // an empty bar: no list, not even for a click in it; deleting the typed text closes it
+  await page.click("#to");
+  out.emptyBar = await page.evaluate(() => ({ focus: document.activeElement.id, list: !document.querySelector("#suggest").hidden && document.querySelectorAll("#suggest li").length }));
+  // "parc": three recent places first (the fourth match is left out), then Clear recent places, then the other results, none repeated
+  await typeInto("parc");
+  await until(page, () => document.querySelectorAll("#suggest li[data-i]").length > 4);   // the address results join the recent ones
+  out.parc = await popup();
+  // any case, any accent
+  await typeInto("MARCHE atw"); out.accents = await popup();
+  // Enter takes the top row, a recent place: it becomes the destination and moves to the top of the recent ones
+  await page.keyboard.press("Enter");
+  out.picked = await page.evaluate(() => ({ to: window.__app.state.toLabel, shown: !document.querySelector("#suggest").hidden }));
+  out.order = await recentsStored();
+  // text that matches no recent place: none shown, and no Clear row
+  await page.fill("#to", ""); await typeInto("papineau"); out.noMatch = await popup();
+  // a destination picked from the address results is remembered, and then comes first
+  await page.fill("#to", ""); await typeInto("Rachel & Papineau"); await page.keyboard.press("Enter");
+  out.remembered = (await recentsStored())[0];   // the intersection's own name: "Rue Rachel Est & Avenue Papineau"
+  await page.evaluate(() => { window.piste.clearPoint("to"); document.querySelector("#to").blur(); });
+  await typeInto("rachel"); out.again = await popup();
+  // Clear recent places: they go from storage and from the pop-up, the typed text and the keyboard stay, and the menu never had them
+  await typeInto("parc");
+  await page.click("#suggest li.clear");
+  out.cleared = await page.evaluate(() => ({ stored: JSON.parse(localStorage.getItem("piste-recents") || "[]").length, focus: document.activeElement.id, text: document.querySelector("#to").value,
+    rows: [...document.querySelectorAll("#suggest li[data-i]")].map((li) => li.querySelector("small").textContent), clearRow: !!document.querySelector("#suggest li.clear") }));
+  await page.fill("#to", ""); await page.waitForFunction(() => document.querySelector("#suggest").hidden || !document.querySelectorAll("#suggest li").length);
+  out.emptyAgain = await popup();
+  // French
+  await page.evaluate((list) => { localStorage.setItem("piste-recents", JSON.stringify(list.map((name, i) => ({ name, ll: [-73.6 + i / 100, 45.5 + i / 100] })))); }, names);
+  await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await watchGeo(); await page.evaluate(() => window.__app.setLang("fr")); await page.click("#to"); await typeInto("parc"); out.fr = await popup();
+  const first3 = out.parc.rows.slice(0, 3), labels = out.parc.rows.filter((r) => !r.clear).map((r) => r.name);
+  const checks = {
+    emptyBarNoList: out.emptyBar.focus === "to" && !out.emptyBar.list && !out.emptyAgain.shown,
+    threeRecentFirst: first3.map((r) => r.name).join() === "Parc Le Boutillier,Parc Jarry,Parc Laurier" && first3.every((r) => r.sub === "Recent" && !r.clear) && !labels.includes("Parc Molson"),
+    clearRowAfter: out.parc.rows[3].clear && out.parc.rows[3].name === "Clear recent places" && out.parc.rows.filter((r) => r.clear).length === 1,
+    othersFollow: out.parc.rows.length > 4 && out.parc.rows.slice(4).every((r) => r.sub !== "Recent") && new Set(labels).size === labels.length,
+    notInMenu: !out.starMenu.some((r) => /Parc|Marché|Recent/.test(r.name + r.sub)),
+    caseAndAccents: out.accents.rows[0].name === "Marché Atwater" && out.accents.rows[0].sub === "Recent" && out.accents.rows[1].clear && out.accents.rows.filter((r) => r.sub === "Recent").length === 1,
+    enterTakesTop: out.picked.to === "Marché Atwater" && !out.picked.shown && out.order[0] === "Marché Atwater" && out.order.length === 5,
+    noMatchNoRecents: !out.noMatch.rows.some((r) => r.sub === "Recent" || r.clear),
+    remembered: out.remembered === "Rue Rachel Est & Avenue Papineau" && out.again.rows[0].name === out.remembered && out.again.rows[0].sub === "Recent",
+    clearRecents: out.cleared.stored === 0 && out.cleared.focus === "to" && out.cleared.text === "parc" && !out.cleared.rows.includes("Recent") && !out.cleared.clearRow,
+    french: out.fr.rows[0].sub === "Récent" && out.fr.rows.some((r) => r.clear && r.name === "Effacer les lieux récents"),
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), ...out };
+}, { width: 1440, height: 900 });
+
+await run("saved places (phone): the ★ chip fits, typing shows it under the bar, its menu works with the keyboard up, recent destinations come up in the pop-up above the card", `${APP}?safe=47,34`, async (page) => {
   await page.evaluate(() => {
-    localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "", ll: [-73.5745, 45.5163] }, ...["Alpha", "Bravo place"].map((name, i) => ({ kind: "", name, ll: [-73.58 - i / 100, 45.52] }))]));
-    localStorage.setItem("piste-recents", JSON.stringify([{ name: "Rec One", ll: [-73.57, 45.51] }]));
+    localStorage.setItem("piste-places", JSON.stringify([{ kind: "home", name: "4500 rue Saint-Denis", ll: [-73.5745, 45.5163] }, ...["Alpha", "Bravo place"].map((name, i) => ({ kind: "", name, ll: [-73.58 - i / 100, 45.52] }))]));
+    localStorage.setItem("piste-recents", JSON.stringify(["Rec One", "Rec Two"].map((name, i) => ({ name, ll: [-73.57 - i / 100, 45.51] }))));
   });
   await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
   await page.evaluate(() => window.__app.setSheet("half")); await page.waitForTimeout(500);
@@ -2017,35 +2208,41 @@ await run("saved places (phone): four chips fit, long press edits Home, typing s
     const withRow = s.offsetHeight; r.style.display = "none"; const without = s.offsetHeight; r.style.display = "";
     return { n: chips.length, fits: r.scrollWidth <= r.clientWidth + 1, tap44: chips.every((c) => c.height >= 44 && c.width >= 43.5), added: withRow - without, pageX: document.documentElement.scrollWidth <= innerWidth,
       panelH: Math.round(document.querySelector("#panel").getBoundingClientRect().height), half: Math.round(innerHeight / 2) }; });
-  // a long press (finger held on Home) opens the editor and does not also use the place
-  const hold = await page.evaluate(async () => {
-    const chip = document.querySelector('#places [data-i="0"]'), b = chip.getBoundingClientRect(), o = { bubbles: true, pointerType: "touch", pointerId: 7, isPrimary: true, clientX: b.left + 20, clientY: b.top + 22 };
-    chip.dispatchEvent(new PointerEvent("pointerdown", o)); await new Promise((r) => setTimeout(r, 650));
-    chip.dispatchEvent(new PointerEvent("pointerup", o)); chip.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-    return { open: !document.querySelector("#place-dialog").hidden, title: document.querySelector("#pl-title").textContent, usedIt: !!window.__app.state.to || !!window.__app.state.from };
-  });
-  await page.click("#pl-cancel"); await until(page, () => document.querySelector("#place-dialog").hidden);
-  // tap the empty destination bar: the bar, the chips under it (just above the keyboard) and no list
+  // tap the empty destination bar: the bar, the chip under it (just above the keyboard) and no list
   await page.tap("#to");
   await until(page, () => document.body.classList.contains("searching"));
-  const search = await settled(page, () => { const p = document.querySelector("#panel").getBoundingClientRect(), c = document.querySelector("#places").getBoundingClientRect(), f = document.querySelector("#to").closest(".field").getBoundingClientRect();
+  const tappedAt = await page.evaluate(() => performance.now());
+  const search = await settled(page, () => { const c = document.querySelector("#places").getBoundingClientRect(), f = document.querySelector("#to").closest(".field").getBoundingClientRect();
     return { chips: getComputedStyle(document.querySelector("#places")).display !== "none", underBar: c.top >= f.bottom - 1, aboveKb: c.bottom - 7 <= innerHeight - Math.max(260, innerHeight * 0.47) + 1,
-      list: !document.querySelector("#suggest").hidden, focus: document.activeElement.id }; });
-  // ★ with the keyboard up: the list floats over the map just above the card, typing goes on, a row is the destination and the search ends.
-  // (Taps in the first 800 ms after the one that opened search are swallowed on purpose, app.js swallowUntil: a time window, so it is waited out.)
-  await page.waitForTimeout(900);
+      list: !document.querySelector("#suggest").hidden, focus: document.activeElement.id }; });   // the chip's circle sits 7 px inside its 44 px row
+  // ★ with the keyboard up: the menu floats over the map just above the card, typing goes on, a row is the destination and the search ends.
+  // (Taps in the first 800 ms after the one that opened search are swallowed on purpose, app.js swallowUntil: a time window, waited out here.)
+  await page.waitForFunction((t0) => performance.now() - t0 > 900, tappedAt);
   await page.tap("#places .star");
   const star = await settled(page, () => { const l = document.querySelector("#place-list"), r = l.getBoundingClientRect(), p = document.querySelector("#panel").getBoundingClientRect();
     return { open: !l.hidden, aboveCard: r.bottom <= p.top + 1 && r.top >= 0, focus: document.activeElement.id, searching: document.body.classList.contains("searching"), rows: [...l.querySelectorAll(".pl-row")].map((b) => b.textContent.trim()) }; });
-  await page.tap('#place-list .pl-row[data-use="saved"]');
+  await page.tap('#place-list .pl-row[data-p="1"]');
   await until(page, () => !document.body.classList.contains("searching"));
   const used = await page.evaluate(() => ({ to: window.__app.state.toLabel, closed: document.querySelector("#place-list").hidden, sheet: document.querySelector("#panel").dataset.sheet }));
-  const checks = { fourFit: row.n === 4 && row.fits && row.tap44 && row.pageX && row.added <= 40 && row.panelH === row.half, holdEdits: hold.open && hold.title === "Edit place" && !hold.usedIt,
-    typingShowsChips: search.chips && search.underBar && search.aboveKb && !search.list && search.focus === "to",
-    starOverKeyboard: star.open && star.aboveCard && star.focus === "to" && star.searching && star.rows.length === 3 && /^Alpha/.test(star.rows[0]) && /^Rec One/.test(star.rows[2]),
-    rowUsed: used.to === "Alpha" && used.closed && used.sheet === "half" };
+  // typing "rec": the recent destinations are the first rows of the pop-up above the card, then Clear recent places; a tap picks one
+  await page.tap("#to"); await until(page, () => document.body.classList.contains("searching"));
+  const tappedAgain = await page.evaluate(() => performance.now());
+  await page.fill("#to", "rec");
+  await until(page, () => document.querySelectorAll("#suggest li[data-i]").length >= 3);
+  const popup = await settled(page, () => { const l = document.querySelector("#suggest"), p = document.querySelector("#panel");
+    return { aboveCard: l.getBoundingClientRect().bottom <= p.getBoundingClientRect().top + 1, rows: [...l.querySelectorAll("li[data-i]")].map((li) => li.querySelector("span").textContent + "|" + li.querySelector("small").textContent), clear: !!l.querySelector("li.clear"),
+      clearH: Math.round((l.querySelector("li.clear") || document.body).getBoundingClientRect().height) }; });
+  await page.waitForFunction((t0) => performance.now() - t0 > 900, tappedAgain);
+  await page.tap('#suggest li[data-i="0"]');
+  await until(page, () => !document.body.classList.contains("searching"));
+  const pickedRecent = await page.evaluate(() => ({ to: window.__app.state.toLabel, searching: document.body.classList.contains("searching") }));
+  const checks = { oneChipFits: row.n === 1 && row.fits && row.tap44 && row.pageX && row.added <= 40 && row.panelH === row.half,
+    typingShowsChip: search.chips && search.underBar && search.aboveKb && !search.list && search.focus === "to",
+    menuOverKeyboard: star.open && star.aboveCard && star.focus === "to" && star.searching && star.rows.length === 5 && /^Home/.test(star.rows[0]) && /^Set work/.test(star.rows[1]) && /^Alpha/.test(star.rows[2]) && /^Add to saved locations/.test(star.rows[4]) && !star.rows.some((r) => /^Rec /.test(r)),
+    rowUsed: used.to === "Alpha" && used.closed && used.sheet === "half",
+    recentsInPopup: popup.aboveCard && popup.rows[0] === "Rec One|Recent" && popup.rows[1] === "Rec Two|Recent" && popup.clear && popup.clearH >= 44, recentTapped: pickedRecent.to === "Rec One" && !pickedRecent.searching };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
-  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), row, hold, search, star, used };
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), row, search, star, used, popup, pickedRecent };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ---- a place's pop-up (2026-11-03): "More info" opens a web search for its name + Montréal in a new tab; named places only ----
@@ -2240,6 +2437,7 @@ await run("3D trees: the Layers checkbox (Trees in 3D) is on by default and reme
 }, { width: 1000, height: 700 });
 
 await browser.close();
+if (webkitBrowser) await webkitBrowser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----
 const failed = results.filter((r) => !r.ok);
 console.log("\n=== details ===");
