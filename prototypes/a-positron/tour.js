@@ -174,7 +174,10 @@
   function showWelcome() {
     welcomeState = "shown";
     const head = welcome.querySelector(".welcome-head");
-    if (!head.querySelector(".mark")) { const m = $("#brand .mark"); if (m) head.prepend(m.cloneNode(true)); }
+    if (!head.querySelector(".mark")) {   // the logo again, but the heading beside it already says "Piste": hidden from screen readers here
+      const m = $("#brand .mark");
+      if (m) { const c = m.cloneNode(true); c.removeAttribute("role"); c.removeAttribute("aria-label"); c.setAttribute("aria-hidden", "true"); head.prepend(c); }
+    }
     welcome.getAnimations().forEach((a) => a.cancel());
     welcome.hidden = false;
     welcome.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease-out" });

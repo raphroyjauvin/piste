@@ -64,6 +64,18 @@ for (const base of bases) {
   // Home-screen manifest and the phone preview
   const man = await page.evaluate(async (b) => (await fetch(b + "manifest.webmanifest")).json(), base);
   check(man.start_url === "./" && man.scope === "./", `manifest start_url ${man.start_url}, scope ${man.scope}`);
+  // the icons: every one the manifest lists loads at the size it claims, and the home-screen icon, favicon and SVG logo are there too
+  const icons = await page.evaluate(async ({ b, list }) => Promise.all(list.map(async (i) => {
+    try {
+      const r = await fetch(new URL(i.src, b + "manifest.webmanifest").href);
+      if (!r.ok) return `${i.src}: HTTP ${r.status}`;
+      const bmp = await createImageBitmap(await r.blob());
+      return `${bmp.width}x${bmp.height}` === i.sizes ? null : `${i.src} is ${bmp.width}x${bmp.height}, not ${i.sizes}`;
+    } catch (e) { return `${i.src}: ${e.message}`; }
+  })), { b: base, list: [...man.icons, { src: "icons/apple-touch-icon.png", sizes: "180x180" }] });
+  check(man.icons.length >= 3 && icons.every((x) => x === null), `manifest icons and the home-screen icon load at their stated sizes (${icons.length})${icons.some(Boolean) ? ": " + icons.filter(Boolean).join(", ") : ""}`);
+  const faves = await page.evaluate(async (b) => Promise.all(["favicon.ico", "icons/logo.svg"].map(async (f) => `${f} ${(await fetch(b + f)).status}`)), base);
+  check(faves.every((f) => f.endsWith(" 200")), `favicon files load (${faves.join(", ")})`);
   const phone = await page.evaluate(async (b) => (await fetch(b + "phone.html")).text(), base);
   check(!phone.includes("a-positron"), "phone.html frames the app at the root");
 

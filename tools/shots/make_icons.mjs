@@ -1,20 +1,46 @@
-// Renders the app icons (home screen, manifest) from the Piste mark. Usage: node C:\bikeapp\tools\shots\make_icons.mjs
+// Renders the app icons from the Piste logo (prototypes/icons/logo.svg: a white P with the bike chain on a blue square, full bleed).
+// Usage, from anywhere: node tools/shots/make_icons.mjs
+//   prototypes/icons/apple-touch-icon.png (180), icon-192.png, icon-512.png   the logo as it is: the P stays inside the maskable safe zone
+//                                                                          (the central circle of 80 % of the side), so the 512 serves "any" and "maskable"
+//   prototypes/favicon.ico (16, 32, 48)                                    the P drawn larger (FAVICON_SCALE): at 16 px the logo's own padding costs too much
+// iOS rounds the home-screen icon's corners itself, so every file is a plain square. Uses the Edge installed on this PC.
 import { chromium } from "playwright-core";
 import fs from "node:fs";
 
-const OUT = "C:\\bikeapp\\prototypes\\icons";
-fs.mkdirSync(OUT, { recursive: true });
-// full-bleed square (iOS rounds the corners itself); the mark stays inside the maskable safe zone
-const svg = (s) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="${s}" height="${s}">
-  <rect width="32" height="32" fill="#0095E6"/>
-  <path d="M9 21.5 13.2 11h5.6L23 21.5M13.2 11l3 10.5" transform="translate(16 16) scale(1.08) translate(-16 -16.2)"
-    fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const PROTO = new URL("../../prototypes/", import.meta.url);
+const LOGO = fs.readFileSync(new URL("icons/logo.svg", PROTO), "utf8");
+const LOGO_SCALE = ".9", FAVICON_SCALE = "1";   // the P's size relative to the 512 square, as written in logo.svg and as used for the favicon
+if (!LOGO.includes(`scale(${LOGO_SCALE})`)) throw new Error("logo.svg no longer scales the P by " + LOGO_SCALE + ": update LOGO_SCALE");
+
+const svgAt = (px, scale) => LOGO.replace('width="512" height="512"', `width="${px}" height="${px}"`).replace(`scale(${LOGO_SCALE})`, `scale(${scale})`);
+
 const browser = await chromium.launch({ channel: "msedge", headless: true });
-for (const [name, s] of [["apple-touch-icon.png", 180], ["icon-192.png", 192], ["icon-512.png", 512]]) {
-  const page = await browser.newPage({ viewport: { width: s, height: s } });
-  await page.setContent(`<html><body style="margin:0;background:#0095E6">${svg(s)}</body></html>`);
-  await page.screenshot({ path: `${OUT}\\${name}`, clip: { x: 0, y: 0, width: s, height: s } });
+async function render(px, scale) {
+  const page = await browser.newPage({ viewport: { width: px, height: px }, deviceScaleFactor: 1 });
+  await page.setContent(`<html><body style="margin:0;background:#0B5CFF">${svgAt(px, scale)}</body></html>`);
+  const png = await page.screenshot({ clip: { x: 0, y: 0, width: px, height: px } });
   await page.close();
-  console.log(name, s);
+  return png;
 }
+
+for (const [name, px] of [["apple-touch-icon.png", 180], ["icon-192.png", 192], ["icon-512.png", 512]]) {
+  fs.writeFileSync(new URL(`icons/${name}`, PROTO), await render(px, LOGO_SCALE));
+  console.log(name, px);
+}
+
+// favicon.ico: PNG pictures in an ICO container (every browser since 2009 reads them)
+const sizes = [16, 32, 48];
+const pngs = await Promise.all(sizes.map((px) => render(px, FAVICON_SCALE)));
+const head = Buffer.alloc(6 + 16 * sizes.length);
+head.writeUInt16LE(1, 2); head.writeUInt16LE(sizes.length, 4);   // type 1 = icon, then the picture count
+let offset = head.length;
+sizes.forEach((px, i) => {
+  const e = 6 + 16 * i;
+  head[e] = px; head[e + 1] = px;                                  // width, height (0 would mean 256)
+  head.writeUInt16LE(1, e + 4); head.writeUInt16LE(32, e + 6);     // colour planes, bits per pixel
+  head.writeUInt32LE(pngs[i].length, e + 8); head.writeUInt32LE(offset, e + 12);
+  offset += pngs[i].length;
+});
+fs.writeFileSync(new URL("favicon.ico", PROTO), Buffer.concat([head, ...pngs]));
+console.log("favicon.ico", sizes.join("/"));
 await browser.close();
