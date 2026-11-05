@@ -502,6 +502,66 @@ await run("wind streaks and rain or snow (phone): streaks alone when dry, rain o
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, deviceScaleFactor: 3 });
 
 // 2026-11-04: a test link to see the rain and snow whatever the weather: ?wx=rain|snow, &wind, &from, &mm; the card says it's a demo
+// 2026-11-05: with a search bar active, a tap on the map fills that bar (start or destination, either first); a construction cone opens its card
+await run("map tap fills the active search bar (phone and desktop, either end first); a construction cone opens a card with street, stretch, impact, end date and source", APP, async (page) => {
+  await page.waitForFunction(() => window.__app && window.__app.map.loaded(), null, { timeout: 90000 });
+  const app = () => page.evaluate(() => { const s = window.__app.state; return { from: !!s.from, to: !!s.to, fromLabel: s.fromLabel || "", toLabel: s.toLabel || "", searching: document.body.classList.contains("searching"), focus: document.activeElement && document.activeElement.id }; });
+  const spot = (dx, dy) => page.evaluate(([dx, dy]) => { const r = window.__app.map.getContainer().getBoundingClientRect(); return [Math.round(r.left + r.width * dx), Math.round(r.top + r.height * dy)]; }, [dx, dy]);
+  // a construction cone (first, while no route moves the map): jump to one and click it
+  const cone = await page.evaluate(() => { const f = window.PLANNED.features.find((x) => x.properties.status === "works" && x.properties.from && x.properties.until); return { c: f.geometry.coordinates, p: f.properties }; });
+  await page.evaluate((c) => window.__app.map.jumpTo({ center: c, zoom: 16.5 }), cone.c);
+  await page.evaluate(() => new Promise((r) => { const m = window.__app.map; if (m.loaded() && !m.isMoving()) r(); else m.once("idle", r); }));
+  await until(page, (c) => window.__app.map.queryRenderedFeatures(window.__app.map.project(c), { layers: ["works", "works-near"].filter((id) => window.__app.map.getLayer(id)) }).length > 0, cone.c, 20000);
+  const pt = await page.evaluate((c) => { const p = window.__app.map.project(c), r = window.__app.map.getContainer().getBoundingClientRect(); return [r.left + p.x, r.top + p.y]; }, cone.c);
+  await page.mouse.click(pt[0], pt[1]);
+  await until(page, () => !!document.querySelector(".maplibregl-popup .pop-works"));
+  const card = await page.evaluate(() => { const p = document.querySelector(".maplibregl-popup"); return p ? { text: p.textContent, rows: p.querySelectorAll(".pop-works").length, go: !!p.querySelector(".pop-go") } : null; });
+  await page.evaluate(() => document.querySelectorAll(".maplibregl-popup").forEach((p) => p.remove()));
+  // desktop: click in the destination bar first, then on the map: the destination is set (not the start)
+  await page.evaluate(() => window.__app.map.jumpTo({ center: [-73.575, 45.525], zoom: 15 }));
+  await page.click("#to"); let [x, y] = await spot(0.55, 0.4); await page.mouse.click(x, y);
+  await until(page, () => !!window.__app.state.to);
+  const destFirst = await app();
+  // then the start bar, then the map: the start is set and a route follows
+  await page.click("#from"); [x, y] = await spot(0.4, 0.6); await page.mouse.click(x, y);
+  await until(page, () => !!window.__app.state.from && window.__app.state.routes.length > 0, null, 30000);
+  const thenStart = await app();
+  const checks = {
+    destinationFirst: destFirst.to && !destFirst.from && !!destFirst.toLabel,
+    thenStart: thenStart.from && thenStart.to && !!thenStart.fromLabel,
+    coneCard: !!card && card.rows >= 2 && /Works blocking a bike path/.test(card.text) && /Between/.test(card.text) && /Planned (until|to end)/.test(card.text) && /Bike path (closed|partly blocked)/.test(card.text) && /Info-travaux/.test(card.text) && !card.go,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), destFirst, thenStart, cone: cone.p, card };
+});
+
+await run("phone: with a search bar open (keyboard up), a tap on the map fills it and closes the keyboard; start first works too", APP, async (page) => {
+  await page.waitForFunction(() => window.__app && window.__app.map.loaded(), null, { timeout: 90000 });
+  await page.evaluate(() => window.__app.map.jumpTo({ center: [-73.575, 45.525], zoom: 15 }));
+  // a spot where the map itself is on top (the open search card covers the lower part), dx across the width
+  const spot = (dx) => page.evaluate((dx) => { const c = window.__app.map.getCanvas(), x = Math.round(innerWidth * dx);
+    for (let y = 120; y < innerHeight - 40; y += 8) if (document.elementFromPoint(x, y) === c && document.elementFromPoint(x, y + 30) === c) return [x, y + 15];
+    return [x, 120]; }, dx);
+  const st = () => page.evaluate(() => { const s = window.__app.state; return { from: !!s.from, to: !!s.to, searching: document.body.classList.contains("searching"), which: window.__app.state && document.activeElement && document.activeElement.id }; });
+  await panelStill(page);
+  const box = await page.locator("#from").boundingBox(); await page.touchscreen.tap(box.x + 30, box.y + box.height / 2);
+  await until(page, () => document.body.classList.contains("searching"));
+  const opened = await st();
+  const pause = () => page.waitForTimeout(900);   // a person's pause: the 800 ms after the tap that opened the bar swallow stray taps (the iPhone fix)
+  await pause(); let [x, y] = await spot(0.3); await page.touchscreen.tap(x, y);
+  await until(page, () => !!window.__app.state.from && !document.body.classList.contains("searching"));
+  const startSet = await st();
+  await panelStill(page);   // the card slides back after the first tap: measure the bar once it has stopped
+  const box2 = await page.locator("#to").boundingBox(); await page.touchscreen.tap(box2.x + 30, box2.y + box2.height / 2);
+  await until(page, () => document.body.classList.contains("searching"));
+  await pause(); [x, y] = await spot(0.7); await page.touchscreen.tap(x, y);
+  await until(page, () => !!window.__app.state.to && !document.body.classList.contains("searching"));
+  const bothSet = await st();
+  const checks = { opened: opened.searching, startFirst: startSet.from && !startSet.to && !startSet.searching, thenDestination: bothSet.from && bothSet.to && !bothSet.searching };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), opened, startSet, bothSet };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
 await run("demo weather link: ?wx=rain&wind=40&from=W rains along a west wind, ?wx=snow&winter=1 snows; the card says demo; a plain visit is real weather", `${APP}?wx=rain&wind=40&from=W`, async (page) => {
   await page.evaluate(INK_JS);
   const read = () => page.evaluate(() => { const s = window.__app.state, w = s.wxData; return { on: s.wx, demo: !!(w && w.demo), wind: w && w.now.wind, dir: w && w.now.dir,

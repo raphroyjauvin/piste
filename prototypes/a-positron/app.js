@@ -1140,9 +1140,15 @@
   map.on("click", (e) => {
     if (layersJustClosed) { layersJustClosed = false; return; }   // a tap that only closed the layers panel
     if (state.mode === "ride") return;
-    if (search.which) return;   // typing a place (phones): a tap on the map only closes the keyboard
     const live = map.getLayer("bixi-live") && map.getLayoutProperty("bixi-live", "visibility") !== "none" ? ["bixi-live", "bixi-count"] : [];
     const hit = map.queryRenderedFeatures(e.point, { layers: [...live, ...POI_LAYERS.map((p) => p.id)].filter((id) => map.getLayer(id)) });
+    // 2026-11-05: with a search bar active (typed in, or just tapped), the tap fills that bar: the place tapped, or the spot.
+    // Start or destination, in either order; the keyboard closes.
+    const typing = search.which || barAtPress;
+    barAtPress = null;
+    if (typing && !(state.tab === "suggest" && state.smode === "classics")) { tapFills(typing, e, hit); return; }
+    const cones = map.queryRenderedFeatures(e.point, { layers: ["works", "works-near"].filter((id) => map.getLayer(id)) });
+    if (cones.length && !state.pick) { worksPopup(cones[0]); return; }
     if (hit.length && !state.pick) { poiPopup(hit[0]); return; }
     const alt = map.queryRenderedFeatures(e.point, { layers: ["route-alts"] });
     if (alt.length && !state.pick) { selectRoute(alt[0].properties.i); return; }
@@ -1155,6 +1161,37 @@
     state.pick = null; document.querySelectorAll(".pick").forEach((x) => x.classList.remove("on")); map.getCanvas().style.cursor = "";
     recompute(!state.routes.length);
   });
+  // the bar that had the focus when the map was pressed (desktop: the click itself moves the focus off it)
+  let barAtPress = null;
+  map.getCanvas().addEventListener("pointerdown", () => { const a = document.activeElement; barAtPress = a === fromEl ? "from" : a === toEl ? "to" : null; }, true);
+  function tapFills(which, e, hit) {
+    const f = hit.find((h) => h.properties.name), lonlat = f ? f.geometry.coordinates.slice(0, 2) : [e.lngLat.lng, e.lngLat.lat];
+    const label = f ? f.properties.name : placeLabel(lonlat[0], lonlat[1]);
+    if (search.which) leaveSearch(search.before);
+    else { const a = document.activeElement; if (a === fromEl || a === toEl) a.blur(); }
+    setPoint(which, lonlat, label);
+    if (which === "to") remember(label, lonlat);
+    state.pick = null; document.querySelectorAll(".pick").forEach((x) => x.classList.remove("on")); map.getCanvas().style.cursor = "";
+    recompute(!state.routes.length);
+  }
+  // a construction cone: which street, between where, closed or partly blocked, until when, and whose data (2026-11-05)
+  function worksPopup(f) {
+    const p = f.properties, lang = I.lang === "fr" ? "fr-CA" : "en-CA";
+    const day = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(lang, { day: "numeric", month: "long", year: "numeric" });
+    const today = new Date().toLocaleDateString("en-CA"), ended = p.until && p.until < today;
+    const rows = [
+      p.impact ? `<b>${t(p.impact === "Barrée" ? "worksClosed" : "worksBlocked")}</b>` : "",
+      p.from && p.to ? C.esc(t("worksBetween", { a: I.place(p.from), b: I.place(p.to) })) : "",
+      p.until ? C.esc(t(ended ? "worksEnded" : "worksUntil", { date: day(p.until) })) : "",
+    ].filter(Boolean).map((r) => `<div class="pop-works">${r}</div>`).join("");
+    const html = `<div class="pop"><b>${C.esc(p.name ? I.place(p.name) : C.poiLabel("works"))}</b><div class="pop-kind">${C.esc(C.poiLabel("works"))}</div>${rows}`
+      + `${p.src ? `<div class="pop-src">${C.esc(p.src)}</div>` : ""}</div>`;
+    new maplibregl.Popup({ offset: 14 }).setLngLat(f.geometry.coordinates).setHTML(html).addTo(map);
+  }
+  for (const id of ["works", "works-near"]) {
+    map.on("mouseenter", id, () => (map.getCanvas().style.cursor = "pointer"));
+    map.on("mouseleave", id, () => (map.getCanvas().style.cursor = ""));
+  }
   function poiPopup(f) {
     const isBixi = f.layer.id === "bixi-live" || f.layer.id === "bixi-count";
     const kind = isBixi ? "bixi" : f.properties.k;

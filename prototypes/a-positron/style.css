@@ -271,6 +271,9 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .pop { font: 14px/1.35 var(--font-ui); min-width: 170px; display: flex; flex-direction: column; gap: 2px; }
 .pop-kind { color: var(--ink-3); font-size: 12px; }
 .pop-bixi { font-size: 13px; color: var(--green-ink); margin-top: 2px; }
+.pop-works { font-size: 13px; color: var(--ink-2); margin-top: 3px; }
+.pop-works b { color: var(--ink); }
+.pop-src { font-size: 11.5px; color: var(--ink-3); margin-top: 6px; }
 .pop-actions { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; margin-top: 4px; }
 .pop-go { padding: 7px 10px; font-size: 13px; }
 .pop-more { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; color: var(--blue-deep); font-size: 13px; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }   /* a 44 px tap area */
