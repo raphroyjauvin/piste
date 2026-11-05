@@ -206,15 +206,17 @@
   // Rain: thin straight lines, longer and fainter than the streaks, falling fast and steadily (far ones fainter and slower than near ones).
   // Snow: soft flakes that fall slowly and sway a little. Calm air (under CALM_KMH): straight down the screen. Wind: the fall tilts toward where
   // the wind blows on the screen (so it follows the map's bearing) and the tilt grows with the speed up to a limit: strong wind reads as rain or
-  // snow driven along it. The density grows lightly with the rate. Redrawn about 30 times a second (it is slow, so that is plenty).
-  const RAIN_FULL = 6, SNOW_FULL = 2;   // mm/h and cm/h at which the density reaches its fullest (still sparse)
+  // snow driven along it. Heavier rain or snow (2026-11-05): more lines or flakes, falling faster, at the same angle for the same wind.
+// Redrawn about 30 times a second (it is slow, so that is plenty).
+  const RAIN_FULL = 10, SNOW_FULL = 3;   // mm/h and cm/h at which it is at its heaviest
   const CALM_KMH = 5;
-  const FALL = { rain: { speed: 360, per: 7, cap: 0.7 }, snow: { speed: 50, per: 2.2, cap: 0.9 } };   // px/s straight down; px/s of drift per km/h above CALM_KMH; most drift, as a share of the fall speed (the fall never stops)
+  // 2026-11-05: a steeper lean in strong wind (rain up to 45°, about 41° at 40 km/h; snow up to 50°, about 48° at 25 km/h)
+  const FALL = { rain: { speed: 360, per: 9, cap: 1 }, snow: { speed: 50, per: 2.8, cap: 1.2 } };   // px/s straight down; px/s of drift per km/h above CALM_KMH; most drift, as a share of the fall speed (the fall never stops)
   // The velocity of an average line or flake on the screen (px/s, y down) for wind of kmh blowing toward toDeg on a map turned to bearingDeg
   function fallVelocity(kind, kmh, toDeg, bearingDeg) {
     const f = FALL[kind], a = (toDeg - bearingDeg) * D2R || 0;
     const drift = Math.min(f.cap * f.speed, Math.max(0, kmh - CALM_KMH) * f.per) || 0;   // || 0: a missing speed or direction means no drift
-    return { vx: Math.sin(a) * drift, vy: f.speed - Math.cos(a) * drift };
+    return { vx: Math.sin(a) * drift, vy: Math.max(0.1 * f.speed, f.speed - Math.cos(a) * drift) };   // wind up the screen: it hangs, never rises
   }
   const wrap = (v, lo, size) => ((v - lo) % size + size) % size + lo;
   const EDGE = 44;   // px beyond the map where a rain line comes round again: longer than the longest line, so it jumps while out of sight
@@ -239,9 +241,12 @@
       super.sync();
       if (this.canvas.hidden) delete this.canvas.dataset.kind; else this.canvas.dataset.kind = this.fall.kind;
     }
-    velocity() { return fallVelocity(this.fall.kind, this.wind.speed, this.wind.to, this.map.getBearing()); }
-    // How many lines or flakes the map holds: by area, a little more as it falls harder
-    count(areaPer, max) { return Math.min(max, Math.round(((this.w * this.h) / areaPer) * (0.65 + 0.35 * this.fall.level))); }
+    velocity() {   // heavier falls faster: the whole velocity scales, so the angle stays the wind's
+      const v = fallVelocity(this.fall.kind, this.wind.speed, this.wind.to, this.map.getBearing()), k = 0.85 + 0.4 * this.fall.level;
+      return { vx: v.vx * k, vy: v.vy * k };
+    }
+    // How many lines or flakes the map holds: by area, from a light fall to about three times as many at the heaviest
+    count(areaPer, max) { return Math.min(max, Math.round(((this.w * this.h) / areaPer) * (0.5 + 1.0 * this.fall.level))); }
     step(dt) {
       this.ctx.clearRect(0, 0, this.w, this.h);
       const night = document.body.classList.contains("night"), v = this.velocity();
@@ -253,7 +258,7 @@
         s: near ? 1.05 + Math.random() * 0.15 : 0.8 + Math.random() * 0.15, len: near ? 28 + Math.random() * 10 : 18 + Math.random() * 6 };
     }
     moveRain(v, dt) {
-      const L = this.parts, want = this.count(4200, 120);   // 51 to 78 lines on a phone screen
+      const L = this.parts, want = this.count(4200, 180);   // about 40 (drizzle) to 118 lines (heavy rain) on a phone screen
       while (L.length < want) L.push(this.line());
       L.length = want;
       for (const p of L) { p.x = wrap(p.x + v.vx * p.s * dt, -EDGE, this.w + 2 * EDGE); p.y = wrap(p.y + v.vy * p.s * dt, -EDGE, this.h + 2 * EDGE); }
@@ -275,7 +280,7 @@
         v: 0.7 + Math.random() * 0.6, sway: 3 + Math.random() * 4, freq: 0.9 + Math.random() * 0.8, phase: Math.random() * 6.2832 };
     }
     moveSnow(v, dt) {
-      const fl = this.parts, want = this.count(12000, 60);   // 18 to 27 flakes on a phone screen
+      const fl = this.parts, want = this.count(9000, 100);   // about 18 (light) to 55 flakes (heavy snow) on a phone screen
       while (fl.length < want) fl.push(this.flake(true));
       fl.length = want;
       for (let i = 0; i < fl.length; i++) {

@@ -520,6 +520,23 @@ await run("demo weather link: ?wx=rain&wind=40&from=W rains along a west wind, ?
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), rain, snow, real };
 }, { width: 390, height: 844 });
 
+// 2026-11-05: heavier rain or snow draws more lines or flakes, falling faster, at the same angle for the same wind
+await run("rain and snow intensity: heavier means more and faster, same lean", `${APP}?wx=rain&mm=1&wind=30&from=W`, async (page) => {
+  const read = () => page.evaluate(async () => {
+    await new Promise((r) => setTimeout(r, 400));   // a few frames at the new density
+    const L = window.__app.precip, v = L.velocity(); return { n: L.parts.length, speed: Math.hypot(v.vx, v.vy), slant: Math.atan2(v.vx, v.vy) * 180 / Math.PI };
+  });
+  const at = async (q) => { await page.goto(BASE + APP + q, { waitUntil: "load" }); await page.waitForFunction(() => window.__app && window.__app.precip && window.__app.precip.parts && window.__app.precip.parts.length > 0, null, { timeout: 90000 }); return read(); };
+  const lightRain = await at("?wx=rain&mm=1&wind=30&from=W"), heavyRain = await at("?wx=rain&mm=12&wind=30&from=W");
+  const lightSnow = await at("?wx=snow&winter=1&mm=0.3&wind=20&from=W"), heavySnow = await at("?wx=snow&winter=1&mm=4&wind=20&from=W");
+  const checks = {
+    rainMore: heavyRain.n >= 2.2 * lightRain.n, rainFaster: heavyRain.speed > 1.3 * lightRain.speed, rainSameLean: Math.abs(heavyRain.slant - lightRain.slant) < 0.5,
+    snowMore: heavySnow.n >= 2.2 * lightSnow.n, snowFaster: heavySnow.speed > 1.3 * lightSnow.speed, snowSameLean: Math.abs(heavySnow.slant - lightSnow.slant) < 0.5,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), lightRain, heavyRain, lightSnow, heavySnow };
+}, { width: 390, height: 844 });
+
 await run("rain and snow motion (phone): calm falls straight down the screen; wind slants it along the wind's screen direction, more with speed, turned with the map", `${APP}?trip=rachel`, async (page, ctx) => {
   // The average velocity (px/s, y down) of the real layer's lines or flakes: move them one step and see where each went. A line that wrapped round
   // the edge, or a flake that was replaced, jumped far: those are left out.
@@ -546,7 +563,7 @@ await run("rain and snow motion (phone): calm falls straight down the screen; wi
   });
   const c = got.rainCalm, b = got.rainBreeze, s = got.rainStrong, sc = got.snowCalm, sb = got.snowBreeze, ss = got.snowStrong;
   const rainOk = c.n >= 20 && Math.abs(c.vx) < 0.5 && c.vy > 250                                   // calm: straight down, a steady fast fall
-    && b.slant > 5 && b.slant < 20 && s.slant > b.slant + 5 && s.slant > 18 && s.slant < 32 && b.vx > 0 && s.vx > b.vx   // wind from the west slants it toward the east, more with speed
+    && b.slant > 5 && b.slant < 20 && s.slant > b.slant + 5 && s.slant > 28 && s.slant < 40 && b.vx > 0 && s.vx > b.vx   // wind from the west slants it toward the east, more with speed
     && Math.abs(s.vy / c.vy - 1) < 0.1                                                             // heading east on a north-up map changes only the slant, not the fall
     && Math.abs(turned.rainStrong90.vx) < 5 && turned.rainStrong90.vy < 0.7 * c.vy                 // east is up the screen: the fall slows, no sideways drift
     && turned.rainStrong180.vx < -100 && Math.abs(turned.rainStrong180.slant + s.slant) < 3         // east is left: the slant flips
@@ -556,7 +573,7 @@ await run("rain and snow motion (phone): calm falls straight down the screen; wi
     && Math.abs(turned.snowStrong90.vx) < 3 && turned.snowStrong90.vy > 0 && turned.snowStrong90.vy < 0.3 * sc.vy   // east is up: it hangs, never rises
     && turned.snowStrong180.vx < -30 && turned.snowStrong270.vy > 1.5 * sc.vy;
   const modelOk = model.okRain && model.okSnow && model.rain[2] === 0 && model.snow[2] === 0 && model.rain[1] === 0 && model.rain.at(-1) === model.rain.at(-2) && model.snow.at(-1) === model.snow.at(-2)
-    && model.rain.at(-1) < 360 && model.snow.at(-1) < 50 && model.noData.vx === 0 && model.noData.vy === 360 && model.downwind.flat().every(Boolean);
+    && model.rain.at(-1) <= 360 && model.snow.at(-1) <= 60 && model.noData.vx === 0 && model.noData.vy === 360 && model.downwind.flat().every(Boolean);
   return { ok: rainOk && snowOk && modelOk, rainOk, snowOk, modelOk, got, turned, model };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true, deviceScaleFactor: 3 });
 
