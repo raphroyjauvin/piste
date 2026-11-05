@@ -214,8 +214,9 @@
   const STEPS = [
     // 2026-11-04: one step for the search bars and the route choices together (the separate "Where to?" step is gone)
     { k: 2, id: "style", sheet: "half", scroll: ".search", targets: [[".search", ".prefs"]], place: ["right", "above", "below"] },
-    { k: 3, id: "colours", sheet: "peek", route: true, legend: true, camera: "route", swatches: true, scroll: "#routes .route-card.sel",
-      targets: ["@route", "#routes", "#legend details"], phoneTargets: ["@route", "#routes .route-card.sel"], place: ["right", "below", "above", "left"] },
+    // phones (2026-11-05): the card's bike-path strip and its "% on bike paths", not the whole card, which is too tall beside the callout on a 360 x 640 phone
+    { k: 3, id: "colours", sheet: "peek", route: true, legend: true, camera: "route", swatches: true, scroll: "#routes .route-card .bar",
+      targets: ["@route", "#routes", "#legend details"], phoneTargets: ["@route", ["#routes .route-card .bar", "#routes .route-card .rc-pct"]], place: ["right", "below", "above", "left"] },
     { k: 4, id: "suggest", tab: "suggest", sheet: "half", scroll: ".tabs", targets: ["#tab-suggest", "#classics"], place: ["right", "above", "below"] },
     { k: 5, id: "view3d", sheet: "peek", targets: ["#view-btn"], place: ["left", "below", "above"] },
     { k: 6, id: "weather", sheet: "peek", targets: ["#wx-btn"], place: ["left", "below", "above"] },

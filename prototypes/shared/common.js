@@ -292,35 +292,68 @@
     };
   }
 
-  // ---------------------------------------------------------------- elevation profile (SVG string)
-  function profileSVG(route, opts = {}) {
-    const W = opts.width || 320, H = opts.height || 84, padB = 14, padT = 10;
-    const pr = route.profile; if (!pr || pr.length < 2) return "";
-    const zs = pr.map((p) => p[1]); let zmin = Math.min(...zs), zmax = Math.max(...zs);
-    const minRange = opts.minRange || 12;
-    if (zmax - zmin < minRange) { const m = (zmax + zmin) / 2; zmin = m - minRange / 2; zmax = m + minRange / 2; }
-    zmax += (zmax - zmin) * (opts.headroom || 0);
-    const L = route.length || 1;
-    const X = (d) => (d / L) * W, Y = (z) => padT + (1 - (z - zmin) / (zmax - zmin)) * (H - padT - padB);
-    let line = "";
-    pr.forEach(([d, z], i) => { line += `${i ? "L" : "M"}${X(d).toFixed(1)} ${Y(z).toFixed(1)}`; });
-    const area = `M0 ${H - padB}L${line.slice(1)}L${W} ${H - padB}Z`;
-    const band = route.pieces.map((p) => `<rect x="${X(p.start).toFixed(1)}" y="${H - padB + 3}" width="${Math.max(0.6, X(p.length)).toFixed(1)}" height="6" fill="${opts.tierColors[p.tier]}"/>`).join("");
-    const gapShade = (opts.gaps || route.gaps).map((g) => `<rect x="${X(g.start).toFixed(1)}" y="${padT}" width="${Math.max(1, X(g.length)).toFixed(1)}" height="${H - padT - padB}" fill="${opts.gapShade}"/>`).join("");
-    // climbs: a warmer fill under the line, and "+N m" above the bigger ones
-    const cl = opts.climbs || [];
-    const clipId = "pc" + Math.random().toString(36).slice(2, 8);
-    const climbFill = cl.length ? `<clipPath id="${clipId}">${cl.map((c) => `<rect x="${X(c.start).toFixed(1)}" y="0" width="${Math.max(1, X(c.length)).toFixed(1)}" height="${H}"/>`).join("")}</clipPath>` +
-      `<path d="${area}" fill="${opts.climbFill || "#dcc3a3"}" clip-path="url(#${clipId})"/>` : "";
-    const climbText = cl.filter((c) => c.rise >= 6).map((c) => {
-      const x = Math.min(W - 16, Math.max(16, X(c.start + c.length / 2))), y = Math.max(9, Y(elevAt(route, c.start + c.length)) - 4);
-      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="9.5" font-weight="700" text-anchor="middle" fill="${opts.climbText || "#7a5a3a"}">+${Math.round(c.rise)} m</text>`;
-    }).join("");
-    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="Elevation profile">` +
-      `${gapShade}<path d="${area}" fill="${opts.fill}"/>${climbFill}` +
-      `<path d="${line}" fill="none" stroke="${opts.stroke}" stroke-width="1.3" vector-effect="non-scaling-stroke"/>${band}${climbText}` +
-      `<text x="2" y="${padT + 1}" font-size="10" fill="${opts.text}">${Math.round(zmax)} m</text>` +
-      `<text x="2" y="${H - padB - 3}" font-size="10" fill="${opts.text}">${Math.round(zmin)} m</text></svg>`;
+  // ---------------------------------------------------------------- the route card's hills and elevation chart (2026-11-05)
+  // One bad height (a bridge or underpass in the ground model) shows as a spike or a pit 5-8 m off its neighbours:
+  // a 3-point median removes it and leaves steady climbs as they are.
+  function cleanProfile(pr) {
+    return pr.map((p, i) => (i === 0 || i === pr.length - 1 ? p : [p[0], [pr[i - 1][1], p[1], pr[i + 1][1]].sort((x, y) => x - y)[1]]));
+  }
+  // climbs on the card: stretches steeper than 7 % and longer than 10 m (Raph, 2026-11-05);
+  // total: every metre up along the clean profile, so the sentence and the chart agree
+  const STEEP = 0.07, STEEP_MIN = 10, hillCache = new WeakMap();
+  function hills(route) {
+    let h = hillCache.get(route); if (h) return h;
+    const pr = cleanProfile(route.profile || []), list = [];
+    let total = 0, a = null;
+    for (let k = 1; k <= pr.length; k++) {
+      const dd = k < pr.length ? pr[k][0] - pr[k - 1][0] : 0, dz = k < pr.length ? pr[k][1] - pr[k - 1][1] : 0;
+      total += Math.max(0, dz);
+      const steep = k < pr.length && (dd > 0 ? dz / dd > STEEP : a !== null);   // a zero-length step keeps a climb going
+      if (steep) { if (a === null) a = k - 1; continue; }
+      if (a !== null) {
+        const len = pr[k - 1][0] - pr[a][0], rise = pr[k - 1][1] - pr[a][1];
+        if (len > STEEP_MIN) list.push({ start: pr[a][0], length: len, rise, grade: rise / len });
+        a = null;
+      }
+    }
+    const steepest = list.reduce((m, c) => (!m || c.grade > m.grade ? c : m), null);
+    h = { profile: pr, total, list, steepest };
+    hillCache.set(route, h);
+    return h;
+  }
+  // muted green (flat or downhill) -> yellow (moderate) -> red (steeper than 7 %, the card's climbs)
+  const GRADE_RGB = [[163, 189, 167], [214, 204, 166], [204, 164, 154]];
+  function gradeColor(g) {
+    const [G, Y, R] = GRADE_RGB, mix = (p, q, u) => p.map((v, i) => Math.round(v + (q[i] - v) * u));
+    const c = g <= 0.02 ? G : g < 0.045 ? mix(G, Y, (g - 0.02) / 0.025) : g <= STEEP ? mix(Y, R, (g - 0.045) / (STEEP - 0.045)) : R;
+    return `rgb(${c.join(",")})`;
+  }
+  // the card's elevation chart: the area under the clean profile coloured by each stretch's grade, blended over a
+  // few metres at the joins; stretches of 10 m or less (joins, crossings) keep the colour before them.
+  // No numbers on it: the sentence above the chart carries them.
+  function gradeProfileSVG(route, opts = {}) {
+    const W = 336, H = opts.height || 68, pr = hills(route).profile; if (pr.length < 2) return "";
+    const zs = pr.map((p) => p[1]); let lo = Math.min(...zs), hi = Math.max(...zs);
+    if (hi - lo < 40) { const m = (hi + lo) / 2; lo = m - 20; hi = m + 20; }   // a flat ride stays flat
+    const top = 4, base = 7, L = route.length || pr[pr.length - 1][0] || 1;   // base: a band of colour stays under the lowest points
+    const X = (d) => (d / L) * W, Y = (z) => top + (1 - (z - lo) / (hi - lo)) * (H - top - base);
+    let line = ""; pr.forEach(([d, z], i) => (line += `${i ? "L" : "M"}${X(d).toFixed(1)} ${Y(z).toFixed(1)}`));
+    const segs = [];
+    for (let k = 1; k < pr.length; k++) {
+      const dd = pr[k][0] - pr[k - 1][0]; if (dd <= 0) continue;
+      const last = segs[segs.length - 1];
+      if (dd <= STEEP_MIN && last) { last.b = pr[k][0]; continue; }
+      const col = gradeColor((pr[k][1] - pr[k - 1][1]) / dd);
+      if (last && last.col === col) last.b = pr[k][0]; else segs.push({ a: pr[k - 1][0], b: pr[k][0], col });
+    }
+    const blend = L * 0.006;
+    const stops = segs.map((s) => { const e = Math.min(blend, (s.b - s.a) / 3);
+      return `<stop offset="${((s.a + e) / L).toFixed(4)}" stop-color="${s.col}"/><stop offset="${((s.b - e) / L).toFixed(4)}" stop-color="${s.col}"/>`; }).join("");
+    const id = "pg" + Math.random().toString(36).slice(2, 8);
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="${esc(opts.label || "Elevation profile")}">` +
+      `<defs><linearGradient id="${id}" x1="0" x2="${W}" y1="0" y2="0" gradientUnits="userSpaceOnUse">${stops}</linearGradient></defs>` +
+      `<path d="M0 ${H}L${line.slice(1)}L${W} ${H}Z" fill="url(#${id})"/>` +
+      `<path d="${line}" fill="none" stroke="#6b7883" stroke-width="1.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
   }
 
   // ---------------------------------------------------------------- geocoding (local + City of Montréal address API)
@@ -1080,6 +1113,6 @@
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
-    profileSVG, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, sliceRoute, tailRoute, rotateRoute, joinRoutes, JOIN, planJoin, voice, audioSession, gapSentence, buildCursor, distM,
+    cleanProfile, hills, gradeColor, gradeProfileSVG, STEEP, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, sliceRoute, tailRoute, rotateRoute, joinRoutes, JOIN, planJoin, voice, audioSession, gapSentence, buildCursor, distM,
     cleanTrail, rideSummary, SUMMARY, isNight };
 })();

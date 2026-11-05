@@ -29,8 +29,7 @@
     a: "#0095E6", b: "#6cc3f2", c: "#0095E6", gap: "#ef8f45", gapQuiet: "#f2a865", closed: "#d7263d",
     rev: "#00a62a", ridden: "#4b3f8f", netA: "#2fb350", netB: "#5cc471", netC: "#8fd49d", planned: "#d9b400", alt: "#9aa5ae", notCleared: "#aebbc6",
   };
-  const TIER_BAR = ["#0095E6", "#6cc3f2", "#a6d9f6", "#f6bf8f", "#ef8f45", "#d7263d"];
-  const CLIMB = { fill: "#dcc3a3", ink: "#5b3d22", spark: "#c99b6d" };
+  const CLIMB = { ink: "#5b3d22", spark: "#c99b6d" };
 
   // ------------------------------------------------------------------ camera
   const CAM = {
@@ -1215,7 +1214,6 @@
   map.on("mouseleave", "route-alts", () => (map.getCanvas().style.cursor = state.pick ? "crosshair" : ""));
 
   // ------------------------------------------------------------------ routing
-  function overlap(a, b) { let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++; return c / Math.max(a.sig.size, b.sig.size); }
   // the router settings behind each kind of route (a GPS reroute uses the same ones as the route you started)
   // What the panel says now (slider, hills, wind), in the form the router takes (see routeSettings in shared/router.js).
   function planSettings() { return { strictness: strictness(), avoidHills: hills.checked, wind: windWeights(), works: worksWeights() }; }
@@ -1240,13 +1238,10 @@
   function computeRoutes(fit) {
     if (!state.from || !state.to) { state.routes = []; renderRoutes(); drawRoutes(); return; }
     const t1 = performance.now();
-    const settings = planSettings(), lim = router.detourLimit(state.from, state.to);   // the limit is the same for all three
-    const cands = ["yourRoute", "mostLanes", "mostDirect"].map((key) => ({ key, r: router.planRoute(state.from, state.to, key, settings, lim) })).filter((c) => c.r);
+    // one route, one card (2026-11-05): it follows the Route style slider and the Avoid chips ("Most direct" is the slider's left end)
+    const r = router.planRoute(state.from, state.to, "yourRoute", planSettings(), router.detourLimit(state.from, state.to));
     state.lastMs = performance.now() - t1;
-    cands.forEach((c) => (c.sig = new Set(c.r.legs.map((l) => l.e))));
-    const keep = [];
-    for (const c of cands) if (!keep.some((k) => overlap(k, c) > 0.9)) keep.push(c);
-    keep.forEach((c) => (c.climbs = C.climbs(c.r)));
+    const keep = r ? [{ key: "yourRoute", r }] : [];
     state.routes = keep; state.sel = 0;
     renderRoutes(); drawRoutes();
     if (fit && keep.length) fitRoute(keep[0].r);
@@ -1266,7 +1261,7 @@
       weights: Object.assign({}, weightsFor(strictness(), hills.checked), windWeights(), worksWeights()), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
     if (token !== suggToken) return;   // a newer request started meanwhile
     state.lastMs = performance.now() - t1;
-    state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, climbs: C.climbs(c.route), end: c.end, loop: c.loop }));
+    state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, end: c.end, loop: c.loop }));
     state.sel = 0;
     if (!picks.length) toast(t("nothingFits"));
     else count("suggest", { shape: state.sugg.loop ? "loop" : "one-way", km: state.sugg.km, stop: state.sugg.stop ? "yes" : "no" });
@@ -1357,7 +1352,7 @@
     state.classic = Math.max(0, Math.min(CLASSICS.length - 1, i));
     const c = CLASSICS[state.classic], r = classicRoute(state.classic);
     if (!classicsRouted) routeAllClassics(); else renderClassicCards();
-    state.routes = r ? [{ title: { raw: c.name[I.lang] }, r, climbs: C.climbs(r), end: { raw: c.start[I.lang] }, loop: c.kind === "loop", kind: c.kind, classic: true }] : [];
+    state.routes = r ? [{ title: { raw: c.name[I.lang] }, r, end: { raw: c.start[I.lang] }, loop: c.kind === "loop", kind: c.kind, classic: true }] : [];
     state.sel = 0;
     renderRoutes(); drawRoutes();
     if (fit && r) fitRoute(r);
@@ -1376,8 +1371,11 @@
   });
 
   // ------------------------------------------------------------------ route cards and details
-  function compBar(r) {
-    return `<div class="bar" aria-hidden="true">${r.byTier.map((m, i) => m > 0 ? `<i style="width:${(m / r.length) * 100}%;background:${TIER_BAR[i]}"></i>` : "").join("")}</div>`;
+  // the bike-path strip under the chart: blue where the route is on a bike path, orange where it isn't
+  function pathBar(r) {
+    const runs = [];
+    for (const p of r.pieces) { const on = p.tier <= 2, last = runs[runs.length - 1]; if (last && last.on === on) last.len += p.length; else runs.push({ on, len: p.length }); }
+    return `<div class="bar" aria-hidden="true">${runs.map((x) => `<i class="${x.on ? "on" : "off"}" style="width:${((x.len / r.length) * 100).toFixed(2)}%"></i>`).join("")}</div>`;
   }
   function placeText(p) { return !p ? "" : p.raw ? I.place(p.raw) : p.poiKind ? C.poiLabel(p.poiKind) : p.key ? t(p.key, p.vars || {}) : ""; }
   function routeTitle(c) {
@@ -1392,39 +1390,41 @@
     const stopAt = c.r.stops && c.r.stops[0] && !c.r.stops[0].sight ? t("stopAfter", { d: C.fmtKm(c.r.stops[0].at) }) : "";
     return [stopAt, c.via.length ? t("via", { streets: c.via.map(I.place).join(", ") }) : ""].filter(Boolean).join(" · ");
   }
-  function climbSummary(r, list) {
-    if (!list.length) return t("flat", { m: Math.round(r.climb) });
-    const steep = list.map((c) => ({ c, max: C.climbMaxGrade(r, c) })).sort((a, b) => b.max - a.max)[0];
-    const name = C.climbName(r, steep.c);
-    return t(list.length > 1 ? "climbsN" : "climbs1", { n: list.length, m: Math.round(r.climb), g: I.pct(steep.max),
-      on: name ? t("onStreet", { name: C.esc(I.place(name)) }) : "", rise: Math.round(steep.c.rise), d: C.fmtKm(steep.c.length) }).replace(/\s+\(/, " (");
+  // "3 climbs, 95 m total. Steepest climb is 12% over 42 m on Avenue Villeneuve." (climbs: over 7 % and over 10 m, see C.hills)
+  function climbLine(r) {
+    const h = C.hills(r), m = Math.round(h.total);
+    if (!h.list.length) return t("noSteep", { m });
+    const s = h.steepest, name = C.climbName(r, s), d = s.length < 1000 ? `${Math.round(s.length)} m` : C.fmtKm(s.length);
+    return `${t(h.list.length > 1 ? "climbsN" : "climbs1", { n: h.list.length, m })} ${t(name ? "steepestOn" : "steepest", { g: I.pct(s.grade), d, name: C.esc(I.place(name)) })}`;
+  }
+  // the route card (2026-11-05, Raph's mix of the two mock-ups): title and time; the climbs in one sentence; the elevation
+  // coloured by grade; the bike-path strip; the share on bike paths. Elevation is told only here. In Suggest a ride each
+  // of the rides gets one, as a button that picks it.
+  function routeCard(c, i, pick) {
+    const r = c.r, note = routeNote(c), tag = pick ? "button" : "div";
+    return `<${tag} ${pick ? `type="button" data-i="${i}" ` : ""}class="route-card${pick && i === state.sel ? " sel" : ""}">
+        <div class="rc-top"><b>${C.esc(routeTitle(c))}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
+        <div class="rc-sub"><span class="rc-note">${C.esc(note)}</span><span class="rc-km">${C.fmtKm(r.length)}</span></div>
+        <div class="rc-climb">${climbLine(r)}</div>
+        <div class="rc-profile">${C.gradeProfileSVG(r, { height: pick ? 56 : 68, label: t("elevation") })}</div>
+        ${pathBar(r)}
+        <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></${tag}>`;
   }
   function renderRoutes() {
     const box = $("#routes"), det = $("#detail");
     if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
-    const classic = state.routes[0] && state.routes[0].classic;
-    box.innerHTML = classic ? "" : state.routes.map((c, i) => {
-      const r = c.r, gaps = C.mainGaps(r), note = routeNote(c);
-      return `<button type="button" class="route-card ${i === state.sel ? "sel" : ""}" data-i="${i}">
-        <div class="rc-top"><b>${C.esc(routeTitle(c))}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
-        ${note ? `<div class="rc-note">${C.esc(note)}</div>` : ""}
-        <div class="rc-sub">${C.fmtKm(r.length)} · ${t("climbM", { m: Math.round(r.climb) })}${gaps.length ? "" : ` · ${t("lanesAllWay")}`}</div>
-        ${compBar(r)}
-        <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></button>`;
-    }).join("");
-    box.querySelectorAll(".route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
+    const pick = state.routes.length > 1;   // Suggest a ride's three; one card for a route or a classic ride
+    box.innerHTML = state.routes.map((c, i) => routeCard(c, i, pick)).join("");
+    if (pick) box.querySelectorAll(".route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
     const sel = state.routes[state.sel], r = sel.r, gaps = C.mainGaps(r);
     const gapHtml = gaps.length
       ? `<div class="gaps">${gaps.map((g, i) => `<button type="button" class="gap-item" data-g="${i}"><span class="gi-icon">${i + 1}</span><span>${C.esc(t("gapOn", { m: Math.round(g.length), name: g.names.slice(0, 2).map(I.place).join(", ") || t("aStreet") }))}<br><small>${t(g.busy ? "busyStreet" : "quietStreet")} · ${t("after", { d: C.fmtKm(g.start) })}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>`
       : `<div class="no-gaps">${t("lanesWhole")}</div>`;
     const turns = r.maneuvers.map((m) => `<li>${C.esc(I.maneuver(m))} <span class="turn-at">· ${C.fmtKm(m.at)}</span></li>`).join("");
     const share = canShare() ? `<button type="button" class="share-btn" aria-label="${t("share")}" title="${t("share")}">${SHARE_ICON}</button>` : "";
-    const elev = `<h2>${t("elevation")}</h2>`;   // share sits next to "Let's ride!" (2026-11-04): beside a heading it read as "share the elevation"
-    const classicHead = classic ? `<div class="classic-summary"><b>${C.esc(routeTitle(sel))}</b><span>${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t("climbM", { m: Math.round(r.climb) })}</span>${compBar(r)}<div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></div>` : "";
     const wl = state.wx && state.wxData ? `<p class="wind-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3"/></svg>${C.esc(windLine(r))}</p>` : "";
-    det.innerHTML = `${classicHead}${elev}<div class="profile">${C.profileSVG(r, { width: 336, height: 92, tierColors: TIER_BAR, gapShade: "rgba(239,143,69,.14)",
-        fill: "#e6edf2", stroke: "#6f8799", text: "#7b858f", climbs: sel.climbs, climbFill: CLIMB.fill, climbText: "#7a5a3a", minRange: 30, headroom: 0.25, gaps })}</div>
-      <p class="climb-note">${climbSummary(r, sel.climbs)}</p>${wl}
+    // share sits next to "Let's ride!" (2026-11-04): beside a heading it read as "share the elevation"
+    det.innerHTML = `${wl}
       <h2>${t(state.winter ? "withoutLaneWinter" : "withoutLane")}</h2>${gapHtml}
       <details class="turns"><summary>${t("turnByTurn", { n: r.maneuvers.length })}</summary><ol>${turns}</ol></details>
       <div class="ride-row"><button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>${share}</div>

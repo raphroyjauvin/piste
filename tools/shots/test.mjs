@@ -230,7 +230,7 @@ await run("elevation: tint, shading, detail contours, LiDAR terrain", `${APP}?tr
 });
 
 await run("climbs and hill-ahead (toned down)", `${APP}?trip=rachel`, async (page) => page.evaluate(async () => {
-  const app = window.__app, m = app.map, sel = app.state.routes[0];
+  const app = window.__app, m = app.map, sel = { climbs: window.BikeCommon.climbs(app.state.routes[0].r) };   // the ride's hill-ahead climbs (2.5 %, 80 m)
   const big = sel.climbs.slice().sort((a, b) => b.rise - a.rise)[0];
   const inClimb = (d) => sel.climbs.some((c) => d >= c.start - 60 && d < c.start + c.length + 60);
   let before = big.start - 250; while (before > 0 && inClimb(before)) before -= 20;
@@ -2355,6 +2355,86 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
     && again === was && /\?classic=oldport$/.test(classic) && !/welcome|notrack/.test(classic) && loops;
   return { ok, cards, wind, btn, web, copied, failed, was, again, classic, loops };
 }, { width: 1440, height: 900 });
+
+// ------------------------------------------------------------------ the route card (2026-11-05): one card that follows the slider and the Avoid chips;
+// the climbs sentence (over 7 % and over 10 m), the elevation coloured by grade, the bike-path strip, the share; elevation told nowhere else
+const cardSnap = () => { const a = window.__app, C = window.BikeCommon, s = a.state, cards = [...document.querySelectorAll("#routes .route-card")];
+  return { n: cards.length, routes: s.routes.length, sel: s.sel, cards: cards.map((el, i) => { const svg = el.querySelector(".rc-profile svg"), bar = el.querySelector(".bar"), r = s.routes[i] && s.routes[i].r;
+    const on = [...el.querySelectorAll(".bar i.on")].reduce((m, x) => m + parseFloat(x.style.width), 0);
+    const cs = el.getBoundingClientRect(), sv = svg && svg.getBoundingClientRect(), br = bar && bar.getBoundingClientRect();
+    const colour = (q) => { const x = el.querySelector(q); return x && getComputedStyle(x).backgroundColor; };
+    return { tag: el.tagName, sel: el.classList.contains("sel"), order: [...el.children].map((c) => c.className.split(" ")[0] || c.tagName).join(),
+      title: el.querySelector(".rc-top b").textContent, time: el.querySelector(".rc-top .time").textContent, km: el.querySelector(".rc-km").textContent, climb: el.querySelector(".rc-climb").textContent,
+      pct: el.querySelector(".rc-pct").textContent, label: svg && svg.getAttribute("aria-label"), role: svg && svg.getAttribute("role"), stops: svg ? [...svg.querySelectorAll("stop")].map((x) => x.getAttribute("stop-color")) : [],
+      onPct: on, offs: el.querySelectorAll(".bar i.off").length, onColour: colour(".bar i.on"), offColour: colour(".bar i.off"),
+      aligned: !!(sv && br) && Math.abs(sv.left - br.left) < 1 && Math.abs(sv.width - br.width) < 1 && br.top >= sv.bottom - 0.5 && br.top - sv.bottom < 6, inside: !!sv && sv.left >= cs.left && sv.right <= cs.right,
+      want: r && { km: C.fmtKm(r.length), time: C.fmtMin(C.rideMinutes(r)), share: r.infraShare, n: C.hills(r).list.length, m: Math.round(C.hills(r).total) } }; }),
+    detail: document.querySelector("#detail").textContent, detailSvg: !!document.querySelector("#detail svg[role=img]"), wide: document.querySelector("#panel").scrollWidth <= document.querySelector("#panel").clientWidth }; };
+await run("route card: one card that follows the slider and Avoid; climbs over 7 % and 10 m; elevation by grade; bike-path strip; Suggest and classics", `${APP}?from=-73.5817,45.5246&to=-73.6150,45.5035`, async (page) => {
+  await until(page, () => window.__app.state.routes.length > 0 && !!document.querySelector("#routes .route-card"), null, 60000);
+  const units = await page.evaluate(() => {
+    const C = window.BikeCommon, route = (pr) => ({ profile: pr, length: pr[pr.length - 1][0], pieces: [{ start: 0, length: pr[pr.length - 1][0], tier: 0, names: ["Rue Test"] }] });
+    const h = (pr) => { const x = C.hills(route(pr)); return { n: x.list.length, total: Math.round(x.total * 10) / 10, g: x.steepest && Math.round(x.steepest.grade * 1000) / 10, L: x.steepest && Math.round(x.steepest.length) }; };
+    const sat = (rgb) => { const [r, g, b] = rgb.match(/\d+/g).map((v) => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; return mx === mn ? 0 : (mx - mn) / (1 - Math.abs(2 * l - 1)); };
+    const flat = C.gradeProfileSVG(route([[0, 20], [200, 21], [400, 20]]), { height: 60 }), red = C.gradeColor(0.08);
+    return {
+      steep30: h([[0, 10], [100, 10], [130, 12.4], [300, 12.4]]),        // 8 % over 30 m: one climb
+      steep8: h([[0, 10], [100, 10], [108, 10.64], [300, 10.64]]),      // 8 % over 8 m: too short
+      seven: h([[0, 10], [100, 10], [200, 17], [300, 17]]),             // exactly 7 %: not steeper than 7 %
+      two: h([[0, 10], [100, 10], [150, 15], [400, 15], [440, 19.8], [600, 19.8]]),   // 10 % over 50 m, then 12 % over 40 m: two, the steeper is 12 %
+      spike: h([[0, 30], [60, 30], [100, 22], [150, 30], [300, 30]]),   // one point 8 m low (a bridge in the ground model): no climb, nothing up
+      colours: { flat: C.gradeColor(0) === C.gradeColor(-0.06) && C.gradeColor(0.01) === C.gradeColor(0), mid: C.gradeColor(0.045) !== C.gradeColor(0) && C.gradeColor(0.045) !== red,
+        red: C.gradeColor(0.071) === red && C.gradeColor(0.2) === red && C.gradeColor(0.069) !== red, muted: [0, 0.045, 0.08].map((g) => +sat(C.gradeColor(g)).toFixed(2)) },
+      flatHasRed: flat.includes(red), flatLabel: /aria-label="Elevation profile"/.test(flat) };
+  });
+  const go = await page.evaluate(cardSnap);
+  const red = await page.evaluate(() => window.BikeCommon.gradeColor(0.2));
+  // the slider and the Avoid chips: the card is rebuilt for the new route (marked first, so a stale card would show)
+  const moved = await page.evaluate(async () => {
+    const pause = () => new Promise((r) => setTimeout(r, 300)), mark = () => (document.querySelector("#routes .route-card").dataset.old = "1"), fresh = () => !document.querySelector("#routes .route-card[data-old]");
+    const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true })), s = document.querySelector("#strict"), hills = document.querySelector("#hills"), w = document.querySelector("#avoid-works");
+    const out = {};
+    mark(); s.value = s.min; fire(s, "input"); await pause(); out.slider = fresh();
+    mark(); hills.checked = true; fire(hills, "change"); await pause(); out.hills = fresh();
+    mark(); w.checked = !w.checked; fire(w, "change"); await pause(); out.works = fresh();
+    w.checked = !w.checked; fire(w, "change"); hills.checked = false; fire(hills, "change"); await pause();
+    return out; });
+  const afterMove = await page.evaluate(cardSnap);
+  const fr = await page.evaluate(() => { window.__app.setLang("fr"); const t = document.querySelector("#routes .rc-climb").textContent, p = document.querySelector("#routes .rc-pct").textContent; window.__app.setLang("en"); return { t, p }; });
+  // Suggest a ride: one card per ride, each a button that picks it
+  await page.evaluate(async () => { const a = window.__app; a.setTab("suggest"); a.setSuggMode("custom"); await a.computeSuggestions(true); });
+  await until(page, () => window.__app.state.routes.length > 1 && document.querySelectorAll("#routes .route-card").length > 1, null, 60000);
+  const sg = await page.evaluate(cardSnap);
+  await page.evaluate(() => document.querySelectorAll("#routes .route-card")[1].click());
+  const picked = await page.evaluate(cardSnap);
+  // a classic ride: one card, the ride's name as its title
+  await page.evaluate(() => { window.__app.setSuggMode("classics"); window.__app.showClassic(0, false); });
+  await until(page, () => window.__app.state.routes[0] && window.__app.state.routes[0].classic && !!document.querySelector("#routes .route-card"), null, 30000);
+  const clName = await page.evaluate(() => window.__app.state.routes[0].title.raw);
+  const cls = await page.evaluate(cardSnap);
+  const sentence = /^(\d+ climbs?, \d+ m total\. Steepest climb is \d+% over \d+ m( on .+)?\.|No steep climbs, \d+ m total\.)$/;
+  const cardOk = (c) => c.order === "rc-top,rc-sub,rc-climb,rc-profile,bar,rc-pct" && sentence.test(c.climb) && c.km === c.want.km && c.time === c.want.time
+    && (c.want.n ? c.climb.startsWith(`${c.want.n} climb${c.want.n > 1 ? "s" : ""}, ${c.want.m} m total.`) : c.climb === `No steep climbs, ${c.want.m} m total.`)
+    && /^\d+% on bike paths$/.test(c.pct) && Math.abs(c.onPct - c.want.share * 100) < 0.6 && (c.want.share > 0.995 || c.offs > 0) && c.role === "img" && c.label === "Elevation" && c.aligned && c.inside
+    && c.stops.length > 0 && (c.want.n > 0) === c.stops.includes(red);
+  const g0 = go.cards[0];
+  const checks = {
+    rule: units.steep30.n === 1 && units.steep30.g === 8 && units.steep30.L === 30 && units.steep8.n === 0 && units.seven.n === 0 && units.two.n === 2 && units.two.g === 12 && units.two.L === 40,
+    spikeRemoved: units.spike.n === 0 && units.spike.total === 0,
+    colours: units.colours.flat && units.colours.mid && units.colours.red && units.colours.muted.every((x) => x <= 0.4) && !units.flatHasRed && units.flatLabel,
+    oneCardInGo: go.n === 1 && go.routes === 1 && g0.tag === "DIV" && !g0.sel && g0.title === "Your route",
+    goCard: cardOk(g0) && g0.want.n >= 2 && /^\d+ climbs, \d+ m total\. Steepest climb is \d+% over \d+ m on .+\.$/.test(g0.climb) && g0.offs > 0 && g0.onColour === "rgb(0, 149, 230)" && g0.offColour === "rgb(239, 143, 69)",
+    elevationOnlyInCard: !/climb|elevation|m total/i.test(go.detail) && !go.detailSvg && !/climb/i.test(g0.km + g0.title + g0.pct),
+    followsControls: moved.slider && moved.hills && moved.works && afterMove.n === 1 && cardOk(afterMove.cards[0]),
+    french: /^(\d+ côtes?, \d+ m de montée au total\. La plus raide[\u00a0\u202f]: \d+[\u00a0\u202f]% sur \d+ m(, .+)?\.|Aucune côte raide, \d+ m de montée au total\.)$/.test(fr.t) && /sur pistes cyclables/.test(fr.p),
+    suggest: sg.n === sg.routes && sg.n > 1 && sg.cards.every((c) => c.tag === "BUTTON" && cardOk(c)) && sg.cards.filter((c) => c.sel).length === 1 && sg.cards[0].sel && !sg.detailSvg,
+    picks: picked.sel === 1 && picked.cards[1].sel && !picked.cards[0].sel,
+    classic: cls.n === 1 && cls.cards[0].tag === "DIV" && cls.cards[0].title === clName && cardOk(cls.cards[0]),
+    phoneFits: go.wide && sg.wide,
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), units, go: g0, moved, fr, sugg: sg.cards.map((c) => ({ title: c.title, climb: c.climb })), picked: picked.sel, classic: cls.cards[0] };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ saved places (2026-11-02): Home, Work, others; recents; all on this device
 // 2026-11-03: one chip, ★ (always there, name in aria-label and title), opens the menu: Home, Work, the saved places (each with its pencil),
