@@ -1,7 +1,8 @@
 /* 3D building edges drawn with WebGL (2026-11-07): a MapLibre custom layer that draws thin "clear-line" ink edges on the 3D buildings of
    a fill-extrusion layer (the roof outline, the base outline and a vertical line at each corner where the outline turns by more than
    about 34 degrees), like a pen drawing. One device pixel wide, depth-tested against the buildings and the terrain so a wall in front
-   hides the lines behind it; a tiny depth bias keeps the lines from flickering against the wall they sit on.
+   hides the lines behind it; each line end is nudged 0.3 m toward the camera (a fixed distance, not a depth bias) so
+   the lines do not flicker against the wall they sit on.
    Building outlines: the map's own vector tiles of the layer's source (read with querySourceFeatures when a tile loads and when the map
    is idle). Edges cut by a tile border (they run exactly along a tile's edge) are left out, so only real walls are drawn.
    Terrain: MapLibre lifts every fill-extrusion by the terrain's height at its polygon's centroid (the mean of its vertices): roof at
@@ -16,6 +17,7 @@
   const MAX_LINES = 200000;      // lines drawn at most: 24 bytes each, about 5 MB, light for a phone's GPU
   const MIN_HEIGHT = 2;          // m: lower buildings (sheds, garages) get no lines
   const TURN = 0.6;              // rad (about 34 degrees): a corner line where the outline turns by more than this
+  const NUDGE = 0.3;             // m: every line end moves this far toward the camera, so a line is not hidden by the wall it lies on
   const BASE_LIFT = 0.05;        // m: the base line sits just above the ground it stands on
   const BUFFER = 0.1;            // an axis-aligned edge within this share of a tile from its border is a tile cut
   const STRIDE = 4;              // per line end: x, y (m from the origin, east and south), the ground's raw height (m), height above the ground (m)
@@ -26,12 +28,13 @@
 
   const VERT = `
 uniform mat4 u_matrix;     // local metres (x east, y south, z up) to clip space
+uniform vec3 u_cam;        // the camera, in the same local metres
 uniform float u_exag;      // the terrain's exaggeration now (the ride camera changes it without any event): ground heights are stored raw
 attribute vec4 a_pos;      // x, y, ground height, height above the ground
 void main() {
-  vec4 q = u_matrix * vec4(a_pos.xy, a_pos.z * u_exag + a_pos.w, 1.0);
-  q.z -= 0.0001 * q.w;     // a little toward the camera, so a line is not hidden by the wall it lies on
-  gl_Position = q;
+  vec3 p = vec3(a_pos.xy, a_pos.z * u_exag + a_pos.w);
+  // a fixed distance toward the camera (not a clip-space depth offset: that is worth metres far away and lets lines behind a wall show through)
+  gl_Position = u_matrix * vec4(p + normalize(u_cam - p) * ${NUDGE.toFixed(2)}, 1.0);
 }`;
   const FRAG = `
 #ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -63,7 +66,16 @@ void main() { gl_FragColor = u_edgecolor; }`;
     gl.bindAttribLocation(p, 0, "a_pos");
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error("edge shaders: " + (gl.getProgramInfoLog(p) || "did not link"));
-    return { p, matrix: gl.getUniformLocation(p, "u_matrix"), color: gl.getUniformLocation(p, "u_edgecolor"), exag: gl.getUniformLocation(p, "u_exag") };
+    return { p, matrix: gl.getUniformLocation(p, "u_matrix"), color: gl.getUniformLocation(p, "u_edgecolor"), exag: gl.getUniformLocation(p, "u_exag"), cam: gl.getUniformLocation(p, "u_cam") };
+  }
+
+  // The camera in the matrix's own space: the one point whose clip x, y and w are all 0 (three equations, Cramer's rule). Column-major matrix.
+  function cameraAt(M, out) {
+    const a = (r, c) => M[4 * c + r], rows = [0, 1, 3];
+    const det = (m) => m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+    const A = rows.flatMap((r) => [a(r, 0), a(r, 1), a(r, 2)]), d = det(A);
+    for (let c = 0; c < 3; c++) { const B = A.slice(); rows.forEach((r, i) => { B[3 * i + c] = -a(r, 3); }); out[c] = d ? det(B) / d : 0; }
+    return out;
   }
 
   const polygons = (g) => (!g ? [] : g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : []);
@@ -123,7 +135,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
       this.tiles = new Map(); this.count = 0; this.pending = null; this.origin = [0, 0, 1];
       this.error = null; this.gl = null; this.timer = 0; this.warned = false;
       this.stats = { drawn: 0, frames: 0, rebuilds: 0, rebuildMs: 0, capped: false, elevMin: 0, elevMax: 0, webgl: 0 };   // drawn: edges (lines) in the last frame
-      this.matrix = new Float32Array(16);
+      this.matrix = new Float32Array(16); this.cam = new Float32Array(3);
       this.onData = (e) => {
         const L = map.getLayer(this.opt.layerId), terrain = map.getTerrain && map.getTerrain();
         if (L && e.sourceId === L.source && e.tile) this.schedule(150);
@@ -274,6 +286,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
       const [ox, oy, k] = this.origin, kz = mercPerMetre(map.getCenter().lat);   // MapLibre scales heights at the map's centre
       for (let i = 0; i < 4; i++) { M[i] = A[i] * k; M[4 + i] = A[4 + i] * k; M[8 + i] = A[8 + i] * kz; M[12 + i] = A[i] * ox + A[4 + i] * oy + A[12 + i]; }
       gl.useProgram(g.prog.p);
+      gl.uniform3fv(g.prog.cam, cameraAt(M, this.cam));
       gl.uniformMatrix4fv(g.prog.matrix, false, M);
       gl.uniform4fv(g.prog.color, this.color);
       gl.uniform1f(g.prog.exag, map.terrain ? map.terrain.exaggeration : 1);
