@@ -643,7 +643,8 @@
   // ------------------------------------------------------------------ UI: tabs, suggest modes, form
   function refreshSections() {
     const go = state.tab === "go", custom = state.tab === "suggest" && state.smode === "custom", classics = state.tab === "suggest" && state.smode === "classics";
-    for (const [id, tb] of [["#tab-go", "go"], ["#tab-suggest", "suggest"]]) { $(id).classList.toggle("on", state.tab === tb); $(id).setAttribute("aria-selected", String(state.tab === tb)); }
+    // three tabs (2026-11-08): Go somewhere, Design your own ride, Classic rides (inside, still the "suggest" tab in its two modes)
+    for (const [id, on] of [["#tab-go", go], ["#tab-custom", custom], ["#tab-classics", classics]]) { $(id).classList.toggle("on", on); $(id).setAttribute("aria-selected", String(on)); }
     document.querySelectorAll(".go-only").forEach((el) => (el.hidden = !go));
     document.querySelectorAll(".suggest-only").forEach((el) => (el.hidden = go));
     document.querySelectorAll(".custom-only").forEach((el) => (el.hidden = !custom));
@@ -653,10 +654,10 @@
     if (markers.from) markers.from.getElement().style.display = classics ? "none" : "";
   }
   function setTab(tab) { state.tab = tab; refreshSections(); recompute(true); }
-  function setSuggMode(m) { state.smode = m; document.querySelector(`input[name="smode"][value="${m}"]`).checked = true; refreshSections(); recompute(true); }
+  function setSuggMode(m) { state.smode = m; refreshSections(); recompute(true); }
   $("#tab-go").onclick = () => setTab("go");
-  $("#tab-suggest").onclick = () => setTab("suggest");
-  document.querySelectorAll('input[name="smode"]').forEach((r) => r.addEventListener("change", () => setSuggMode(document.querySelector('input[name="smode"]:checked').value)));
+  $("#tab-custom").onclick = () => { state.tab = "suggest"; setSuggMode("custom"); };
+  $("#tab-classics").onclick = () => { state.tab = "suggest"; setSuggMode("classics"); };
 
   const chipsBox = $("#stop-chips");
   function renderStopChips() {
@@ -1360,23 +1361,25 @@
   const PHOTO_CREDITS = {};
   fetch("../shared/photos/credits.json").then((r) => (r.ok ? r.json() : {})).then((j) => { Object.assign(PHOTO_CREDITS, j); renderClassicCards(); }).catch(() => {});
   const track = $("#classic-track"), dots = $("#classic-dots");
+  // 2026-11-08: one card per classic ride: its photo fading into the paper, then the route card's parts (title and time, distance, the ride's
+  // description, climbs, elevation, the bike-path strip, the share on bike paths). The card picked is the live one (its stretches open).
   function renderClassicCards() {
-    const L = I.lang;
+    const L = I.lang, sel = state.routes[0] && state.routes[0].classic ? state.routes[0].r : null;
     track.innerHTML = CLASSICS.map((c, i) => {
-      const r = classicCache.get(`${c.id}|${state.winter}`);
-      const meta = r ? `${C.fmtKm(r.length)} · ${C.fmtMin(C.rideMinutes(r))} · ${t(c.kind === "outback" ? "kindOutBack" : "kindLoop")} · ${C.fmtPct(r.infraShare)} ${t(state.winter ? "on4s" : "onInfra")}` : "…";
-      const cr = PHOTO_CREDITS[c.id];
-      return `<article class="classic-card${i === state.classic ? " sel" : ""}" data-i="${i}" tabindex="0" aria-label="${C.esc(c.name[L])}">
+      const r = classicCache.get(`${c.id}|${state.winter}`), cr = PHOTO_CREDITS[c.id], blurb = `<p class="cc-blurb">${C.esc(c.blurb[L])}</p>`;
+      const body = r ? cardParts(c.name[L], "", r, i === state.classic && !!sel, blurb) : `<div class="rc-top"><b>${C.esc(c.name[L])}</b><span class="time">…</span></div>${blurb}`;
+      return `<article class="classic-card route-card${i === state.classic ? " sel" : ""}" data-i="${i}" tabindex="0" aria-label="${C.esc(c.name[L])}">
         <div class="cc-photo" style="background-image:url('../shared/photos/${c.id}.jpg')">${cr ? `<a class="cc-credit" href="${C.esc(cr.source)}" target="_blank" rel="noopener">${C.esc(t("photoBy", { credit: `${cr.author}, ${cr.license}` }))}</a>` : ""}</div>
-        <div class="cc-body"><b class="cc-title">${C.esc(c.name[L])}</b><div class="cc-meta">${meta}</div>
-          <p class="cc-blurb">${C.esc(c.blurb[L])}</p><div class="cc-start">${C.esc(t("startAt", { name: c.start[L] }))}</div></div></article>`;
+        <div class="cc-body">${body}</div></article>`;
     }).join("");
     dots.innerHTML = CLASSICS.map((_, i) => `<i class="${i === state.classic ? "on" : ""}"></i>`).join("");
     track.querySelectorAll(".classic-card").forEach((el) => el.addEventListener("click", () => {
-      const i = +el.dataset.i;
+      const i = +el.dataset.i; if (i === state.classic) return;   // the card in use: its own stretches take the taps
       el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-      if (i !== state.classic) showClassic(i, true);
+      showClassic(i, true);
     }));
+    const live = track.querySelector(`.classic-card[data-i="${state.classic}"]`);
+    if (live && sel) wireStretches(live, sel);
   }
   let classicsRouted = false;
   async function routeAllClassics() {   // fills in the distances on the cards without blocking the page
@@ -1386,7 +1389,7 @@
   function showClassic(i, fit) {
     state.classic = Math.max(0, Math.min(CLASSICS.length - 1, i));
     const c = CLASSICS[state.classic], r = classicRoute(state.classic);
-    if (!classicsRouted) routeAllClassics(); else renderClassicCards();
+    if (!classicsRouted) routeAllClassics();   // the cards are drawn by renderRoutes below (and again once every classic is routed)
     state.routes = r ? [{ title: { raw: c.name[I.lang] }, r, end: { raw: c.start[I.lang] }, loop: c.kind === "loop", kind: c.kind, classic: true }] : [];
     state.sel = 0;
     renderRoutes(); drawRoutes();
@@ -1509,25 +1512,32 @@
   // the route card (2026-11-05, Raph's mix of the two mock-ups; 2026-11-07 with the old "Without a bike path" list inside): title and time;
   // the climbs in one sentence; the elevation coloured by grade; the bike-path strip of tappable stretches; the share on bike paths; a
   // tapped stretch's details. Elevation is told only here. In Suggest a ride the rides not picked are buttons that pick them.
-  function routeCard(c, i, pick) {
-    const r = c.r, note = routeNote(c), live = !pick || i === state.sel, tag = live ? "div" : "button", list = stretches(r);
-    return `<${tag} ${tag === "button" ? `type="button" ` : ""}data-i="${i}" class="route-card${pick && i === state.sel ? " sel" : ""}">
-        <div class="rc-top"><b>${C.esc(routeTitle(c))}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
-        <div class="rc-sub"><span class="rc-note">${C.esc(note)}</span><span class="rc-km">${C.fmtKm(r.length)}</span></div>
+  // what every route card holds (Go somewhere, Design your own ride, and the classic rides' cards): title and time; distance; extra (a classic
+  // ride's description); the climbs; the elevation; the bike-path strip; the share on bike paths; and, on the live card, a tapped stretch's details
+  function cardParts(title, note, r, live, extra = "") {
+    const list = stretches(r);
+    return `<div class="rc-top"><b>${C.esc(title)}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
+        <div class="rc-sub"><span class="rc-note">${C.esc(note)}</span><span class="rc-km">${C.fmtKm(r.length)}</span></div>${extra}
         <div class="rc-climb">${climbLine(r)}</div>
         <div class="rc-profile">${C.gradeProfileSVG(r, { height: live ? 68 : 56, label: t("elevation") })}</div>
         ${strip(r, list, live, null)}
         <div class="rc-under"><div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div>${list.some((s) => !s.on) ? "" : `<div class="rc-whole">${t("lanesWhole")}</div>`}</div>
-        ${live ? `<div class="rc-more"><div><div class="rc-det"></div></div></div>` : ""}</${tag}>`;
+        ${live ? `<div class="rc-more"><div><div class="rc-det"></div></div></div>` : ""}`;
+  }
+  function routeCard(c, i, pick) {
+    const live = !pick || i === state.sel, tag = live ? "div" : "button";
+    return `<${tag} ${tag === "button" ? `type="button" ` : ""}data-i="${i}" class="route-card${pick && i === state.sel ? " sel" : ""}">${cardParts(routeTitle(c), routeNote(c), c.r, live)}</${tag}>`;
   }
   function renderRoutes() {
     const box = $("#routes"), det = $("#detail");
     if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
-    const pick = state.routes.length > 1;   // Suggest a ride's three; one card for a route or a classic ride
-    box.innerHTML = state.routes.map((c, i) => routeCard(c, i, pick)).join("");
-    box.querySelectorAll("button.route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
-    const sel = state.routes[state.sel], r = sel.r;
-    const live = box.querySelector(`div.route-card[data-i="${state.sel}"]`); if (live) wireStretches(live, r);
+    const pick = state.routes.length > 1, sel = state.routes[state.sel], r = sel.r;   // Design your own ride's three; one card for a route
+    if (sel.classic) { box.innerHTML = ""; renderClassicCards(); }   // a classic ride's card is its card in the carousel
+    else {
+      box.innerHTML = state.routes.map((c, i) => routeCard(c, i, pick)).join("");
+      box.querySelectorAll("button.route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
+      const live = box.querySelector(`div.route-card[data-i="${state.sel}"]`); if (live) wireStretches(live, r);
+    }
     const turns = r.maneuvers.map((m) => `<li>${C.esc(I.maneuver(m))} <span class="turn-at">· ${C.fmtKm(m.at)}</span></li>`).join("");
     const share = canShare() ? `<button type="button" class="share-btn" aria-label="${t("share")}" title="${t("share")}">${SHARE_ICON}</button>` : "";
     const wl = state.wx && state.wxData ? `<p class="wind-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3"/></svg>${C.esc(windLine(r))}</p>` : "";
@@ -2374,7 +2384,6 @@
       if (params.get("km")) setKm(params.get("km"), false);
       if (SK[params.get("stop")]) { state.sugg.stop = params.get("stop"); renderStopChips(); }
     }
-    document.querySelector(`input[name="smode"][value="${state.smode}"]`).checked = true;
     refreshSections();
   }
   if (state.tab === "suggest" && state.smode === "custom") await computeSuggestions(true); else recompute(true);

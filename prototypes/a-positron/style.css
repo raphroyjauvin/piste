@@ -2,7 +2,7 @@
 :root {
   --ink: #14173d; --ink-2: #44476a; --ink-3: #6a6d8a;
   --paper: #fffdf8; --paper-2: #f5f0e4; --line: #e2dac8; --hover: #efe8d8;
-  --navy: #1e2160; --navy-deep: #1e2160; --navy-2: #3d43a8; --navy-soft: #e8e9f6;
+  --navy: #1e2160; --navy-deep: #1e2160; --navy-2: #3d43a8; --navy-soft: #e8e9f6; --purple: #9a1fa6;
   --green: #00B300; --green-ink: #1d6a2c;
   --gap: #ff6a1f; --gap-soft: #fff1e7; --gap-ink: #a3360a;
   --yellow: #FFD900; --red: #d7263d;
@@ -46,8 +46,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .lang-btn:hover { background: var(--hover); color: var(--ink); }
 
 /* tabs: "Go somewhere" / "Suggest a ride", and the classics / custom switch */
-.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--paper-2); border-radius: 12px; padding: 4px; }
-.tab { border: 0; background: transparent; border-radius: 9px; padding: 8px 6px; font-weight: 700; font-size: 14px; color: var(--ink-2); }
+.tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; background: var(--paper-2); border-radius: 12px; padding: 4px; }
+.tab { border: 0; background: transparent; border-radius: 9px; padding: 7px 4px; min-height: 44px; font-weight: 700; font-size: 13.5px; line-height: 1.15; text-wrap: balance; color: var(--ink-2); }
 .tab.on { background: var(--paper); color: var(--navy); box-shadow: 0 0 0 1.5px var(--navy); }
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .seg label { position: relative; }
@@ -61,18 +61,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .classic-track { display: grid; grid-auto-flow: column; grid-auto-columns: 84%; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;
   padding: 2px 18px 6px; scroll-padding: 0 18px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .classic-track::-webkit-scrollbar { display: none; }
-.classic-card { scroll-snap-align: center; border: 1.5px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--paper); cursor: pointer;
+.classic-card.route-card { scroll-snap-align: center; padding: 0; overflow: hidden; cursor: pointer; }   /* a route card with the ride's photo on top (2026-11-08) */
+.classic-track { align-items: start; }   /* each card its own height */
   display: flex; flex-direction: column; transition: border-color .2s, box-shadow .2s; }
-.classic-card.sel { border-color: var(--navy); box-shadow: 0 0 0 3px var(--navy-soft); }
+.classic-card:not(.sel) { border-color: var(--line); box-shadow: none; }
 .cc-photo { position: relative; height: 112px; background: #e8ecef center 38% / cover no-repeat; }
-.cc-photo::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255, 255, 255, .12) 0%, rgba(255, 255, 255, .3) 50%, #fff 100%); }
+.cc-photo::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255, 253, 248, .08) 0%, rgba(255, 253, 248, .3) 50%, var(--paper) 100%); }
 .cc-credit { position: absolute; right: 8px; top: 6px; z-index: 1; font-size: 9.5px; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); text-decoration: none; max-width: 70%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; }
-.cc-body { position: relative; margin-top: -30px; padding: 0 13px 12px; display: flex; flex-direction: column; gap: 3px; }
-.cc-title { font: 800 17px/1.15 var(--font-display); }
-.cc-meta { font-size: 12.5px; color: var(--navy-deep); font-weight: 700; font-variant-numeric: tabular-nums; }
-.cc-blurb { margin: 2px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.35; }
-.cc-start { font-size: 12px; color: var(--ink-3); }
+.cc-body { position: relative; margin-top: -30px; padding: 0 13px 12px; display: flex; flex-direction: column; }
+.cc-blurb { margin: 6px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.35; }
+.classic-card .rc-top b { font: 800 17px/1.15 var(--font-display); }
 .classic-dots { display: flex; justify-content: center; gap: 5px; }
 .classic-dots i { width: 6px; height: 6px; border-radius: 50%; background: #d8cfbd; transition: background .2s, width .2s; }
 .classic-dots i.on { background: var(--navy); width: 16px; border-radius: 3px; }
@@ -594,3 +593,4 @@ body.riding .me-dot { display: none; }
 .ht:disabled::after { display: none; }   /* a dimmed button would show its dots through itself */
 .bar i.seg { cursor: inherit; }          /* Suggest a ride: the strip of a ride not picked is only a picture */
 .rc-step button:disabled { opacity: .3; cursor: default; }
+.layers input[type=checkbox], .layers input[type=radio] { accent-color: var(--purple); }   /* the Layers panel's ticks (2026-11-08) */

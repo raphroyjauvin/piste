@@ -2425,7 +2425,12 @@ await run("route card: one card that follows the slider and Avoid; climbs over 7
   await page.evaluate(() => { window.__app.setSuggMode("classics"); window.__app.showClassic(0, false); });
   await until(page, () => window.__app.state.routes[0] && window.__app.state.routes[0].classic && !!document.querySelector("#routes .route-card"), null, 30000);
   const clName = await page.evaluate(() => window.__app.state.routes[0].title.raw);
-  const cls = await page.evaluate(cardSnap);
+  // 2026-11-08: a classic ride's card is its card in the carousel (photo, then the route card's parts with the ride's description); nothing in #routes
+  const cls = await page.evaluate(() => { const el = document.querySelector("#classics .classic-card.sel"), body = el && el.querySelector(".cc-body");
+    return { inRoutes: document.querySelectorAll("#routes .route-card").length, order: body ? [...body.children].map((c) => c.className.split(" ")[0]).join() : "",
+      title: el && el.querySelector(".rc-top b").textContent, photo: !!(el && el.querySelector(".cc-photo")), gone: !document.querySelector(".cc-meta, .cc-start"),
+      segs: el ? el.querySelectorAll(".bar button.seg").length : 0, pctOnce: el ? (el.textContent.match(/% on bike paths/g) || []).length : 0,
+      others: document.querySelectorAll("#classics .classic-card:not(.sel) .bar button.seg").length }; });
   const sentence = /^(\d+ climbs?, \d+ m total\. Steepest climb is \d+% over \d+ m( on .+)?\.|No steep climbs, \d+ m total\.)$/;
   const cardOk = (c) => c.order === `rc-top,rc-sub,rc-climb,rc-profile,bar,rc-under${c.tag === "DIV" ? ",rc-more" : ""}` && sentence.test(c.climb) && c.km === c.want.km && c.time === c.want.time
     && (c.want.n ? c.climb.startsWith(`${c.want.n} climb${c.want.n > 1 ? "s" : ""}, ${c.want.m} m total.`) : c.climb === `No steep climbs, ${c.want.m} m total.`)
@@ -2443,11 +2448,11 @@ await run("route card: one card that follows the slider and Avoid; climbs over 7
     french: /^(\d+ côtes?, \d+ m de montée au total\. La plus raide[\u00a0\u202f]: \d+[\u00a0\u202f]% sur \d+ m(, .+)?\.|Aucune côte raide, \d+ m de montée au total\.)$/.test(fr.t) && /sur pistes cyclables/.test(fr.p),
     suggest: sg.n === sg.routes && sg.n > 1 && sg.cards.every((c) => c.tag === (c.sel ? "DIV" : "BUTTON") && cardOk(c)) && sg.cards.filter((c) => c.sel).length === 1 && sg.cards[0].sel && !sg.detailSvg,
     picks: picked.sel === 1 && picked.cards[1].sel && picked.cards[1].tag === "DIV" && !picked.cards[0].sel && picked.cards[0].tag === "BUTTON",
-    classic: cls.n === 1 && cls.cards[0].tag === "DIV" && cls.cards[0].title === clName && cardOk(cls.cards[0]),
+    classic: cls.inRoutes === 0 && cls.order === "rc-top,rc-sub,cc-blurb,rc-climb,rc-profile,bar,rc-under,rc-more" && cls.title === clName && cls.photo && cls.gone && cls.segs > 0 && cls.pctOnce === 1 && cls.others === 0,
     phoneFits: go.wide && sg.wide,
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
-  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), units, go: g0, moved, fr, sugg: sg.cards.map((c) => ({ title: c.title, climb: c.climb })), picked: picked.sel, classic: cls.cards[0] };
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), units, go: g0, moved, fr, sugg: sg.cards.map((c) => ({ title: c.title, climb: c.climb })), picked: picked.sel, classic: cls };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ the route card's stretches (2026-11-07): the old "Without a bike path" list lives in the card.
