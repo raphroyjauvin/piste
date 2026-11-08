@@ -2929,6 +2929,119 @@ await run("3D trees: the Layers checkbox (Trees in 3D) is on by default and reme
   return { ok, first, shown, hidden, off, fr, again, offIn3d, fell };
 }, { width: 1000, height: 700 });
 
+// ---- 3D building edges (2026-11-07): thin ink lines on the roofs, bases and corners of the 3D buildings (shared/edges3d.js), 3D only, from zoom 15;
+// on hills they are lifted with the buildings the way MapLibre lifts a fill-extrusion; if WebGL can't draw them they stop quietly ----
+// Page helper: ed.near(box) is what the lines add to the box (the pixels that change when they are drawn) and how much of it lies within 3 px of
+// the buildings (the pixels that change when the buildings are drawn): lines that sit on the buildings are all near them. (Uses __px from treeHelpers.)
+const edgeHelpers = `window.__ed = {
+  added(box, layer) {
+    const m = window.__app.map, show = (v) => m.setLayoutProperty(layer, "visibility", v);
+    show("visible"); const on = __px.grab(box); show("none"); const off = __px.grab(box); show("visible");
+    const w = Math.round(box[2] * devicePixelRatio), mask = new Uint8Array(on.length / 4);
+    for (let i = 0; i < mask.length; i++) mask[i] = Math.abs(on[4 * i] - off[4 * i]) + Math.abs(on[4 * i + 1] - off[4 * i + 1]) + Math.abs(on[4 * i + 2] - off[4 * i + 2]) > 24 ? 1 : 0;
+    return { mask, w, h: mask.length / w };
+  },
+  near(box) {
+    const m = window.__app.map, lines = this.added(box, "edges-gl");
+    m.setLayoutProperty("edges-gl", "visibility", "none"); const bld = this.added(box, "bld-3d"); m.setLayoutProperty("edges-gl", "visibility", "visible");
+    let n = 0, hit = 0, nb = 0;
+    for (let i = 0; i < bld.mask.length; i++) nb += bld.mask[i];
+    for (let y = 0; y < lines.h; y++) for (let x = 0; x < lines.w; x++) {
+      if (!lines.mask[y * lines.w + x]) continue;
+      n++;
+      near: for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx >= 0 && yy >= 0 && xx < lines.w && yy < lines.h && bld.mask[yy * lines.w + xx]) { hit++; break near; }
+      }
+    }
+    return { lines: n, buildings: nb, near: n ? +(hit / n).toFixed(3) : 0 };
+  },
+};`;
+const UDEM = [-73.613, 45.512];   // Université de Montréal: dense buildings on the mountain's north slope
+const EDGES_DAY = [0.108, 0.119, 0.346, 0.92], EDGES_NIGHT = [0.367, 0.38, 0.496, 0.55];   // navy 0.92 and periwinkle 0.55, premultiplied
+const closeTo = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 0.005);
+await run("3D edges: drawn in 3D from zoom 15 only, navy by day and periwinkle at night, hidden with the buildings, and stopped by a lost context", APP, async (page) => {
+  await page.evaluate(treeHelpers);
+  const cam = (is3d, zoom) => page.evaluate(([c, is3d, zoom]) => { const a = window.__app; a.set3d(is3d, false); a.map.jumpTo({ center: c, zoom, pitch: is3d ? 60 : 0, bearing: 0 }); }, [UDEM, is3d, zoom]);
+  const info = () => page.evaluate(() => { const m = window.__app.map, e = window.__app.edges;
+    return { ...e.info(), max: BikeEdges3D.MAX_LINES, vis: m.getLayer("edges-gl") ? m.getLayoutProperty("edges-gl", "visibility") : "absent", color: Array.from(e.color) }; });
+  const colour = (v) => page.evaluate((v) => { document.querySelector(`input[name=night][value=${v}]`).click(); return Array.from(window.__app.edges.color); }, v);
+  await cam(true, 17);
+  await until(page, () => window.__app.edges.info().drawn > 0 && window.__app.map.loaded(), null, 30000);
+  const d3 = await info();
+  await page.evaluate(idle);
+  // once everything is drawn the map goes quiet: the edge layer must not keep it redrawing (a slow machine may still draw a few last frames)
+  const quiet = await page.evaluate(() => new Promise((r) => { const m = window.__app.map, e = window.__app.edges, r0 = e.info().rebuilds; let frames = 0; const f = () => frames++;
+    m.on("render", f); setTimeout(() => { m.off("render", f); r({ frames, rebuilds: e.info().rebuilds - r0 }); }, 2000); }));
+  const dayColor = await colour("off");
+  await cam(true, 14.5); await page.evaluate(idle);
+  const far = await info();
+  await cam(false, 17); await page.evaluate(idle);
+  const f0 = (await info()).frames;
+  await page.evaluate(() => window.__app.map.redraw());
+  const d2 = await info();
+  await cam(true, 17); await page.evaluate(idle);
+  await until(page, () => window.__app.edges.info().drawn > 0, null, 30000);
+  const nightColor = await colour("on"); const dayAgain = await colour("off");
+  await page.evaluate(() => document.querySelector('input[data-layer="buildings"]').click());   // buildings off: no lines floating where they were
+  const noBld = await info();
+  await page.evaluate(() => document.querySelector('input[data-layer="buildings"]').click());
+  const back = await info();
+  await page.evaluate(() => window.__app.map.fire("webglcontextlost"));   // what the map hears when a phone takes its graphics memory back
+  const lost = await page.evaluate(() => ({ error: window.__app.edges.info().error, warns: window.__warns.filter((w) => /^3D edges: WebGL drawing stopped/.test(w)).length }));
+  const ok = d3.drawn > 0 && d3.lines > 0 && d3.lines <= d3.max && !d3.error && d3.webgl >= 1 && d3.vis === "visible" && quiet.rebuilds === 0 && quiet.frames < 20
+    && closeTo(dayColor, EDGES_DAY) && far.drawn === 0 && d2.vis === "none" && d2.frames === f0
+    && closeTo(nightColor, EDGES_NIGHT) && closeTo(dayAgain, EDGES_DAY) && noBld.vis === "none" && back.vis === "visible"
+    && /context lost/.test(lost.error || "") && lost.warns === 1;
+  return { ok, d3, quiet, far, d2, dayColor, nightColor, noBld, back, lost };
+}, { width: 1000, height: 700 });
+
+await run("3D edges: on a hill the lines sit on the buildings (lifted by the ground's height, as MapLibre lifts them), not on the flat map", APP, async (page) => {
+  await page.evaluate(treeHelpers); await page.evaluate(edgeHelpers);
+  await page.evaluate(([c]) => { const a = window.__app; a.set3d(true, false); a.map.jumpTo({ center: c, zoom: 17, pitch: 60, bearing: 0 }); }, [UDEM]);
+  await until(page, () => window.__app.edges.info().drawn > 0 && window.__app.edges.info().elevMax > 20 && window.__app.map.loaded(), null, 60000);
+  await page.evaluate(idle);
+  const box = [0, 0, 1000, 700];
+  const ground = await page.evaluate(() => { const m = window.__app.map, e = window.__app.edges.info(), q = m.queryTerrainElevation(m.getCenter());
+    return { terrain: !!m.getTerrain(), elevMin: e.elevMin, elevMax: e.elevMax, centre: q === null ? null : +q.toFixed(1) }; });
+  const on = await page.evaluate((b) => __ed.near(b), box);
+  // control: the same lines without the lift (as if the ground were flat) lie 100 m under this hill: the ground hides nearly all of them
+  // (and the ground heights used are the terrain's: a sample of buildings against map.queryTerrainElevation)
+  const used = await page.evaluate(() => { const m = window.__app.map, ll = new maplibregl.LngLat(0, 0); let worst = 0, n = 0;
+    for (const t of window.__app.edges.tiles.values()) for (let i = 0; i < t.nb; i += 7) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; worst = Math.max(worst, Math.abs(t.elev[i] - m.queryTerrainElevation(ll))); n++; }
+    return { n, worst: +worst.toFixed(2) }; });
+  await page.evaluate(() => { const e = window.__app.edges; for (const t of e.tiles.values()) t.elev.fill(0); e.pending = e.pack(); window.__app.map.triggerRepaint(); });
+  await page.evaluate(idle);
+  const flat = await page.evaluate((b) => __ed.near(b), box);
+  const ok = ground.terrain && ground.elevMax - ground.elevMin > 5 && ground.centre !== null && ground.centre >= ground.elevMin - 3 && ground.centre <= ground.elevMax + 3
+    && on.lines > 300 && on.buildings > 3000 && on.near > 0.9
+    && used.n > 50 && used.worst < 4 && flat.buildings > 3000 && flat.lines < 0.1 * on.lines;
+  return { ok, ground, used, on, flat };
+}, { width: 1000, height: 700 });
+
+await run("3D edges: a shader that fails stops them quietly (one warning, no error), the buildings and trees carry on", APP, async (page, ctx) => {
+  await ctx.addInitScript(() => {
+    for (const GL of [window.WebGLRenderingContext, window.WebGL2RenderingContext].filter(Boolean)) {
+      const source = GL.prototype.shaderSource, param = GL.prototype.getShaderParameter, ours = new WeakSet();
+      GL.prototype.shaderSource = function (s, text) { if (/u_edgecolor/.test(text)) ours.add(s); return source.call(this, s, text); };
+      GL.prototype.getShaderParameter = function (s, p) { return ours.has(s) && p === this.COMPILE_STATUS ? false : param.call(this, s, p); };
+    }
+  });
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(treeHelpers);
+  await page.evaluate(([c]) => { const a = window.__app; a.set3d(true, false); a.map.jumpTo({ center: c, zoom: 17, pitch: 60, bearing: 0 }); }, [UDEM]);
+  await until(page, () => !!window.__app.edges.info().error, null, 30000);
+  await page.evaluate(idle);
+  await page.evaluate(() => { window.__app.map.redraw(); window.__app.map.redraw(); });
+  await page.waitForTimeout(500);
+  const out = await page.evaluate(() => { const m = window.__app.map, e = window.__app.edges.info();
+    return { error: e.error, drawn: e.drawn, warns: window.__warns.filter((w) => /^3D edges: WebGL drawing stopped/.test(w)).length, bld: m.getLayoutProperty("bld-3d", "visibility"),
+      treesGL: window.__app.state.treesGL, trees: window.__app.trees.info().drawn, buildings: m.queryRenderedFeatures({ layers: ["bld-3d"] }).length }; });
+  const ok = /^edge shader/.test(out.error || "") && out.drawn === 0 && out.warns === 1 && out.bld === "visible" && out.buildings > 0 && out.treesGL;
+  return { ok, out };
+}, { width: 1000, height: 700 });
+
 await browser.close();
 if (webkitBrowser) await webkitBrowser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----
