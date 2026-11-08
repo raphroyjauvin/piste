@@ -3083,7 +3083,7 @@ await run("3D edges: on a hill the lines sit on the buildings (lifted by the gro
   // 2026-11-07: judged on 95 % of the buildings: where the map holds a coarser terrain tile than the one sampled (GitHub's runner, saved
   // terrain), a few heights differ; whether the lines sit on the drawn buildings is the "near" check below
   const used = await page.evaluate(() => { const m = window.__app.map, ll = new maplibregl.LngLat(0, 0), d = [];
-    for (const t of window.__app.edges.tiles.values()) for (let i = 0; i < t.nb; i += 7) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; d.push(Math.abs(t.elev[i] - m.queryTerrainElevation(ll))); }
+    for (const t of window.__app.edges.tiles.values()) for (let i = 0; i < t.nb; i += 7) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; d.push(Math.abs(t.elev[i] * m.terrain.exaggeration - m.queryTerrainElevation(ll))); }
     d.sort((a, b) => a - b);
     return { n: d.length, p95: +(d[Math.floor(d.length * 0.95)] || 0).toFixed(2), worst: +(d[d.length - 1] || 0).toFixed(2) }; });
   await page.evaluate(() => { const e = window.__app.edges; for (const t of e.tiles.values()) t.elev.fill(0); e.pending = e.pack(); window.__app.map.triggerRepaint(); });
@@ -3093,6 +3093,29 @@ await run("3D edges: on a hill the lines sit on the buildings (lifted by the gro
     && on.lines > 300 && on.buildings > 3000 && on.near > 0.9
     && used.n > 50 && used.p95 < 4 && flat.buildings > 3000 && flat.lines < 0.1 * on.lines;
   return { ok, ground, used, on, flat };
+}, { width: 1000, height: 700 });
+
+// ---- 2026-11-08: the ride camera raises the terrain's exaggeration as a climb comes up (map.terrain.exaggeration, no event). Trees and edge lines keep
+// the ground's true height and apply the exaggeration every frame, so they stay on the ground instead of floating (or sinking) while it changes ----
+await run("3D trees and edges stay on the ground while the terrain's exaggeration changes (the ride camera's hill boost)", APP, async (page) => {
+  await page.evaluate(treeHelpers); await page.evaluate(edgeHelpers);
+  await page.evaluate(([c]) => { const a = window.__app; a.set3d(true, false); a.map.jumpTo({ center: c, zoom: 17, pitch: 60, bearing: 0 }); }, [UDEM]);
+  await until(page, () => window.__app.edges.info().drawn > 0 && window.__app.trees.info().drawn > 0 && window.__app.map.loaded(), null, 60000);
+  await page.evaluate(idle);
+  // how far the stored ground heights are from the terrain as drawn now (p95 over trees and over buildings), in metres
+  const gap = () => page.evaluate(() => { const m = window.__app.map, ll = new maplibregl.LngLat(0, 0), ex = m.terrain.exaggeration;
+    const p95 = (layer, key) => { const d = []; for (const t of layer.tiles.values()) for (let i = 0; i < t[key]; i += 9) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; d.push(Math.abs(t.elev[i] * ex - m.queryTerrainElevation(ll))); }
+      d.sort((a, b) => a - b); return { n: d.length, p95: +(d[Math.floor(d.length * 0.95)] || 0).toFixed(2) }; };
+    return { ex, trees: p95(window.__app.trees, "n"), edges: p95(window.__app.edges, "nb") }; });
+  const before = await gap();
+  const boosted = await page.evaluate(() => { window.__app.map.terrain.exaggeration = 2.5; window.__app.map.triggerRepaint(); });
+  await page.evaluate(idle);
+  const after = await gap();
+  // and what is drawn: with the exaggeration up, the lines still lie on the buildings
+  const near = await page.evaluate(() => __ed.near([0, 0, 1000, 700]));
+  const ok = before.trees.n > 100 && before.edges.n > 50 && after.ex === 2.5 && before.trees.p95 < 5 && after.trees.p95 < 5 && before.edges.p95 < 5 && after.edges.p95 < 5
+    && near.lines > 300 && near.buildings > 3000 && near.near > 0.9;
+  return { ok, before, after, near };
 }, { width: 1000, height: 700 });
 
 await run("3D edges: a shader that fails stops them quietly (one warning, no error), the buildings and trees carry on", APP, async (page, ctx) => {
