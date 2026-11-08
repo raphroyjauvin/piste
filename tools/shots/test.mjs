@@ -2005,7 +2005,7 @@ const creditsProbe = () => { const q = (s) => document.querySelector(s), btn = q
     nearRight: map.right - b.right <= 24, nearBottom: map.bottom - b.bottom <= 24, aboveSheet: phone ? pr.top - b.bottom >= 0 && pr.top - b.bottom <= 30 : null, open: q(".maplibregl-ctrl-attrib").classList.contains("maplibregl-compact-show"),
     icon: getComputedStyle(btn).backgroundImage, text: q(".maplibregl-ctrl-attrib-inner").textContent, zoomAbove: zoom && getComputedStyle(zoom).display !== "none" ? zoom.getBoundingClientRect().bottom <= b.top + 0.5 : null,
     tap44: [[-21, -21], [21, -21], [-21, 21], [21, 21]].every(([dx, dy]) => hit(cx + dx, cy + dy)), shown: getComputedStyle(q(".maplibregl-ctrl-bottom-right")).display !== "none", panelTop: Math.round(pr.top) }; };
-const creditsText = (t) => /Ville de Montréal/.test(t) && /CC BY 4\.0/.test(t) && /OpenStreetMap/.test(t) && /OpenFreeMap/.test(t) && /© 2026 Piste Montréal/.test(t) && /NRCan/.test(t) && /STM/.test(t) && /BIXI/.test(t) && /Open-Meteo/.test(t) && !/ECCC/.test(t);
+const creditsText = (t) => /OpenStreetMap/.test(t) && /OpenMapTiles/.test(t) && /OpenFreeMap/.test(t) && !/Ville de Montréal|BIXI|Open-Meteo|NRCan|Piste Montréal/.test(t);   // 2026-11-08: the "i" holds only what the licences require; About & terms names every source
 await run("map credits: the i sits bottom right, opens leftwards, becomes an x (desktop)", `${APP}?trip=montroyal`, async (page) => {
   const closed = await page.evaluate(creditsProbe);
   await page.click(".maplibregl-ctrl-attrib-button"); await page.waitForTimeout(400);

@@ -129,13 +129,12 @@
       layers: [{ id: "background", type: "background", paint: { "background-color": PAPER } }] };
     toast(t("offline"));
   }
-  // The "i" lists every data source (with About & terms). The basemap adds "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" itself;
-  // without it (offline), our own OpenStreetMap layers (places, buildings, paths) still need their credit.
+  // 2026-11-08: the "i" holds only what the map's licences require on the map itself: the basemap's own line ("OpenFreeMap © OpenMapTiles
+  // Data from OpenStreetMap"), or, offline, OpenStreetMap's credit for our own OpenStreetMap layers. Every source is credited in About & terms.
   const basemapCredit = !!style.sources.openmaptiles;
   const map = new maplibregl.Map({
     container: "map", style, center: [-73.585, 45.522], zoom: 12.8, maxPitch: 80,
-    attributionControl: { compact: true, customAttribution: "© 2026 Piste Montréal · Ville de Montréal (CC BY 4.0) · NRCan HRDEM 2023 + 2024 · Canopée 2019 · STM · REM (OpenStreetMap) · BIXI · Open-Meteo"
-      + (basemapCredit ? "" : " · © OpenStreetMap contributors") },
+    attributionControl: { compact: true, ...(basemapCredit ? {} : { customAttribution: "© OpenStreetMap contributors" }) },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
