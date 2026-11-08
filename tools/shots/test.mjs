@@ -3184,6 +3184,38 @@ await run("3D trees and edges stay on the ground while the terrain's exaggeratio
   return { ok, before, after, near };
 }, { width: 1000, height: 700 });
 
+// ---- 2026-11-08: lines behind a wall must not show through it. The depth nudge that keeps a line from losing to its own wall used to be a fixed
+// clip-space amount, worth metres at distance (the ride camera: pitch 70, far away), so lines a few metres behind a wall or roof passed the depth test ----
+await run("3D edges: a line a few metres behind a wall stays hidden in the ride camera (pitch 70, zoom 17.4); one in front of it shows", APP, async (page) => {
+  await page.evaluate(treeHelpers); await page.evaluate(edgeHelpers);
+  const C = [-73.58, 45.52];   // open ground for the test: a made-up slab 60 m wide, 3 m deep and 20 m tall, and two made-up corner lines
+  await page.evaluate((c) => { const a = window.__app; a.set3d(true, false); document.querySelector('input[data-layer="terrain"]').click();   // flat ground
+    a.map.setLayoutProperty("bld-3d", "visibility", "none"); a.map.jumpTo({ center: c, zoom: 17.4, pitch: 70, bearing: 0 }); }, C);
+  await until(page, () => window.__app.edges.info().drawn > 0 && window.__app.map.loaded(), null, 60000);
+  await page.evaluate(idle);
+  const out = await page.evaluate(() => {
+    const m = window.__app.map, e = window.__app.edges, c = m.getCenter(), O = maplibregl.MercatorCoordinate.fromLngLat(c, 0), k = O.meterInMercatorCoordinateUnits();
+    const at = (dx, dy) => new maplibregl.MercatorCoordinate(O.x + dx * k, O.y + dy * k, 0);   // metres east and south of the centre
+    const ring = [[-30, -1.5], [30, -1.5], [30, 1.5], [-30, 1.5], [-30, -1.5]].map(([x, y]) => at(x, y).toLngLat().toArray());
+    m.addSource("t-slab", { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } } });
+    m.addLayer({ id: "t-slab", type: "fill-extrusion", source: "t-slab", paint: { "fill-extrusion-color": "#ffffff", "fill-extrusion-height": 20, "fill-extrusion-opacity": 1 } }, "edges-gl");
+    // two vertical lines, from 2 m to 18 m up: one 2 m inside the slab, behind its near wall (hidden), one 4 m in front of the wall (shown)
+    const spots = [at(0, -0.5), at(15, 4)], n = spots.length;
+    const tile = { key: "15/0/0", z: 15, x: 0, y: 0, raw: n, n, nb: n, lines: n, seg: new Float64Array(n * 4), kind: new Uint8Array(n).fill(1), bld: Uint32Array.from([0, 1]),
+      h: new Float32Array(n).fill(18), lng: new Float64Array(n).fill(c.lng), lat: new Float64Array(n).fill(c.lat), elev: new Float32Array(n), elevFor: "flat" };
+    spots.forEach((q, i) => { tile.seg[i * 4] = q.x; tile.seg[i * 4 + 1] = q.y; });
+    clearTimeout(e.timer); e.timer = 1;   // the layer must not rebuild from the map's tiles now: it draws only these
+    e.tiles = new Map([[tile.key, tile]]); e.pending = e.pack(); m.redraw(); m.redraw();
+    // where each line's middle (9 m up) is on screen, from the matrix the layer drew with
+    const [ox, oy, kk] = e.origin, M = e.matrix, W = m.getCanvas().clientWidth, H = m.getCanvas().clientHeight;
+    const screen = (q) => { const x = (q.x - ox) / kk, y = (q.y - oy) / kk, z = 9 * m.terrain?.exaggeration || 9; const cx = M[0] * x + M[4] * y + M[8] * z + M[12], cy = M[1] * x + M[5] * y + M[9] * z + M[13], cw = M[3] * x + M[7] * y + M[11] * z + M[15];
+      return { x: Math.round((cx / cw + 1) / 2 * W), y: Math.round((1 - cy / cw) / 2 * H) }; };
+    const hits = (p) => __ed.added([p.x - 3, p.y - 3, 7, 7], "edges-gl").mask.reduce((s, v) => s + v, 0);
+    return { hidden: hits(screen(spots[0])), shown: hits(screen(spots[1])), pts: spots.map(screen), lines: e.count };
+  });
+  return { ok: out.lines === 2 && out.hidden === 0 && out.shown >= 3, out };
+}, { width: 1000, height: 700 });
+
 await run("3D edges: a shader that fails stops them quietly (one warning, no error), the buildings and trees carry on", APP, async (page, ctx) => {
   await ctx.addInitScript(() => {
     for (const GL of [window.WebGLRenderingContext, window.WebGL2RenderingContext].filter(Boolean)) {
