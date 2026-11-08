@@ -2899,7 +2899,7 @@ await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall,
       edges: beforeFall.names[0] === summer.names[0] && afterFall.names[0] === summer.names[0] && firstFall.names[0] === fall.names[0] && lastFall.names[0] === fall.names[0],
       layout: ["icon-anchor", "icon-pitch-alignment", "icon-rotation-alignment", "symbol-z-order"].map((k) => m.getLayoutProperty("trees", k)) };
   });
-  // what the WebGL trees actually draw over the middle of the map: green in summer, warmer in fall, sparse bare branches in winter, dark at night
+  // what the WebGL trees actually draw over the middle of the map: green in summer, warmer in fall, sparser navy branches in winter, dark at night
   const colour = async (setup, settle) => {   // settle: wait for the map to finish changing (the camera, colour transitions) first
     await page.evaluate(setup);
     if (settle) { await cam(true, 16.2); await page.evaluate(idle); await drawn(); }
@@ -2913,7 +2913,7 @@ await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall,
   const lum = (p) => p.rgb[0] + p.rgb[1] + p.rgb[2];
   const px = { summer: summerPx, fall: fallPx, winter: winterPx, night: nightPx,
     summerGreen: summerPx.share > 0.2 && summerPx.rgb[1] > summerPx.rgb[0] && summerPx.rgb[1] > summerPx.rgb[2], fallWarm: fallPx.share > 0.2 && fallPx.rgb[0] > fallPx.rgb[1] + 15,
-    winterBare: winterPx.share > 0.03 && winterPx.share < 0.6 * summerPx.share, nightDark: nightPx.share > 0.2 && lum(nightPx) < 0.6 * lum(summerPx) };
+    winterBare: winterPx.share > 0.03 && winterPx.share < 0.9 * summerPx.share && winterPx.rgb[2] > winterPx.rgb[0] && winterPx.rgb[2] > winterPx.rgb[1],   // 2026-11-07: leafless, drawn in navy lines with snow nightDark: nightPx.share > 0.2 && lum(nightPx) < 0.6 * lum(summerPx) };
   const tileOk = await page.evaluate(async () => {   // a sample tile straight from the PMTiles file
     const p = new pmtiles.PMTiles(new URL("../shared/tiles/trees.pmtiles", location.href).href), t = await p.getZxy(15, 9685, 11722);
     return { header: (await p.getHeader()).maxZoom, bytes: t ? t.data.byteLength : 0 };
