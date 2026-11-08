@@ -10,25 +10,24 @@
   const TIER_SHORT = ["Protected", "Painted", "Shared", "Quiet street", "Busy street", "Closed"];
 
   // ---------------------------------------------------------------- POI catalogue
-  // glyphs are drawn white on a coloured disc, 24x24 viewBox, stroke-based (abstract, not brand logos)
+  // glyphs: 24x24 viewBox, stroke-based (abstract, not brand logos), on chamfered clear-line badges (2026-11-08)
   const G = {
-    bike: '<circle cx="6.6" cy="15.6" r="3.4"/><circle cx="17.4" cy="15.6" r="3.4"/><path d="M6.6 15.6 9.4 9.4h5.6l2.4 6.2M9.4 9.4l3 6.2H6.6M13.8 7h2.6"/>',
-    metro: '<path d="M6.5 17.5V7l5.5 6.5L17.5 7v10.5"/>',
-    cup: '<path d="M5.5 10h11v3.5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5zM16.5 11.2h1.2a2.4 2.4 0 0 1 0 4.8h-1.4M8.6 4.4c-.8 1 .8 1.8 0 3M12.2 4.4c-.8 1 .8 1.8 0 3"/>',
-    fork: '<path d="M8 3.5v6.5a2 2 0 0 1-2 2M8 3.5v17M5.5 3.5v5M10.5 3.5v5M16.5 20.5v-17c-2 1.4-3 4.2-3 7.4h3"/>',
-    bread: '<path d="M4.5 13.5a7.5 5 0 0 1 15 0v4.5h-15zM8.5 10.5l1 2.6M12 9.6v3.2M15.5 10.5l-1 2.6"/>',
-    cone: '<path d="M7.5 10a4.5 4.5 0 0 1 9 0zM7.5 10 12 20.5 16.5 10"/>',
-    glass: '<path d="M6 4.5h12l-6 7.5zM12 12v7M8.5 20h7"/>',
-    drop: '<path d="M12 3.6s5.8 6.6 5.8 10.6a5.8 5.8 0 0 1-11.6 0C6.2 10.2 12 3.6 12 3.6z"/>',
-    wrench: '<path d="M14.6 5.2a4.2 4.2 0 0 0-5.2 5.4L4.2 15.8l4 4 5.2-5.2a4.2 4.2 0 0 0 5.4-5.2l-2.7 2.7-2.5-.6-.6-2.5z"/>',
-    rack: '<path d="M7.5 20V10.5a4.5 4.5 0 0 1 9 0V20M4.5 20h15"/>',
-    wc: '<path d="M4 7.5l1.6 9 2-6 2 6 1.6-9M19.8 8.6a3.6 3.6 0 1 0 0 6.8"/>',
+    bike: '<circle cx="6.6" cy="15.6" r="3.3"/><circle cx="17.4" cy="15.6" r="3.3"/><path d="M6.6 15.6 9.4 9.4h5.6l2.4 6.2M9.4 9.4l3 6.2H6.6M13.8 7h2.6"/>',
+    cup: '<path d="M5 10h11.5v3.5l-3 5h-5.5l-3-5zM16.5 11.4h1.6v3.4h-2M8.6 4.2v3M12.2 4.2v3"/>',
+    fork: '<path d="M8 3.5v7.5H5.5V3.5M8 3.5v17M10.5 3.5V11H8M16.5 20.5v-17l-3 6.5v1.5h3"/>',
+    bread: '<path d="M4.5 18v-4.2l3.2-4.8h8.6l3.2 4.8V18zM9 10.5l1.4 2.8M13.6 10.5 15 13.3"/>',
+    cone: '<path d="M7.2 10.5h9.6L12 20.5zM7.2 10.5V8l2.4-3.2h4.8L16.8 8v2.5"/>',
+    glass: '<path d="M5.5 4.5h13L12 12zM12 12v7.5M8 20h8"/>',
+    drop: '<path d="M12 3.6l5.6 7.6v3.4L14.5 19h-5l-3.1-4.4v-3.4z"/>',
+    wrench: '<path d="M14.8 4.8l-2.6 2.6.9 3.5 3.5.9 2.6-2.6a4.4 4.4 0 0 1-4.9-4.4zM11.6 10.6 4.4 17.8l1.8 1.8 7.2-7.2"/>',
+    rack: '<path d="M7.5 20V10.5l2.2-3.6h4.6l2.2 3.6V20M4.5 20h15"/>',
+    wc: '<path d="M4 7.5l1.6 9 2-6 2 6 1.6-9M19.8 8.6h-3.4v6.8h3.4"/>',
     tree: '<path d="M12 3.5l5.6 8.2h-2.9l3.8 5.6H5.5l3.8-5.6H6.4zM12 17.3v3.4"/>',
     peak: '<path d="M3.5 19 9.3 9.8l3.9 5.4 2.6-3.2 4.7 7z"/>',
     columns: '<path d="M4.5 9.2h15L12 4.5zM6.8 10.6v7M10.3 10.6v7M13.7 10.6v7M17.2 10.6v7M4.5 19.5h15"/>',
     basket: '<path d="M5 10.5h14l-2 8.5H7zM9 10.5l3-5 3 5"/>',
-    works: '<path d="M10 4.5h4l4 13.5H6zM8.2 11.2h7.6M5 19.8h14"/>',
-    bag: '<path d="M5.5 8.5h13l-1.2 11.5H6.7zM9 10.5V7.3a3 3 0 0 1 6 0v3.2"/>',
+    bag: '<path d="M5.5 8.5h13l-1.2 11.5H6.7zM9 10.5V7.3l1.6-1.8h2.8L15 7.3v3.2"/>',
+    cone2: '<path d="M10.2 5h3.6l4.2 14H6zM8.3 11.6h7.4M7 15.4h10M4.5 19.5h15"/>',
   };
   const POI_KINDS = {
     bixi: { label: "BIXI station", fr: "Station BIXI", color: "#EE3124", glyph: "bike", minzoom: 15.6, group: "bike" },
@@ -61,14 +60,34 @@
     return (lines && lines.length ? lines : ["2"]).map((l) => cols[l] || "#888");
   }
 
-  // Metro and BIXI echo the real signs without copying them: our own drawings, using only the familiar colour and idea.
+  // Clear-line badges (2026-11-08): navy outline, flat palette fills, mitred joins, chamfered corners. Category = shape + colour: chamfered square = bike
+  // things, hexagon = food and shops, diagonal-cut plate = outdoors and culture, triangle = works, wide plate = REM. Metro keeps its round sign.
+  const PAL = { paperW: "#fffdf8", navy: "#1e2160", navy2: "#3d43a8", amber: "#ffb000", teal: "#8fcfbd", sky: "#8fd0ea", purple: "#9a1fa6", red: "#e5333a" };
+  const INK = "#1e2160", PAPER_W = "#fffdf8", SW = 1.3;
+  const K = {   // shape, fill, glyph, glyph colour
+    bixi: ["sq", PAL.red, "bike", PAL.paperW], bikeshop: ["sq", PAL.navy2, "bike", PAL.paperW], repair: ["sq", PAL.navy2, "wrench", PAL.paperW],
+    parking: ["sq", PAL.navy2, "rack", PAL.paperW], water: ["sq", PAL.sky, "drop", PAL.navy], toilets: ["sq", PAL.paperW, "wc", PAL.navy],
+    cafe: ["hex", PAL.amber, "cup", PAL.navy], food: ["hex", PAL.amber, "fork", PAL.navy], bakery: ["hex", PAL.amber, "bread", PAL.navy],
+    icecream: ["hex", PAL.amber, "cone", PAL.navy], bar: ["hex", PAL.amber, "glass", PAL.navy], market: ["hex", PAL.amber, "basket", PAL.navy],
+    shop: ["hex", PAL.paperW, "bag", PAL.navy], park: ["plate", PAL.teal, "tree", PAL.navy], viewpoint: ["plate", PAL.teal, "peak", PAL.navy],
+    culture: ["plate", PAL.purple, "columns", PAL.paperW], works: ["tri", PAL.amber, "cone2", PAL.navy],
+  };
+  const pts = (a) => a.map((p) => p.join(",")).join(" ");
+  const SHAPE = {
+    sq: pts([[5.2, 1.2], [18.8, 1.2], [22.8, 5.2], [22.8, 18.8], [18.8, 22.8], [5.2, 22.8], [1.2, 18.8], [1.2, 5.2]]),
+    hex: pts([[7.6, 1.4], [16.4, 1.4], [22.8, 12], [16.4, 22.6], [7.6, 22.6], [1.2, 12]]),
+    plate: pts([[6.4, 1.2], [22.8, 1.2], [22.8, 17.6], [17.6, 22.8], [1.2, 22.8], [1.2, 6.4]]),
+    tri: pts([[12, 1.4], [22.9, 20.4], [21.4, 22.8], [2.6, 22.8], [1.1, 20.4]]),
+  };
+  const wrap = (size, body) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">${body}</svg>`;
+  const poly = (p, fill) => `<polygon points="${p}" fill="${fill}" stroke="${PAL.navy}" stroke-width="${SW}" stroke-linejoin="miter" stroke-miterlimit="4"/>`;
+  const glyph = (name, col, sc, dy) => `<g transform="translate(12 ${12 + (dy || 0)}) scale(${sc}) translate(-12 -12)" fill="none" stroke="${col}" stroke-width="2.2" stroke-linecap="square" stroke-linejoin="miter">${G[name]}</g>`;
+  function octagon(r, cx, cy, ch) { const a = r - ch; return [[cx - a, cy - r], [cx + a, cy - r], [cx + r, cy - a], [cx + r, cy + a], [cx + a, cy + r], [cx - a, cy + r], [cx - r, cy + a], [cx - r, cy - a]]; }
+
   const METRO_SIGN_BLUE = "#0072B2";
   function iconSVG(kind, opts = {}) {
-    const k = POI_KINDS[kind] || POI_KINDS.park;
     const size = opts.size || 56;
-    const ring = opts.ring || "#FFFFFF";
     const wrap = (body) => `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">${body}</svg>`;
-    const glyph = (stroke) => `<g transform="translate(12 12) scale(0.62) translate(-12 -12)" fill="none" stroke="${stroke}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">${G[k.glyph]}</g>`;
     if (kind === "metro") {
       // like the métro entrance sign (white down-arrow on a blue disc); the outer ring shows the lines serving the station
       const cols = metroRing(opts.lines), n = cols.length;
@@ -84,15 +103,18 @@
       return wrap(s);
     }
     if (kind === "rem") {
-      // the REM's green on a rounded badge with a plain "REM" wordmark: our own drawing, not their logo
-      return wrap(`<rect x="0.8" y="4.8" width="22.4" height="14.4" rx="4.4" fill="${k.color}" stroke="${ring}" stroke-width="1.6"/>` +
-        `<text x="12" y="15.2" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="8.6" font-weight="800" letter-spacing=".3" fill="#1c2a00">REM</text>`);
+      return wrap(`<polygon points="${pts([[4.2, 4.6], [19.8, 4.6], [22.8, 7.6], [22.8, 16.4], [19.8, 19.4], [4.2, 19.4], [1.2, 16.4], [1.2, 7.6]])}" fill="${POI_KINDS.rem.color}" stroke="${INK}" stroke-width="${SW}" stroke-linejoin="miter"/>` +
+        `<text x="12" y="15.3" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="7.4" font-weight="800" letter-spacing=".2" fill="${INK}">REM</text>`);
     }
-    if (kind === "bixi") {
-      // BIXI red on a rounded-square tag, with a plain bike (not their wordmark)
-      return wrap(`<rect x="1.2" y="1.2" width="21.6" height="21.6" rx="5.8" fill="${k.color}" stroke="${ring}" stroke-width="1.6"/>` + glyph("#FFFFFF"));
-    }
-    return wrap(`<circle cx="12" cy="12" r="11" fill="${k.color}" stroke="${ring}" stroke-width="1.6"/>` + glyph(k.dark ? "#1E1E1E" : "#FFFFFF"));
+    const k = K[kind] || K.park;
+    const dy = k[0] === "tri" ? 3 : 0, sc = k[0] === "tri" ? 0.5 : k[0] === "hex" ? 0.62 : 0.66;
+    return wrap(poly(SHAPE[k[0]], k[1]) + glyph(k[2], k[3], sc, dy));
+  }
+  function pillSVG(fill) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40" viewBox="0 0 64 40"><polygon points="${pts([[8, 2], [56, 2], [62, 8], [62, 32], [56, 38], [8, 38], [2, 32], [2, 8]])}" fill="${fill}" stroke="${INK}" stroke-width="2.2" stroke-linejoin="miter"/></svg>`;
+  }
+  function stopSVG(stroke, fill) {   // the ring under a stop's icon (night: periwinkle stroke on ink)
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><polygon points="${pts(octagon(15, 18, 18, 5))}" fill="${fill || PAL.paperW}" fill-opacity=".95" stroke="${stroke || PAL.navy2}" stroke-width="2.5" stroke-linejoin="miter"/></svg>`;
   }
 
   function svgToImage(svg) {
@@ -1113,7 +1135,7 @@
     return I.t("gapVoice", { d, m, on, busy: g.busy ? I.t("gapVoiceBusy") : "" });
   }
 
-  window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
+  window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, pillSVG, stopSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
     cleanProfile, hills, gradeColor, gradeProfileSVG, STEEP, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, sliceRoute, tailRoute, rotateRoute, joinRoutes, JOIN, planJoin, voice, audioSession, gapSentence, buildCursor, distM,

@@ -775,6 +775,28 @@ await run("French", `${APP}?trip=montroyal&lang=fr`, async (page) => page.evalua
   return { ok: tab === "Itinéraire" && /sur pistes cyclables/.test(pct) && /(Tournez|Continuez|Partez|Légèrement|Virage)/.test(turn) && tabEn === "Go somewhere", tab, pct, turn, tabEn };
 }));
 
+// ---- map icons (2026-11-08): clear-line badges (polygons, navy outline), round metro signs, the old teardrop pins, new BIXI badge and stop ring ----
+await run("map icons: clear-line poi badges, round metro, pins unchanged, bixi badge and stop ring", `${APP}?welcome=0`, async (page) => page.evaluate(async () => {
+  const C = window.BikeCommon, map = window.__app.map, kinds = Object.keys(C.POI_KINDS).filter((k) => k !== "metro");
+  const svg = Object.fromEntries(kinds.map((k) => [k, C.iconSVG(k, { size: 56 })]));
+  const body = (s) => s.replace(/^<svg[^>]*>/, "");
+  // every non-metro badge starts with a polygon (no circle disc / rounded rect behind it) and carries the navy outline
+  const sharp = kinds.every((k) => /^<polygon /.test(body(svg[k])) && svg[k].includes('stroke="#1e2160"') && !/<rect[^>]* rx=/.test(svg[k]));
+  const distinct = new Set(kinds.map((k) => svg[k])).size === kinds.length;
+  const metro = ["2", "12", "1245"].map((l) => C.iconSVG("metro", { size: 64, lines: l.split("") }));
+  const metroRound = metro.every((m) => /<circle cx="12" cy="12" r="11.9"/.test(m) && m.includes('r="8.3"') && !m.includes("<polygon"));
+  // the map knows the new pictures
+  const sizes = {};
+  for (const id of ["poi-cafe", "poi-bixi", "poi-works", "poi-rem", "badge-ok", "badge-low", "badge-empty", "badge-off", "stop-ring", "stop-ring-night"]) sizes[id] = map.hasImage(id);
+  const stopsLayer = map.getLayer("stops");
+  // pins: the same teardrop paths as before
+  window.piste.setPoint("from", [-73.5822, 45.5247], "A"); window.piste.setPoint("to", [-73.57, 45.52], "B");
+  await new Promise((r) => setTimeout(r, 400));
+  const pins = [...document.querySelectorAll(".end-pin")].map((e) => e.innerHTML);
+  const pinsOk = pins.length === 2 && pins.every((h) => h.includes("a22 22 0 0 1 44 0") && !h.includes("<rect")) && pins[0].includes('fill="#1e2160"') && pins[1].includes('stroke="#1e2160"');
+  const ok = sharp && distinct && metroRound && Object.values(sizes).every(Boolean) && stopsLayer && stopsLayer.type === "symbol" && pinsOk;
+  return { ok, sharp, distinct, metroRound, sizes, stops: stopsLayer && stopsLayer.type, pinsOk, pinCount: pins.length };
+}));
 await run("2D ride: place icons stay pinned to the map (no shaking)", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
   const app = window.__app, m = app.map;
   app.startRide("topdown");

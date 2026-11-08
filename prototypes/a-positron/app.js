@@ -296,8 +296,9 @@
   add({ id: "ridden-line", type: "line", source: "ridden", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": COL.ridden, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 17, 6] } });
   // a ring under the stop's or sight's POI icon
-  add({ id: "stops", type: "circle", source: "stops",
-    paint: { "circle-radius": 7.5, "circle-color": "#ffffff", "circle-opacity": 0.95, "circle-stroke-color": COL.a, "circle-stroke-width": 2.5, "circle-pitch-alignment": "map" } });
+  // (2026-11-08: a chamfered octagon ring picture, "stop-ring" by day and "stop-ring-night" at night, drawn flat on the map like the old circle)
+  add({ id: "stops", type: "symbol", source: "stops",
+    layout: { "icon-image": "stop-ring", "icon-size": 1, "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-pitch-alignment": "map", "icon-rotation-alignment": "map" } });
   add({ id: "contour-labels", type: "symbol", source: "contours", "source-layer": "contours", minzoom: 13.5, filter: ["==", ["get", "i"], 1],
     layout: { "symbol-placement": "line", "text-field": ["concat", ["to-string", ["get", "e"]], " m"], "text-font": ["Noto Sans Regular"],
       "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, 10, 17, 12], "symbol-spacing": 360, "text-max-angle": 30, "text-padding": 2 },
@@ -305,9 +306,13 @@
 
   await C.addMapIcons(map);
   map.addImage("pill", pillImage("#fdf1e6", "#f3c29a"), { pixelRatio: 2, stretchX: [[20, 44]], stretchY: [[16, 24]], content: [14, 6, 50, 34] });
-  for (const [lvl, fill] of [["ok", "#1d6a2c"], ["low", "#c26b12"], ["empty", "#8a929a"], ["off", "#5a6168"]]) {
-    map.addImage("badge-" + lvl, pillImage(fill, "#ffffff"), { pixelRatio: 2, stretchX: [[20, 44]], stretchY: [[16, 24]], content: [14, 6, 50, 34] });
+  // the BIXI count badge: a chamfered navy-outlined plate, 64x40 at pixelRatio 2 (the same 9-slice as before)
+  const svgImageData = async (svg, w, h) => { const img = await C.svgToImage(svg), c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d"); x.drawImage(img, 0, 0, w, h); return x.getImageData(0, 0, w, h); };
+  for (const [lvl, fill] of [["ok", "#1d6a2c"], ["low", "#c26b12"], ["empty", "#6a6d8a"], ["off", "#44476a"]]) {
+    map.addImage("badge-" + lvl, await svgImageData(C.pillSVG(fill), 64, 40), { pixelRatio: 2, stretchX: [[20, 44]], stretchY: [[16, 24]], content: [14, 6, 50, 34] });
   }
+  map.addImage("stop-ring", await svgImageData(C.stopSVG(), 36, 36), { pixelRatio: 2 });
+  map.addImage("stop-ring-night", await svgImageData(C.stopSVG("#c9ccff", "#0f1626"), 36, 36), { pixelRatio: 2 });
   const POI_LAYERS = [];
   for (const [kind, k] of Object.entries(C.POI_KINDS)) {
     if (kind === "works") continue;
@@ -488,7 +493,7 @@
     ["route-ink", "line-color", NIGHT.land], ["route-solid", "line-color", ["match", ["get", "tier"], 0, COL_NIGHT.a, 1, COL_NIGHT.b, COL.gap]],
     ["route-shared", "line-color", COL_NIGHT.c], ["route-lead", "line-color", ["match", ["get", "tier"], 0, COL_NIGHT.a, 1, COL_NIGHT.b, 2, COL_NIGHT.c, 3, COL.gapQuiet, COL.gap]],
     ["ends", "circle-color", ["match", ["get", "k"], "from", COL_NIGHT.a, "#ffffff"]], ["ends", "circle-stroke-color", ["match", ["get", "k"], "from", "#ffffff", COL_NIGHT.a]],
-    ["stops", "circle-stroke-color", COL_NIGHT.a], ["stop-labels", "text-color", "#d6d9ff"], ["stop-labels", "text-halo-color", NIGHT.halo],
+    ["stop-labels", "text-color", "#d6d9ff"], ["stop-labels", "text-halo-color", NIGHT.halo],
     ...POI_LAYERS.flatMap((p) => [[p.id, "text-color", "#c9b28a"], [p.id, "text-halo-color", NIGHT.halo]]),
   ];
   // Summer, winter and night colours in one place: night wins, then winter, then the style's own colour (kept the first time we change it).
@@ -506,6 +511,7 @@
     const sky = state.night ? "#0f1626" : state.winter ? "#f3f5f8" : "#f4efe3";
     map.setSky({ "sky-color": sky, "horizon-color": sky, "fog-color": sky, "sky-horizon-blend": 0.7, "horizon-fog-blend": 0.9, "fog-ground-blend": 0.35, "atmosphere-blend": 0 });
     paintTrees();
+    if (map.getLayer("stops")) map.setLayoutProperty("stops", "icon-image", state.night ? "stop-ring-night" : "stop-ring");
     if (edgeLayer) edgeLayer.setColor(EDGE_COLORS[state.night ? "night" : "day"]);
   }
   // "Night map" in the Layers panel: Auto (between sunset and sunrise in Montréal, worked out here), On or Off; kept in localStorage "piste-night"
