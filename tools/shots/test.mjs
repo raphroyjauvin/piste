@@ -180,7 +180,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     metroToggle: !!document.querySelector('[data-layer="metro"]'), parksToggle: !!document.querySelector('[data-layer="pois-out"]'),
     buildingsInMap: document.querySelector('[data-layer="buildings"]').closest(".layers").querySelectorAll("h3").length === 2,
     label2d: document.querySelector("#view-label").textContent,
-    gapsOk: window.__app.state.routes.every((c) => [...document.querySelectorAll(".gap-item")].length === BikeCommon.mainGaps(window.__app.state.routes[window.__app.state.sel].r).length),
+    gapsOk: window.__app.state.routes.every((c) => [...document.querySelectorAll(".route-card .bar .seg.gap")].length === BikeCommon.mainGaps(window.__app.state.routes[window.__app.state.sel].r).length),
     chevLayer: !!window.__app.map.getLayer("climb-chev"),
     gapBoxes: !!window.__app.map.getLayer("gap-labels"),
     stopRadius: window.__app.map.getPaintProperty("stops", "circle-radius"),
@@ -1316,7 +1316,7 @@ await run("ride: the rider's pin is the plain blue pin of the start (no bike), a
     return { circles: svg.querySelectorAll("circle").length, groups: svg.querySelectorAll("g").length, paths: svg.querySelectorAll("path").length, sameAsStart: svg.innerHTML === start.innerHTML,
       fill: svg.querySelector("path").getAttribute("fill"), w: Math.round(r.width), h: Math.round(r.height), wheels: document.querySelectorAll('svg circle[r="6.5"]').length, cone: !!document.querySelector(".rider-cone svg circle") };
   });
-  const checks = { plainPin: pin.circles === 1 && pin.groups === 0 && pin.paths === 1 && pin.sameAsStart && pin.fill === "#0095E6", sized: pin.w === 46 && pin.h === 56, noWheels: pin.wheels === 0, coneKept: pin.cone };
+  const checks = { plainPin: pin.circles === 1 && pin.groups === 0 && pin.paths === 1 && pin.sameAsStart && pin.fill === "#1e2160", sized: pin.w === 46 && pin.h === 56, noWheels: pin.wheels === 0, coneKept: pin.cone };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), pin };
 });
@@ -2360,15 +2360,18 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
 // the climbs sentence (over 7 % and over 10 m), the elevation coloured by grade, the bike-path strip, the share; elevation told nowhere else
 const cardSnap = () => { const a = window.__app, C = window.BikeCommon, s = a.state, cards = [...document.querySelectorAll("#routes .route-card")];
   return { n: cards.length, routes: s.routes.length, sel: s.sel, cards: cards.map((el, i) => { const svg = el.querySelector(".rc-profile svg"), bar = el.querySelector(".bar"), r = s.routes[i] && s.routes[i].r;
-    const on = [...el.querySelectorAll(".bar i.on")].reduce((m, x) => m + parseFloat(x.style.width), 0);
+    const segs = [...el.querySelectorAll(".bar .seg")], grow = (x) => parseFloat(x.style.flexGrow) || 0;
+    const on = (segs.filter((x) => !x.classList.contains("gap")).reduce((m, x) => m + grow(x), 0) / Math.max(1, segs.reduce((m, x) => m + grow(x), 0))) * 100;
     const cs = el.getBoundingClientRect(), sv = svg && svg.getBoundingClientRect(), br = bar && bar.getBoundingClientRect();
     const colour = (q) => { const x = el.querySelector(q); return x && getComputedStyle(x).backgroundColor; };
     return { tag: el.tagName, sel: el.classList.contains("sel"), order: [...el.children].map((c) => c.className.split(" ")[0] || c.tagName).join(),
       title: el.querySelector(".rc-top b").textContent, time: el.querySelector(".rc-top .time").textContent, km: el.querySelector(".rc-km").textContent, climb: el.querySelector(".rc-climb").textContent,
       pct: el.querySelector(".rc-pct").textContent, label: svg && svg.getAttribute("aria-label"), role: svg && svg.getAttribute("role"), stops: svg ? [...svg.querySelectorAll("stop")].map((x) => x.getAttribute("stop-color")) : [],
-      onPct: on, offs: el.querySelectorAll(".bar i.off").length, onColour: colour(".bar i.on"), offColour: colour(".bar i.off"),
-      aligned: !!(sv && br) && Math.abs(sv.left - br.left) < 1 && Math.abs(sv.width - br.width) < 1 && br.top >= sv.bottom - 0.5 && br.top - sv.bottom < 6, inside: !!sv && sv.left >= cs.left && sv.right <= cs.right,
-      want: r && { km: C.fmtKm(r.length), time: C.fmtMin(C.rideMinutes(r)), share: r.infraShare, n: C.hills(r).list.length, m: Math.round(C.hills(r).total) } }; }),
+      onPct: on, offs: el.querySelectorAll(".bar .seg.gap").length, offColour: colour(".bar .seg.gap"),
+      onBg: (() => { const x = el.querySelector(".bar .seg:not(.gap)"); if (!x) return ""; const cs = getComputedStyle(x); return cs.backgroundColor + " " + cs.backgroundImage; })(),
+      aligned: !!(sv && br) && Math.abs(sv.left - br.left) < 1 && Math.abs(sv.width - br.width) < 1 && br.top - sv.bottom >= 8 && br.top - sv.bottom < 20, inside: !!sv && sv.left >= cs.left && sv.right <= cs.right,
+      want: r && { km: C.fmtKm(r.length), time: C.fmtMin(C.rideMinutes(r)), gapShare: C.mainGaps(r).reduce((m, g) => m + g.length, 0) / r.length, gaps: C.mainGaps(r).length,
+        n: C.hills(r).list.length, m: Math.round(C.hills(r).total) } }; }),
     detail: document.querySelector("#detail").textContent, detailSvg: !!document.querySelector("#detail svg[role=img]"), wide: document.querySelector("#panel").scrollWidth <= document.querySelector("#panel").clientWidth }; };
 await run("route card: one card that follows the slider and Avoid; climbs over 7 % and 10 m; elevation by grade; bike-path strip; Suggest and classics", `${APP}?from=-73.5817,45.5246&to=-73.6150,45.5035`, async (page) => {
   await until(page, () => window.__app.state.routes.length > 0 && !!document.querySelector("#routes .route-card"), null, 60000);
@@ -2384,7 +2387,12 @@ await run("route card: one card that follows the slider and Avoid; climbs over 7
       two: h([[0, 10], [100, 10], [150, 15], [400, 15], [440, 19.8], [600, 19.8]]),   // 10 % over 50 m, then 12 % over 40 m: two, the steeper is 12 %
       spike: h([[0, 30], [60, 30], [100, 22], [150, 30], [300, 30]]),   // one point 8 m low (a bridge in the ground model): no climb, nothing up
       colours: { flat: C.gradeColor(0) === C.gradeColor(-0.06) && C.gradeColor(0.01) === C.gradeColor(0), mid: C.gradeColor(0.045) !== C.gradeColor(0) && C.gradeColor(0.045) !== red,
-        red: C.gradeColor(0.071) === red && C.gradeColor(0.2) === red && C.gradeColor(0.069) !== red, muted: [0, 0.045, 0.08].map((g) => +sat(C.gradeColor(g)).toFixed(2)) },
+        red: C.gradeColor(0.071) === red && C.gradeColor(0.2) === red && C.gradeColor(0.069) !== red,
+        navy: (() => {   // 2026-11-07: one navy ramp, pale (flat) to deep (steep); no green, yellow or red (orange is "no bike path", right under it)
+          const hl = (rgb) => { const [r, g, b] = rgb.match(/\d+/g).map((v) => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+            return [d === 0 ? 0 : mx === b ? 60 * ((r - g) / d) + 240 : mx === g ? 60 * ((b - r) / d) + 120 : (60 * ((g - b) / d) + 360) % 360, (mx + mn) / 2]; };
+          const v = [0, 0.045, 0.08].map((g) => hl(C.gradeColor(g)));
+          return v.every(([h]) => h >= 225 && h <= 245) && v[0][1] > v[1][1] && v[1][1] > v[2][1]; })() },
       flatHasRed: flat.includes(red), flatLabel: /aria-label="Elevation profile"/.test(flat) };
   });
   const go = await page.evaluate(cardSnap);
@@ -2413,27 +2421,86 @@ await run("route card: one card that follows the slider and Avoid; climbs over 7
   const clName = await page.evaluate(() => window.__app.state.routes[0].title.raw);
   const cls = await page.evaluate(cardSnap);
   const sentence = /^(\d+ climbs?, \d+ m total\. Steepest climb is \d+% over \d+ m( on .+)?\.|No steep climbs, \d+ m total\.)$/;
-  const cardOk = (c) => c.order === "rc-top,rc-sub,rc-climb,rc-profile,bar,rc-pct" && sentence.test(c.climb) && c.km === c.want.km && c.time === c.want.time
+  const cardOk = (c) => c.order === `rc-top,rc-sub,rc-climb,rc-profile,bar,rc-under${c.tag === "DIV" ? ",rc-more" : ""}` && sentence.test(c.climb) && c.km === c.want.km && c.time === c.want.time
     && (c.want.n ? c.climb.startsWith(`${c.want.n} climb${c.want.n > 1 ? "s" : ""}, ${c.want.m} m total.`) : c.climb === `No steep climbs, ${c.want.m} m total.`)
-    && /^\d+% on bike paths$/.test(c.pct) && Math.abs(c.onPct - c.want.share * 100) < 0.6 && (c.want.share > 0.995 || c.offs > 0) && c.role === "img" && c.label === "Elevation" && c.aligned && c.inside
+    && /^\d+% on bike paths$/.test(c.pct) && Math.abs(c.onPct - (1 - c.want.gapShare) * 100) < 0.6 && c.offs === c.want.gaps && c.role === "img" && c.label === "Elevation" && c.aligned && c.inside
     && c.stops.length > 0 && (c.want.n > 0) === c.stops.includes(red);
   const g0 = go.cards[0];
   const checks = {
     rule: units.steep30.n === 1 && units.steep30.g === 8 && units.steep30.L === 30 && units.steep8.n === 0 && units.seven.n === 0 && units.two.n === 2 && units.two.g === 12 && units.two.L === 40,
     spikeRemoved: units.spike.n === 0 && units.spike.total === 0,
-    colours: units.colours.flat && units.colours.mid && units.colours.red && units.colours.muted.every((x) => x <= 0.4) && !units.flatHasRed && units.flatLabel,
+    colours: units.colours.flat && units.colours.mid && units.colours.red && units.colours.navy && !units.flatHasRed && units.flatLabel,
     oneCardInGo: go.n === 1 && go.routes === 1 && g0.tag === "DIV" && !g0.sel && g0.title === "Your route",
-    goCard: cardOk(g0) && g0.want.n >= 2 && /^\d+ climbs, \d+ m total\. Steepest climb is \d+% over \d+ m on .+\.$/.test(g0.climb) && g0.offs > 0 && g0.onColour === "rgb(0, 149, 230)" && g0.offColour === "rgb(239, 143, 69)",
+    goCard: cardOk(g0) && g0.want.n >= 2 && /^\d+ climbs, \d+ m total\. Steepest climb is \d+% over \d+ m on .+\.$/.test(g0.climb) && g0.offs > 0 && g0.onBg.includes("rgb(30, 33, 96)") && g0.offColour === "rgb(255, 106, 31)",
     elevationOnlyInCard: !/climb|elevation|m total/i.test(go.detail) && !go.detailSvg && !/climb/i.test(g0.km + g0.title + g0.pct),
     followsControls: moved.slider && moved.hills && moved.works && afterMove.n === 1 && cardOk(afterMove.cards[0]),
     french: /^(\d+ côtes?, \d+ m de montée au total\. La plus raide[\u00a0\u202f]: \d+[\u00a0\u202f]% sur \d+ m(, .+)?\.|Aucune côte raide, \d+ m de montée au total\.)$/.test(fr.t) && /sur pistes cyclables/.test(fr.p),
-    suggest: sg.n === sg.routes && sg.n > 1 && sg.cards.every((c) => c.tag === "BUTTON" && cardOk(c)) && sg.cards.filter((c) => c.sel).length === 1 && sg.cards[0].sel && !sg.detailSvg,
-    picks: picked.sel === 1 && picked.cards[1].sel && !picked.cards[0].sel,
+    suggest: sg.n === sg.routes && sg.n > 1 && sg.cards.every((c) => c.tag === (c.sel ? "DIV" : "BUTTON") && cardOk(c)) && sg.cards.filter((c) => c.sel).length === 1 && sg.cards[0].sel && !sg.detailSvg,
+    picks: picked.sel === 1 && picked.cards[1].sel && picked.cards[1].tag === "DIV" && !picked.cards[0].sel && picked.cards[0].tag === "BUTTON",
     classic: cls.n === 1 && cls.cards[0].tag === "DIV" && cls.cards[0].title === clName && cardOk(cls.cards[0]),
     phoneFits: go.wide && sg.wide,
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), units, go: g0, moved, fr, sugg: sg.cards.map((c) => ({ title: c.title, climb: c.climb })), picked: picked.sel, classic: cls.cards[0] };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ------------------------------------------------------------------ the route card's stretches (2026-11-07): the old "Without a bike path" list lives in the card.
+// Each stretch of the strip is a button; a tap opens its details inline (title and "after" as the old list said them), greys out the rest
+// of the chart, shows it on the map; ‹ › step through; a second tap closes. Buttons carry comic-print dots behind them.
+await run("route card stretches: tap for details in the card (the old list's words), step, close, French; comic-print dots behind buttons", `${APP}?from=-73.5817,45.5246&to=-73.6150,45.5035`, async (page) => {
+  await until(page, () => window.__app.state.routes.length > 0 && !!document.querySelector("#routes .route-card .bar .seg"), null, 60000);
+  const first = await page.evaluate(() => {
+    const C = window.BikeCommon, r = window.__app.state.routes[0].r, gaps = C.mainGaps(r), segs = [...document.querySelectorAll("#routes .route-card .bar .seg")];
+    const grow = segs.map((x) => +x.style.flexGrow), gapSegs = segs.filter((x) => x.classList.contains("gap")), pre = getComputedStyle(segs[0], "::before");
+    return { n: segs.length, gaps: gaps.length, gapLens: gapSegs.map((x) => +x.style.flexGrow).join(), want: gaps.map((g) => Math.round(g.length)).join(),
+      nums: gapSegs.map((x) => x.textContent).filter(Boolean).every((v) => /^\d+$/.test(v) && +v <= gaps.length), total: grow.reduce((a, b) => a + b, 0), L: Math.round(r.length),
+      buttons: segs.every((x) => x.tagName === "BUTTON" && x.getAttribute("aria-expanded") === "false" && !!x.getAttribute("aria-label")),
+      touch: segs[0].getBoundingClientRect().height - parseFloat(pre.top) - parseFloat(pre.bottom), closed: !document.querySelector(".rc-more").classList.contains("open"),
+      oldList: !!document.querySelector("#detail .gap-item, #detail .gaps") || [...document.querySelectorAll("#detail h2")].some((h) => /bike path/i.test(h.textContent)),
+      hint: /\btap\b/i.test(document.querySelector(".route-card").textContent) };
+  });
+  const cam0 = await page.evaluate(() => window.__app.map.getCenter().toArray().map((v) => v.toFixed(5)).join());
+  await page.evaluate(() => [...document.querySelectorAll("#routes .route-card .bar .seg.gap")].pop().click());
+  await page.waitForTimeout(900);
+  const open = await page.evaluate(() => {
+    const C = window.BikeCommon, I = window.BikeI18n, r = window.__app.state.routes[0].r, gaps = C.mainGaps(r), g = gaps[gaps.length - 1];
+    const segs = [...document.querySelectorAll("#routes .route-card .bar .seg")], on = segs.filter((x) => x.classList.contains("on")), det = document.querySelector(".rc-det");
+    const sb = on[0].getBoundingClientRect(), db = det.getBoundingClientRect(), notch = parseFloat(det.style.getPropertyValue("--notch"));
+    return { open: document.querySelector(".rc-more").classList.contains("open"), one: on.length === 1 && on[0].classList.contains("gap") && on[0].getAttribute("aria-expanded") === "true",
+      dimmed: segs.filter((x) => x.classList.contains("dim")).length === segs.length - 1, title: det.querySelector("b").textContent,
+      wantTitle: I.t("gapOn", { m: Math.round(g.length), name: g.names.slice(0, 2).map(I.place).join(", ") || I.t("aStreet") }),
+      type: det.querySelector(".rc-det-type").textContent, at: det.querySelector(".rc-det-at").textContent, wantAt: I.t("after", { d: C.fmtKm(g.start) }),
+      notchOk: Math.abs(db.left + (db.width * notch) / 100 - (sb.left + sb.width / 2)) < 30, veil: !!document.querySelector(".rc-profile .pg-veil"),
+      step: det.querySelector(".rc-step").textContent.trim(), nextOff: det.querySelector(".rc-next").disabled, prevOn: !det.querySelector(".rc-prev").disabled, inCard: !!det.closest(".route-card") };
+  });
+  const cam1 = await page.evaluate(() => window.__app.map.getCenter().toArray().map((v) => v.toFixed(5)).join());
+  await page.evaluate(() => document.querySelector(".rc-det .rc-prev").click()); await page.waitForTimeout(300);
+  const prev = await page.evaluate(() => { const segs = [...document.querySelectorAll("#routes .route-card .bar .seg")], k = segs.findIndex((x) => x.classList.contains("on"));
+    return { k, n: segs.length, navy: !segs[k].classList.contains("gap") && !document.querySelector(".rc-det .rc-key").classList.contains("off"),
+      kinds: /(Protected|Painted|Shared) bike path/.test(document.querySelector(".rc-det-type").textContent) }; });
+  const fr = await page.evaluate(() => { window.__app.setLang("fr"); const d = document.querySelector(".rc-more.open .rc-det"), out = d ? d.textContent : ""; window.__app.setLang("en"); return out; });
+  await page.evaluate(() => document.querySelector("#routes .route-card .bar .seg.on").click()); await page.waitForTimeout(400);
+  const closed = await page.evaluate(() => !document.querySelector(".rc-more").classList.contains("open") && !document.querySelector(".bar .seg.on, .bar .seg.dim") && !document.querySelector(".pg-veil"));
+  const dots = await page.evaluate(() => [...document.querySelectorAll(".ride-go, .share-btn, #view-btn, #layers-btn, .bar .seg")].map((el) => {
+    const v = el.style.getPropertyValue("--ht"), a = getComputedStyle(el, "::after");
+    return el.classList.contains("ht") && /^url\("data:image\/svg\+xml,/.test(v) && /circle/.test(decodeURIComponent(v)) && a.zIndex === "-1" && getComputedStyle(el.parentElement).isolation === "isolate"; }));
+  await page.goto(BASE + APP + "?trip=rachel", { waitUntil: "load" });
+  await until(page, () => window.__app && window.__app.state.routes.length > 0 && !!document.querySelector("#routes .route-card"), null, 60000);
+  const whole = await page.evaluate(() => ({ text: (document.querySelector(".rc-whole") || {}).textContent, gaps: document.querySelectorAll(".bar .seg.gap").length, gapsWanted: window.BikeCommon.mainGaps(window.__app.state.routes[0].r).length }));
+  const checks = {
+    strip: first.gapLens === first.want && first.n >= first.gaps && Math.abs(first.total - first.L) <= first.n && first.nums && first.buttons && first.touch >= 44,
+    startsClosed: first.closed && !first.hint && !first.oldList,
+    opens: open.open && open.one && open.dimmed && open.inCard && open.title === open.wantTitle && /^Without a bike path · .*(Busy street|Quiet street)/.test(open.type) && open.at === open.wantAt,
+    pointsAtIt: open.notchOk && open.veil && /^\d+\/\d+$/.test(open.step) && open.nextOff && open.prevOn,
+    showsOnMap: cam1 !== cam0,
+    steps: prev.k === prev.n - 2 && prev.navy && prev.kinds,
+    french: /\d+ m sur /.test(fr) && /après/.test(fr),
+    closes: closed,
+    dots: dots.length >= 6 && dots.every(Boolean),
+    wholeWay: whole.gapsWanted > 0 || (whole.text === "Bike paths the whole way." && whole.gaps === 0),
+  };
+  const bad = Object.keys(checks).filter((k) => !checks[k]);
+  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), first, open, prev, fr: fr.slice(0, 160), dots, whole };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ saved places (2026-11-02): Home, Work, others; recents; all on this device

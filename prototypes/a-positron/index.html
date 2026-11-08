@@ -16,7 +16,7 @@
 <meta name="apple-mobile-web-app-title" content="Piste">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=Overpass:wght@600;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=Barlow+Condensed:ital,wght@1,600;1,700&family=Overpass:wght@600;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../vendor/maplibre/maplibre-gl.css">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -50,14 +50,14 @@
 
   <section class="search go-or-custom" aria-label="Plan a ride">
     <label for="from" class="field-label custom-only" data-i18n="startLabel" hidden></label>
-    <div class="field-row"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg></span>
+    <div class="field-row"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#1e2160" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg></span>
       <div class="field">
         <button type="button" class="field-btn locate" id="locate" data-i18n-title="useMyLocation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 19.4 20 12 16.2 4.6 20z"/></svg></button>
         <input id="from" enterkeyhint="next" data-i18n-ph="fromPh" autocomplete="off" spellcheck="false">
         <button type="button" class="field-btn clear" data-target="from" data-i18n-title="clearField"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
       </div>
     </div>
-    <div class="field-row go-only"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#0095E6" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#0095E6"/></svg></span>
+    <div class="field-row go-only"><span class="pin" aria-hidden="true"><svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#1e2160" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#1e2160"/></svg></span>
       <div class="field">
         <button type="button" class="field-btn pick" data-target="to" data-i18n-title="pickTo"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
         <input id="to" enterkeyhint="go" data-i18n-ph="toPh" autocomplete="off" spellcheck="false">

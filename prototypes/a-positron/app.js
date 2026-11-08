@@ -24,12 +24,15 @@
   let toastT = null;
   function toast(msg) { const el = $("#toast"); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (el.hidden = true), 3600); }
 
-  // ------------------------------------------------------------------ palette (STM metro colours, softened gap orange)
+  // ------------------------------------------------------------------ palette (2026-11-07: navy for bike paths, orange where there are none)
+  const NAVY = "#1e2160";
   const COL = {
-    a: "#0095E6", b: "#6cc3f2", c: "#0095E6", gap: "#ef8f45", gapQuiet: "#f2a865", closed: "#d7263d",
-    rev: "#00a62a", ridden: "#4b3f8f", netA: "#2fb350", netB: "#5cc471", netC: "#8fd49d", planned: "#d9b400", alt: "#9aa5ae", notCleared: "#aebbc6",
+    a: NAVY, b: "#3d43a8", c: "#3d43a8", gap: "#ff6a1f", gapQuiet: "#ffa25e", closed: "#d7263d",
+    rev: NAVY, ridden: "#2a9d8f", netA: NAVY, netB: "#3d43a8", netC: "#9296d6", planned: "#d9b400", alt: "#9aa5ae", notCleared: "#aebbc6",
   };
-  const CLIMB = { ink: "#5b3d22", spark: "#c99b6d" };
+  // the same at night, light enough to read on the ink-navy map
+  const COL_NIGHT = { a: "#aab0ff", b: "#8a90e6", c: "#8a90e6", net: "#aab0ff", netB: "#8a90e6", netC: "#6f75c0" };
+  const CLIMB = { ink: NAVY, spark: "#a7aad6" };
 
   // ------------------------------------------------------------------ camera
   const CAM = {
@@ -98,6 +101,18 @@
     follow: true, holding: false, reroutes: 0, rerouteLog: [], rideOpts: null, gpsState: null, wake: "off", summary: null, join: null };
 
   // ------------------------------------------------------------------ basemap style (OpenFreeMap Positron, our buildings instead of theirs)
+  // 2026-11-07: the basemap in the clear-line theme: warm paper ground, white streets with warm edges, cool water, soft labels
+  const PAPER = "#f4efe3", HALO = "rgba(255,253,248,0.95)";
+  const DAY_PAINT = {
+    background: { "background-color": PAPER }, landuse_residential: { "fill-color": "#efe8d8" }, landcover_wood: { "fill-color": "#dbe8df" },
+    water: { "fill-color": "#c4d2ea" }, waterway: { "line-color": "#b3c4e2" },
+    highway_path: { "line-color": "#ffffff" }, highway_minor: { "line-color": "#ffffff" }, highway_major_inner: { "line-color": "#ffffff" }, highway_major_subtle: { "line-color": "#ffffff" },
+    highway_motorway_inner: { "line-color": "#ffffff" }, highway_motorway_subtle: { "line-color": "#ffffff" }, highway_motorway_bridge_inner: { "line-color": "#ffffff" },
+    highway_major_casing: { "line-color": "#ddd3bd" }, highway_motorway_casing: { "line-color": "#ddd3bd" }, highway_motorway_bridge_casing: { "line-color": "#ddd3bd" },
+    railway: { "line-color": "#bdb39f" }, railway_service: { "line-color": "#bdb39f" }, railway_transit: { "line-color": "#bdb39f" },
+    ...Object.fromEntries(["label_other", "label_village", "label_town", "label_state", "label_city", "label_city_capital", "highway-name-path", "highway-name-minor",
+      "highway-name-major", "waterway_line_label", "water_name_point_label", "water_name_line_label", "airport"].map((id) => [id, { "text-color": "#5a5d7c", "text-halo-color": HALO }])),
+  };
   let style;
   try {
     style = await (await fetch("https://tiles.openfreemap.org/styles/positron")).json();
@@ -107,11 +122,11 @@
     const isRoadRef = (l) => l.type === "symbol" && (/shield/.test(l.id) || JSON.stringify((l.layout || {})["text-field"] || "").includes('"ref"'));
     for (const l of style.layers) {
       if (isRoadRef(l)) l.layout = { ...l.layout, visibility: "none" };
-      if (l.id === "water") l.paint["fill-color"] = "#c9dde9";
+      const day = DAY_PAINT[l.id]; if (day) l.paint = { ...l.paint, ...day };
     }
   } catch (e) {
     style = { version: 8, glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf", sources: {},
-      layers: [{ id: "background", type: "background", paint: { "background-color": "#f2f3f0" } }] };
+      layers: [{ id: "background", type: "background", paint: { "background-color": PAPER } }] };
     toast(t("offline"));
   }
   // The "i" lists every data source (with About & terms). The basemap adds "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" itself;
@@ -190,28 +205,35 @@
   // elevation: a soft colour tint over land and parks (not water), then LiDAR hill shading and contours under the streets
   const tintBefore = map.getLayer("waterway") ? "waterway" : firstRoad;
   add({ id: "tint", type: "raster", source: "tint",
-    paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 13, 1, 15, 0.7, 17, 0.45], "raster-fade-duration": 0 } }, tintBefore);
+    paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.75, 15, 0.5, 17, 0.32], "raster-saturation": -0.55, "raster-fade-duration": 0 } }, tintBefore);   // 2026-11-07: quieter, to sit on the paper
   if (map.getLayer("water") && map.getLayer(tintBefore)) map.moveLayer("water", tintBefore);
   // 2026-11-03: parks (tools/island_parks.py: OpenStreetMap parks, nature reserves and public gardens over the whole island, merged into one layer) as a quiet,
   // see-through green over the tint; water, hill shading, contours, buildings, paths and labels all draw over it. Parks keep their icons.
   add({ id: "parks", type: "fill", source: "parks", "source-layer": "parks", minzoom: 11,
-    paint: { "fill-color": "#79ad76", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.2, 13, 0.34] } }, "water");
+    paint: { "fill-color": "#8fcfbd", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.35, 14, 0.6] } }, "water");   // 2026-11-07: park teal
   // 2026-10-29: shading halfway between the first prototype (0.75) and the strong version (0.95 → 0.72)
   add({ id: "relief", type: "raster", source: "relief",
-    paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.85, 15, 0.8, 18, 0.72], "raster-fade-duration": 0 } }, firstRoad);
-  const CONTOUR = "#9a7c52";
+    paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.5, 15, 0.45, 18, 0.4], "raster-fade-duration": 0 } }, firstRoad);   // 2026-11-07: lighter on the paper
+  const CONTOUR = NAVY;   // 2026-11-07: navy ink, faint
   // contours: 1 m detail lines only where the ground rises 2.5-15 %, so climbs show as denser lines (replaces the chevrons)
   add({ id: "contours-detail", type: "line", source: "contours", "source-layer": "contours", minzoom: 14, filter: ["==", ["get", "i"], 2],
-    paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0.16, 16, 0.32], "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.4, 17, 0.7] } }, firstRoad);
+    paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0.08, 16, 0.16], "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.4, 17, 0.7] } }, firstRoad);
   add({ id: "contours-minor", type: "line", source: "contours", "source-layer": "contours", minzoom: 13, filter: ["==", ["get", "i"], 0],
-    paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.2, 15, 0.42], "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 17, 0.9] } }, firstRoad);
+    paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.1, 15, 0.2], "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 17, 0.9] } }, firstRoad);
   add({ id: "contours-index", type: "line", source: "contours", "source-layer": "contours", minzoom: 11.5, filter: ["==", ["get", "i"], 1],
-    paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 11.5, 0.45, 14, 0.75], "line-width": ["interpolate", ["linear"], ["zoom"], 11.5, 0.6, 16, 1.4] } }, firstRoad);
+    paint: { "line-color": CONTOUR, "line-opacity": ["interpolate", ["linear"], ["zoom"], 11.5, 0.22, 14, 0.34], "line-width": ["interpolate", ["linear"], ["zoom"], 11.5, 0.6, 16, 1.4] } }, firstRoad);
+  // 2026-11-07, clear-line buildings: white, a flat shadow offset down and right, and a thin navy outline (2D); white "clay" blocks in 3D
+  add({ id: "bld-shadow", type: "fill", source: "bld", "source-layer": "buildings", minzoom: 14,
+    paint: { "fill-color": "#e2d6bb", "fill-translate": ["interpolate", ["linear"], ["zoom"], 14, ["literal", [1, 1]], 18, ["literal", [5, 5]]],
+      "fill-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0, 14.6, 1] } });
   add({ id: "bld-flat", type: "fill", source: "bld", "source-layer": "buildings", minzoom: 13,
-    paint: { "fill-color": "#e7e4de", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0, 14, 0.92], "fill-outline-color": "#d9d5cd" } });
+    paint: { "fill-color": "#ffffff", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0, 14, 1], "fill-outline-color": "#ffffff" } });
+  add({ id: "bld-line", type: "line", source: "bld", "source-layer": "buildings", minzoom: 14,
+    paint: { "line-color": NAVY, "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.15, 16, 0.35, 18, 0.6], "line-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0, 14.8, 0.7] } });
   add({ id: "bld-3d", type: "fill-extrusion", source: "bld", "source-layer": "buildings", minzoom: 14, layout: { visibility: "none" },
-    paint: { "fill-extrusion-color": ["interpolate", ["linear"], ["get", "h"], 0, "#f1eee8", 25, "#e6e2db", 90, "#d9d3ca"],
-      "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": 0, "fill-extrusion-opacity": 0.82, "fill-extrusion-vertical-gradient": true } });
+    paint: { "fill-extrusion-color": ["interpolate", ["linear"], ["get", "h"], 0, "#fbf9f4", 80, "#f3efe7"],
+      "fill-extrusion-height": ["get", "h"], "fill-extrusion-base": 0, "fill-extrusion-opacity": 1, "fill-extrusion-vertical-gradient": true } });
+  map.setLight({ anchor: "viewport", color: "#ffffff", intensity: 0.62, position: [1.4, 215, 42] });   // shaded sides on the white blocks
   // 3D trees (tools/island_trees.py: one point per LiDAR tree top, h = height in m, s = seed): flat illustrated trees (see "tree pictures" below),
   // upright to the screen, drawn only in the 3D view from zoom 15.5. Picture: paintTrees(). Size: the picture's tree is 90 px tall at icon-size 1, a metre
   // is 1 / 0.4186 px at zoom 17 (Montréal) and the size doubles every zoom, so 0.0265 x h at zoom 17; the seed adds up to 16% either way.
@@ -230,7 +252,7 @@
   add({ id: "net-ab", type: "line", source: "network", filter: ["<=", ["get", "t"], 1], layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["case", ["==", ["get", "rev"], 1], COL.rev, ["==", ["get", "t"], 0], COL.netA, COL.netB],
       "line-width": ["interpolate", ["linear"], ["zoom"], 12, ["case", ["==", ["get", "rev"], 1], 2, 1], 16, ["case", ["==", ["get", "rev"], 1], 4.4, ["==", ["get", "t"], 0], 3.2, 2.3]],
-      "line-opacity": 0.9 } });
+      "line-opacity": 0.6 } });
   add({ id: "net-c", type: "line", source: "network", filter: ["==", ["get", "t"], 2],
     paint: { "line-color": COL.netC, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.8, 16, 2], "line-dasharray": [2, 1.5] } });
   // the REM tracks (rem.js), under the bike network: the REM's green with a darker edge, so it shows on the light map
@@ -253,6 +275,8 @@
   // routes
   add({ id: "route-alts", type: "line", source: "route-alts", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": COL.alt, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 4, 17, 9], "line-opacity": 0.55 } });
+  add({ id: "route-ink", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },   // a thin navy edge around the white casing
+    paint: { "line-color": NAVY, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 8.6, 17, 18.6] } });
   add({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 7, 17, 16] } });
   // a classic ride's lead-in (pieces with lead = 1, see rideRouteData): the same colours, in dots, so the loop itself stands out
@@ -277,7 +301,7 @@
   add({ id: "contour-labels", type: "symbol", source: "contours", "source-layer": "contours", minzoom: 13.5, filter: ["==", ["get", "i"], 1],
     layout: { "symbol-placement": "line", "text-field": ["concat", ["to-string", ["get", "e"]], " m"], "text-font": ["Noto Sans Regular"],
       "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, 10, 17, 12], "symbol-spacing": 360, "text-max-angle": 30, "text-padding": 2 },
-    paint: { "text-color": "#7d6542", "text-halo-color": "rgba(251,248,241,0.95)", "text-halo-width": 1.6 } });
+    paint: { "text-color": "#5a5d7c", "text-halo-color": HALO, "text-halo-width": 1.6 } });
 
   await C.addMapIcons(map);
   map.addImage("pill", pillImage("#fdf1e6", "#f3c29a"), { pixelRatio: 2, stretchX: [[20, 44]], stretchY: [[16, 24]], content: [14, 6, 50, 34] });
@@ -292,7 +316,7 @@
       layout: { "icon-image": ["get", "icon"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.72, 17, 1], "icon-padding": 1,
         "text-field": ["step", ["zoom"], "", 16.5, ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 11,
         "text-offset": [0, 1.35], "text-anchor": "top", "text-optional": true, "symbol-sort-key": k.group === "transit" ? 0 : kind === "bixi" ? 1 : 5 },
-      paint: { "text-color": "#4a525a", "text-halo-color": "#ffffff", "text-halo-width": 1.3 } });
+      paint: { "text-color": "#44476a", "text-halo-color": HALO, "text-halo-width": 1.3 } });
   }
   // live BIXI: the station icon, plus a badge with the bikes available (green, orange when 1-2, grey when empty)
   map.addLayer({ id: "bixi-live", type: "symbol", source: "bixi-live", minzoom: 14.6,
@@ -308,10 +332,10 @@
     layout: { "icon-image": "poi-works", "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.7, 17, 1], "icon-allow-overlap": true } });
   map.addLayer({ id: "stop-labels", type: "symbol", source: "stops",
     layout: { "text-field": "", "text-font": ["Noto Sans Bold"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 0.9], "text-allow-overlap": true, "text-max-width": 14 },
-    paint: { "text-color": "#0072B2", "text-halo-color": "#ffffff", "text-halo-width": 1.8 } });
+    paint: { "text-color": NAVY, "text-halo-color": HALO, "text-halo-width": 1.8 } });
   map.addLayer({ id: "ends", type: "circle", source: "ends",
-    paint: { "circle-radius": 8, "circle-color": ["match", ["get", "k"], "from", "#0095E6", "#ffffff"],
-      "circle-stroke-color": ["match", ["get", "k"], "from", "#ffffff", "#0095E6"], "circle-stroke-width": 3.5 } });
+    paint: { "circle-radius": 8, "circle-color": ["match", ["get", "k"], "from", NAVY, "#ffffff"],
+      "circle-stroke-color": ["match", ["get", "k"], "from", "#ffffff", NAVY], "circle-stroke-width": 3.5 } });
   function setMapTexts() {   // map labels that carry words: redone when the language or winter mode changes
     map.setLayoutProperty("stop-labels", "text-field", ["case", ["==", ["get", "sight"], 1], ["get", "label"], ["concat", t("stopPrefix"), ["get", "label"]]]);
   }
@@ -320,13 +344,12 @@
 
   // ------------------------------------------------------------------ winter mode: icy colours, 4-season network, snow status
   const WINTER_PAINT = [
-    ["background", "background-color", "#eef4f8"], ["parks", "fill-color", "#76a898"], ["water", "fill-color", "#b9d2e2"],
-    ["landuse_residential", "fill-color", "#e6eef4"], ["landcover_wood", "fill-color", "#dbe6ed"], ["waterway", "line-color", "#a9c6d9"],
-    ["highway_major_casing", "line-color", "#c6d6e2"], ["highway_motorway_casing", "line-color", "#c6d6e2"],
-    ["tint", "raster-hue-rotate", 170], ["tint", "raster-saturation", -0.35],
-    ["contours-detail", "line-color", "#7895aa"], ["contours-minor", "line-color", "#7895aa"], ["contours-index", "line-color", "#7895aa"],
-    ["contour-labels", "text-color", "#5c7689"], ["bld-flat", "fill-color", "#e2e9ef"], ["bld-flat", "fill-outline-color", "#cfd9e1"],
-    ["bld-3d", "fill-extrusion-color", ["interpolate", ["linear"], ["get", "h"], 0, "#f3f6f9", 25, "#e5ecf2", 90, "#d6e0e8"]],
+    ["background", "background-color", "#f3f5f8"], ["parks", "fill-color", "#cfe0e2"], ["water", "fill-color", "#c3d1e6"],
+    ["landuse_residential", "fill-color", "#eceff4"], ["landcover_wood", "fill-color", "#e3eaee"], ["waterway", "line-color", "#b3c3dd"],
+    ["highway_major_casing", "line-color", "#d3dbe6"], ["highway_motorway_casing", "line-color", "#d3dbe6"],
+    ["tint", "raster-hue-rotate", 170], ["tint", "raster-saturation", -0.7],
+    ["contour-labels", "text-color", "#5c6a89"], ["bld-shadow", "fill-color", "#dce3ec"],
+    ["bld-3d", "fill-extrusion-color", ["interpolate", ["linear"], ["get", "h"], 0, "#fbfcfd", 80, "#eef2f6"]],
   ];
   const summerPaint = {};
   function setWinter(on) {
@@ -349,52 +372,50 @@
     recompute(true);
   }
 
-  // ------------------------------------------------------------------ tree pictures (2026-11-02)
-  // Each tree is a small flat picture drawn here as SVG (no image files): a slim tapering trunk with a few forks, a leafy crown of overlapping soft
-  // blobs with darker and lighter patches and a few leaf dabs, and a faint shadow on the ground. Rasterised once at 2x. Winter: fine bare branches.
+  // ------------------------------------------------------------------ tree pictures (2026-11-02; clear-line, 2026-11-07)
+  // Each tree is a small flat picture drawn here as SVG (no image files), in the style of a clear-line drawing: a crown of round lobes in one
+  // muted colour with a darker shade on the lower right and a navy outline, on an outlined trunk; winter trees are leafless, their branches
+  // drawn as navy lines with snow along the top (Montréal's street trees are maples, elms and ashes: no evergreens). Rasterised once at 2x.
   // The picture is 72 x 96 with the tree's foot at (36, 90): the layer anchors the picture's bottom at the tree, upright to the screen.
-  const TREE_SET = {   // muted on purpose: soft sage greens and dusty autumn tones keep the map calm under the route colours
-    summer: [{ base: "#7ea868", dark: "#4f7a50", light: "#a6c78c" }, { base: "#6f9d62", dark: "#46714c", light: "#9bbd86" }, { base: "#8db070", dark: "#5a8455", light: "#b4cf98" }],
-    fall: [{ base: "#d58f4c", dark: "#a8582f", light: "#eebb78" }, { base: "#c0644d", dark: "#8c3a38", light: "#dc9078" }, { base: "#dcb458", dark: "#b0832e", light: "#f0d58c" },
-      { base: "#9dac62", dark: "#6c7e44", light: "#c3cb86", alt: "#d58f4c" }],
-    winter: [{ wood: "#8b7e71" }, { wood: "#82756a" }],
+  const TREE_SET = {   // muted on purpose (about halfway to grey) so the trees sit back under the route colours
+    summer: [{ base: "#77aa9f", dark: "#4f8379", light: "#adcfc5" }, { base: "#699b8f", dark: "#447168", light: "#a0c3b9" }, { base: "#85b5a2", dark: "#568977", light: "#b7d6c7" }],
+    fall: [{ base: "#ddb251", dark: "#b78b46", light: "#ecd49c" }, { base: "#cc7a51", dark: "#9e583a", light: "#e0ae8f" }, { base: "#a8354b", dark: "#7d2738", light: "#d38492" },
+      { base: "#cbab6f", dark: "#94784a", light: "#e5d0a8" }],
+    winter: [{ spread: [[-0.62, 0.04, 0.66], [-0.52, 0.56]], len: 22 }, { spread: [[-0.38, 0.02, 0.4], [-0.34, 0.36]], len: 26 }],   // a wide maple, an upright elm
   };
   function treeSeason(date = new Date()) {
     const md = (date.getMonth() + 1) * 100 + date.getDate();
     return state.winter ? "winter" : md >= 920 && md <= 1115 ? "fall" : "summer";
   }
   function treeSVG(kind, i, night) {
-    const p = TREE_SET[kind][i], dim = (c, k = 0.6) => (night ? "#" + [1, 3, 5].map((j) => Math.round(parseInt(c.slice(j, j + 2), 16) * (1 - k) + [14, 22, 40][(j - 1) / 2] * k).toString(16).padStart(2, "0")).join("") : c);
+    const p = TREE_SET[kind][i], ink = night ? "#070a14" : NAVY, branch = night ? "#8c93c9" : NAVY, snow = night ? "#d5d9ea" : "#ffffff";
+    const dim = (c, k = 0.55) => (night ? "#" + [1, 3, 5].map((j) => Math.round(parseInt(c.slice(j, j + 2), 16) * (1 - k) + [14, 22, 40][(j - 1) / 2] * k).toString(16).padStart(2, "0")).join("") : c);
     let seed = 40 * Object.keys(TREE_SET).indexOf(kind) + 7 * i + 11;
     const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-    const f = (n) => Math.round(n * 10) / 10, wood = dim(p.wood || "#74675b", p.wood ? 0.35 : 0.6);
-    const out = [`<defs><radialGradient id="g"><stop offset="0" stop-color="${night ? "#03060c" : "#26311f"}" stop-opacity="${night ? 0.5 : 0.3}"/><stop offset="1" stop-opacity="0"/></radialGradient></defs>`,
-      `<ellipse cx="36" cy="90" rx="25" ry="4.6" fill="url(#g)"/>`,
-      `<path d="M33.2 90.5C34.6 84 34.4 72 34.9 58h2.3c.5 14 .3 26 2.5 32.5z" fill="${wood}"/>`];
-    const stroke = (d, w) => `<path d="${d}" fill="none" stroke="${wood}" stroke-width="${w}" stroke-linecap="round"/>`;
-    if (p.wood) {   // bare branches: a few forks, each forking again, thinner and shorter each time
+    const f = (n) => n.toFixed(1);
+    const line = (d, w, c = ink) => `<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    const out = [`<ellipse cx="36" cy="89.6" rx="19" ry="3.2" fill="${ink}" opacity="${night ? 0.4 : 0.12}"/>`];   // a flat shadow on the ground
+    if (p.spread) {   // leafless: forks that fork again, thinner and shorter each time; snow on the top of the slanted ones
+      const snowy = [];
       const grow = (x, y, a, len, w, depth) => {
-        const x2 = x + Math.sin(a) * len, y2 = y - Math.cos(a) * len, bend = (rnd() - 0.5) * len * 0.35;
-        out.push(stroke(`M${f(x)} ${f(y)}Q${f((x + x2) / 2 + bend)} ${f((y + y2) / 2)} ${f(x2)} ${f(y2)}`, w));
-        if (depth) for (const da of depth > 2 ? [-0.6, 0.05, 0.65] : [-0.5, 0.55]) grow(x2, y2, a + da + (rnd() - 0.5) * 0.3, len * (0.7 + rnd() * 0.12), Math.max(w * 0.62, 0.8), depth - 1);
+        const x2 = x + Math.sin(a) * len, y2 = y - Math.cos(a) * len, d = `M${f(x)} ${f(y)}Q${f((x + x2) / 2 + (rnd() - 0.5) * len * 0.3)} ${f((y + y2) / 2)} ${f(x2)} ${f(y2)}`;
+        out.push(line(d, w, branch));
+        if (depth >= 2 && Math.abs(Math.sin(a)) > 0.25) snowy.push(`<path d="${d}" transform="translate(0 ${f(-w * 0.55)})" fill="none" stroke="${snow}" stroke-width="${f(w * 0.6)}" stroke-linecap="round"/>`);
+        if (depth) for (const da of depth > 2 ? p.spread[0] : p.spread[1]) grow(x2, y2, a + da + (rnd() - 0.5) * 0.3, len * (0.68 + rnd() * 0.1), Math.max(w * 0.62, 0.9), depth - 1);
       };
-      grow(36, 62, 0, 15, 2.4, 4);
-    } else {
-      for (const [x, y] of [[23, 49], [49, 45], [37, 50]]) out.push(stroke(`M36 ${f(68 - rnd() * 4)}L${x} ${y}`, 1.8));   // forks, mostly under the crown
-      const cx = 36, cy = 31, n = 8 + (i % 3), blob = (x, y, r, c, o) => `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="${dim(c)}" opacity="${o}"/>`;
-      const lobes = [[cx, cy, 17], [cx + (rnd() - 0.5) * 8, cy - 2, 15]];
-      for (let k = 0; k < n; k++) {
-        const a = (k + rnd() * 0.6) * 2 * Math.PI / n, d = 0.58 + rnd() * 0.14;
-        lobes.push([cx + Math.cos(a) * 27 * d, cy + Math.sin(a) * (Math.sin(a) > 0 ? 19 : 25) * d, 9 + rnd() * 5]);
-      }
-      out.push(...lobes.map(([x, y, r]) => blob(x + 1, y + 1.6, r + 0.8, p.dark, 0.55)));                           // darker rim, slipping to the lower right
-      out.push(...lobes.map(([x, y, r], k) => blob(x, y, r, p.alt && k % 3 === 0 ? p.alt : p.base, 0.94)));
-      for (const [x, y, r] of [[8, 11, 9], [-7, 15, 7], [15, 1, 6], [-15, 7, 5]]) out.push(blob(cx + x + rnd() * 3, cy + y, r, p.dark, 0.34));   // shade, lower right
-      for (const [x, y, r] of [[-9, -11, 8], [0, -17, 6], [-16, -3, 5]]) out.push(blob(cx + x + rnd() * 3, cy + y, r, p.light, 0.5));            // light, upper left
-      for (let c = 0; c < 5; c++) {                                                                                  // darker leaf clusters
-        const a = rnd() * 6.28, d = 0.15 + Math.sqrt(rnd()) * 0.5, x = cx + Math.cos(a) * 25 * d, y = cy + Math.sin(a) * 22 * d;
-        for (let l = 0; l < 3; l++) out.push(`<ellipse cx="${f(x + (l - 1) * 3.4)}" cy="${f(y + (rnd() - 0.5) * 4)}" rx="3" ry="1.6" transform="rotate(${f(rnd() * 90 - 45)} ${f(x + (l - 1) * 3.4)} ${f(y)})" fill="${dim(p.dark)}" opacity="0.42"/>`);
-      }
+      grow(36, 90, 0, p.len, 3.6, 4);
+      out.push(...snowy);
+    } else {          // one crown of round lobes: every lobe stroked in navy, then filled over, so only the outer edge shows
+      const [rx, ry, cx, cy] = [[26, 24, 36, 37], [19, 30, 36, 35], [29, 21, 36, 40], [24, 26, 36, 37]][i % 4];
+      const wood = dim("#7a7c99"), forks = [["M36 90L36 61", 4], ["M36 71L27 53", 2.4], ["M36 68L46 51", 2.4], ["M36 63L37 47", 2]];
+      out.push(...forks.map(([d, w]) => line(d, w + 2.2)), ...forks.map(([d, w]) => line(d, w, wood)));
+      const lobes = [[cx, cy, Math.min(rx, ry) * 0.75]], n = 7 + (i % 3);
+      for (let k = 0; k < n; k++) { const a = (k + rnd() * 0.5) * 2 * Math.PI / n; lobes.push([cx + Math.cos(a) * rx * 0.62, cy + Math.sin(a) * ry * 0.62, Math.min(rx, ry) * (0.36 + rnd() * 0.1)]); }
+      const circles = (dx, dy, fill, extra = "") => lobes.map(([x, y, r]) => `<circle cx="${f(x + dx)}" cy="${f(y + dy)}" r="${f(r)}" fill="${fill}"${extra}/>`).join("");
+      out.push(`<defs><clipPath id="c">${circles(0, 0, "#000")}</clipPath></defs>`, circles(0, 0, ink, ` stroke="${ink}" stroke-width="2.6"`), circles(0, 0, dim(p.dark)),
+        `<g clip-path="url(#c)">${circles(-2.4, -2.8, dim(p.base))}<circle cx="${f(cx - rx * 0.4)}" cy="${f(cy - ry * 0.45)}" r="${f(Math.min(rx, ry) * 0.32)}" fill="${dim(p.light)}"/></g>`,
+        line(`M${f(cx + rx * 0.62)} ${f(cy - ry * 0.05)}Q${f(cx + rx * 0.5)} ${f(cy + ry * 0.55)} ${f(cx + rx * 0.05)} ${f(cy + ry * 0.66)}`, 1.1));   // one shading stroke
+      if (kind === "fall") for (let k = 0; k < 2; k++) { const x = 18 + rnd() * 36, y = 72 + rnd() * 14; out.push(`<ellipse cx="${f(x)}" cy="${f(y)}" rx="2.6" ry="1.4" transform="rotate(${f(rnd() * 80 - 40)} ${f(x)} ${f(y)})" fill="${dim(p.base)}" stroke="${ink}" stroke-width="0.7"/>`); }
     }
     return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="192" viewBox="0 0 72 96">${out.join("")}</svg>`;
   }
@@ -452,12 +473,18 @@
     ...["waterway_line_label", "water_name_point_label", "water_name_line_label"].flatMap((id) => [[id, "text-color", "#78b4b0"], [id, "text-halo-color", NIGHT.halo]]),
     ...["highway-name-path", "highway-name-minor", "highway-name-major", "airport"].flatMap((id) => [[id, "text-color", NIGHT.street], [id, "text-halo-color", NIGHT.halo]]),
     ...["label_other", "label_village", "label_town", "label_state", "label_city", "label_city_capital"].flatMap((id) => [[id, "text-color", NIGHT.text], [id, "text-halo-color", NIGHT.halo]]),
-    ["bld-flat", "fill-color", "#1b2540"], ["bld-flat", "fill-outline-color", "#2a3558"],
+    ["bld-flat", "fill-color", "#1b2540"], ["bld-flat", "fill-outline-color", "#1b2540"], ["bld-line", "line-color", "#3a4670"], ["bld-shadow", "fill-color", "#0a0f1c"],
     ["bld-3d", "fill-extrusion-color", ["interpolate", ["linear"], ["get", "h"], 0, "#222c4a", 25, "#2b3659", 90, "#374470"]], ["bld-3d", "fill-extrusion-opacity", 0.9],
     ["tint", "raster-brightness-max", 0.32], ["tint", "raster-saturation", -0.6], ["relief", "raster-brightness-max", 0.38],
     ["contours-detail", "line-color", "#6f5c3f"], ["contours-minor", "line-color", "#6f5c3f"], ["contours-index", "line-color", "#8a7350"],
     ["contour-labels", "text-color", "#a88a5a"], ["contour-labels", "text-halo-color", NIGHT.halo],
     ["net-casing", "line-color", NIGHT.land],   // the white edge that lifts the paths off a light map would glare here
+    // 2026-11-07: navy paths and routes would vanish on the ink-navy ground: periwinkle at night (orange stays orange)
+    ["net-ab", "line-color", ["case", ["==", ["get", "t"], 0], COL_NIGHT.net, ["==", ["get", "rev"], 1], COL_NIGHT.net, COL_NIGHT.netB]], ["net-c", "line-color", COL_NIGHT.netC],
+    ["route-ink", "line-color", NIGHT.land], ["route-solid", "line-color", ["match", ["get", "tier"], 0, COL_NIGHT.a, 1, COL_NIGHT.b, COL.gap]],
+    ["route-shared", "line-color", COL_NIGHT.c], ["route-lead", "line-color", ["match", ["get", "tier"], 0, COL_NIGHT.a, 1, COL_NIGHT.b, 2, COL_NIGHT.c, 3, COL.gapQuiet, COL.gap]],
+    ["ends", "circle-color", ["match", ["get", "k"], "from", COL_NIGHT.a, "#ffffff"]], ["ends", "circle-stroke-color", ["match", ["get", "k"], "from", "#ffffff", COL_NIGHT.a]],
+    ["stops", "circle-stroke-color", COL_NIGHT.a], ["stop-labels", "text-color", "#d6d9ff"], ["stop-labels", "text-halo-color", NIGHT.halo],
     ...POI_LAYERS.flatMap((p) => [[p.id, "text-color", "#c9b28a"], [p.id, "text-halo-color", NIGHT.halo]]),
   ];
   // Summer, winter and night colours in one place: night wins, then winter, then the style's own colour (kept the first time we change it).
@@ -471,6 +498,9 @@
       if (!(key in summerPaint)) summerPaint[key] = map.getPaintProperty(id, prop);
       map.setPaintProperty(id, prop, want.has(key) ? want.get(key) : summerPaint[key] ?? null);
     }
+    // the haze the 3D city fades into at the horizon: paper by day, cool white in winter, ink at night
+    const sky = state.night ? "#0f1626" : state.winter ? "#f3f5f8" : "#f4efe3";
+    map.setSky({ "sky-color": sky, "horizon-color": sky, "fog-color": sky, "sky-horizon-blend": 0.7, "horizon-fog-blend": 0.9, "fog-ground-blend": 0.35, "atmosphere-blend": 0 });
     paintTrees();
   }
   // "Night map" in the Layers panel: Auto (between sunset and sunrise in Montréal, worked out here), On or Off; kept in localStorage "piste-night"
@@ -763,8 +793,8 @@
   // draggable endpoints: location pins (start mostly blue, destination mostly white with blue)
   const markers = {};
   const PIN = {
-    from: '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#0095E6" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg>',
-    to: '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#0095E6" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#0095E6"/></svg>',
+    from: '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#1e2160" stroke="#fff" stroke-width="4"/><circle cx="32" cy="33" r="9" fill="#fff"/></svg>',
+    to: '<svg viewBox="0 0 64 78"><path d="M32 76c-3-6-22-22-22-42a22 22 0 0 1 44 0c0 20-19 36-22 42z" fill="#fff" stroke="#1e2160" stroke-width="5"/><circle cx="32" cy="33" r="9" fill="#1e2160"/></svg>',
   };
   function endEl(kind) { const d = document.createElement("div"); d.className = "end-pin"; d.innerHTML = PIN[kind]; return d; }
   function setPoint(which, lonlat, label) {
@@ -1371,11 +1401,85 @@
   });
 
   // ------------------------------------------------------------------ route cards and details
-  // the bike-path strip under the chart: blue where the route is on a bike path, orange where it isn't
-  function pathBar(r) {
-    const runs = [];
-    for (const p of r.pieces) { const on = p.tier <= 2, last = runs[runs.length - 1]; if (last && last.on === on) last.len += p.length; else runs.push({ on, len: p.length }); }
-    return `<div class="bar" aria-hidden="true">${runs.map((x) => `<i class="${x.on ? "on" : "off"}" style="width:${((x.len / r.length) * 100).toFixed(2)}%"></i>`).join("")}</div>`;
+  // ------------------------------------------------------------------ the route card's bike-path strip (2026-11-07)
+  // The route as stretches you can tap: the stretches without a bike path are the old list's (50 m or more, numbered the same way), the
+  // bike-path stretches are what lies between them. A tap opens that stretch's details in the card and shows it on the map.
+  function stretches(r) {
+    const out = []; let at = 0;
+    C.mainGaps(r).forEach((g, k) => {
+      if (g.start - at > 1) out.push({ on: true, start: at, length: g.start - at });
+      out.push({ on: false, start: g.start, length: g.length, gap: g, num: k + 1 });
+      at = g.start + g.length;
+    });
+    if (r.length - at > 1) out.push({ on: true, start: at, length: r.length - at });
+    for (const s of out) s.pieces = r.pieces.filter((p) => p.start < s.start + s.length - 0.5 && p.start + p.length > s.start + 0.5);
+    return out;
+  }
+  const fmtLen = (m) => (m < 1000 ? `${Math.round(m)} m` : C.fmtKm(m));
+  function stretchTitle(s) {   // "1419 m on Avenue Willowdale, Avenue Louis-Colin", as the old list said it
+    const names = s.gap ? s.gap.names.slice(0, 2) : [];
+    if (!s.gap) for (const p of [...s.pieces].filter((q) => q.tier <= 2).sort((a, b) => b.length - a.length)) for (const n of p.names || []) if (n && !names.includes(n) && names.length < 2) names.push(n);
+    return t("gapOn", { m: Math.round(s.length), name: names.map(I.place).join(", ") || t("aStreet") });
+  }
+  function stretchKinds(s) {   // what it is: the kinds of bike path, or busy and quiet streets (busy first), each with its length when there are several
+    const LABEL = { 0: "lgProtected", 1: "lgPainted", 2: "lgShared", 3: "quietStreet", 4: "busyStreet" }, by = {};
+    for (const p of s.pieces) if ((p.tier <= 2) === s.on && LABEL[p.tier]) by[p.tier] = (by[p.tier] || 0) + Math.min(p.start + p.length, s.start + s.length) - Math.max(p.start, s.start);
+    const kinds = Object.entries(by).sort((a, b) => (s.on ? 0 : (b[0] === "4") - (a[0] === "4")) || b[1] - a[1]);
+    return kinds.map(([tier, m]) => `${t(LABEL[tier])}${kinds.length > 1 ? ` <span class="num">${fmtLen(m)}</span>` : ""}`).join(" · ");
+  }
+  function strip(r, list, live, open) {   // live: the chips are buttons (the card in use); otherwise a picture of the route
+    const segs = list.map((s, k) => {
+      let bg = s.on ? COL.a : COL.gap;
+      if (s.pieces.some((p) => (p.tier <= 2) !== s.on)) {   // short crossings inside a stretch show as thin bands of their own colour
+        const bands = [];   // neighbours of one colour join, and each band starts where the last ended, so no seam shows between them
+        for (const p of s.pieces) {
+          const col = p.tier <= 2 ? COL.a : COL.gap, end = Math.min(1, (p.start + p.length - s.start) / s.length) * 100, last = bands[bands.length - 1];
+          if (last && last.col === col) last.b = end; else bands.push({ col, a: last ? last.b : 0, b: end });
+        }
+        bands[bands.length - 1].b = 100;
+        bg = `linear-gradient(90deg, ${bands.map((x) => `${x.col} ${x.a.toFixed(2)}% ${x.b.toFixed(2)}%`).join(", ")})`;
+      }
+      const num = s.num && s.length / r.length > 0.05 ? s.num : "", style = `flex-grow:${Math.round(s.length)};background:${bg}`;
+      const cls = `seg${s.on ? "" : " gap"}${open === k ? " on" : open !== null ? " dim" : ""}`;
+      return live ? `<button type="button" class="${cls}" data-s="${k}" aria-expanded="${open === k}" aria-label="${C.esc(stretchTitle(s))}" style="${style}">${num}</button>`
+        : `<i class="${cls}" style="${style}">${num}</i>`;
+    }).join("");
+    return `<div class="bar"${live ? ` role="group" aria-label="${t("lgLanes")}"` : ` aria-hidden="true"`}>${segs}</div>`;
+  }
+  function stretchDetails(s, k, n) {
+    const arrow = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+    return `<div class="rc-det-head"><i class="rc-key${s.on ? "" : " off"}"></i><b>${C.esc(stretchTitle(s))}</b>
+        <span class="rc-step"><button type="button" class="rc-prev" aria-label="${t("tourBack")}"${k ? "" : " disabled"}>${arrow("M15 5l-7 7 7 7")}</button>${k + 1}/${n}<button type="button" class="rc-next" aria-label="${t("tourNext")}"${k < n - 1 ? "" : " disabled"}>${arrow("M9 5l7 7-7 7")}</button></span></div>
+      <div class="rc-det-type${s.on ? "" : " off"}">${s.on ? "" : `${t(state.winter ? "withoutLaneWinter" : "withoutLane")} · `}${stretchKinds(s)}</div>
+      <div class="rc-det-at">${t("after", { d: C.fmtKm(s.start) })}</div>`;
+  }
+  function showStretch(r, s) {   // the stretch on the map (as the old list did on a tap), without moving the sheet
+    const pts = C.sliceCoords(r, s.start, s.start + s.length); if (pts.length < 2) return;
+    const xs = pts.map((c) => c[0]), ys = pts.map((c) => c[1]);
+    const top = 60 + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0);
+    const padding = isPhone() ? { top, bottom: sheetHeight(sheet.state) + 24, left: 24, right: 70 } : { top: 80, bottom: 80, left: 420, right: 90 };
+    map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], { padding, maxZoom: 17, duration: 600 });
+  }
+  // the open stretch, kept while the same route is on screen (a language switch redraws the card with it still open)
+  let openStretch = { r: null, k: null };
+  function wireStretches(card, r) {
+    const list = stretches(r), more = card.querySelector(".rc-more"), det = card.querySelector(".rc-det"), prof = card.querySelector(".rc-profile");
+    const show = (k, zoom) => {
+      openStretch = { r, k };
+      card.querySelectorAll(".bar .seg").forEach((b, j) => { b.classList.toggle("on", j === k); b.classList.toggle("dim", k !== null && j !== k); b.setAttribute("aria-expanded", String(j === k)); });
+      const sel = k === null ? null : list[k];
+      prof.innerHTML = C.gradeProfileSVG(r, { height: 68, label: t("elevation"), sel });
+      if (sel) {
+        det.innerHTML = stretchDetails(sel, k, list.length);
+        det.style.setProperty("--notch", `${(((sel.start + sel.length / 2) / r.length) * 100).toFixed(1)}%`);
+        det.querySelector(".rc-prev").onclick = () => show(k - 1, true);
+        det.querySelector(".rc-next").onclick = () => show(k + 1, true);
+        if (zoom) showStretch(r, sel);
+      }
+      more.classList.toggle("open", !!sel);
+    };
+    card.querySelectorAll(".bar .seg").forEach((b) => b.addEventListener("click", () => { const k = +b.dataset.s; show(openStretch.k === k ? null : k, true); }));
+    if (openStretch.r === r && openStretch.k !== null && list[openStretch.k]) show(openStretch.k, false); else openStretch = { r, k: null };
   }
   function placeText(p) { return !p ? "" : p.raw ? I.place(p.raw) : p.poiKind ? C.poiLabel(p.poiKind) : p.key ? t(p.key, p.vars || {}) : ""; }
   function routeTitle(c) {
@@ -1397,46 +1501,69 @@
     const s = h.steepest, name = C.climbName(r, s), d = s.length < 1000 ? `${Math.round(s.length)} m` : C.fmtKm(s.length);
     return `${t(h.list.length > 1 ? "climbsN" : "climbs1", { n: h.list.length, m })} ${t(name ? "steepestOn" : "steepest", { g: I.pct(s.grade), d, name: C.esc(I.place(name)) })}`;
   }
-  // the route card (2026-11-05, Raph's mix of the two mock-ups): title and time; the climbs in one sentence; the elevation
-  // coloured by grade; the bike-path strip; the share on bike paths. Elevation is told only here. In Suggest a ride each
-  // of the rides gets one, as a button that picks it.
+  // the route card (2026-11-05, Raph's mix of the two mock-ups; 2026-11-07 with the old "Without a bike path" list inside): title and time;
+  // the climbs in one sentence; the elevation coloured by grade; the bike-path strip of tappable stretches; the share on bike paths; a
+  // tapped stretch's details. Elevation is told only here. In Suggest a ride the rides not picked are buttons that pick them.
   function routeCard(c, i, pick) {
-    const r = c.r, note = routeNote(c), tag = pick ? "button" : "div";
-    return `<${tag} ${pick ? `type="button" data-i="${i}" ` : ""}class="route-card${pick && i === state.sel ? " sel" : ""}">
+    const r = c.r, note = routeNote(c), live = !pick || i === state.sel, tag = live ? "div" : "button", list = stretches(r);
+    return `<${tag} ${tag === "button" ? `type="button" ` : ""}data-i="${i}" class="route-card${pick && i === state.sel ? " sel" : ""}">
         <div class="rc-top"><b>${C.esc(routeTitle(c))}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
         <div class="rc-sub"><span class="rc-note">${C.esc(note)}</span><span class="rc-km">${C.fmtKm(r.length)}</span></div>
         <div class="rc-climb">${climbLine(r)}</div>
-        <div class="rc-profile">${C.gradeProfileSVG(r, { height: pick ? 56 : 68, label: t("elevation") })}</div>
-        ${pathBar(r)}
-        <div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div></${tag}>`;
+        <div class="rc-profile">${C.gradeProfileSVG(r, { height: live ? 68 : 56, label: t("elevation") })}</div>
+        ${strip(r, list, live, null)}
+        <div class="rc-under"><div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div>${list.some((s) => !s.on) ? "" : `<div class="rc-whole">${t("lanesWhole")}</div>`}</div>
+        ${live ? `<div class="rc-more"><div><div class="rc-det"></div></div></div>` : ""}</${tag}>`;
   }
   function renderRoutes() {
     const box = $("#routes"), det = $("#detail");
     if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
     const pick = state.routes.length > 1;   // Suggest a ride's three; one card for a route or a classic ride
     box.innerHTML = state.routes.map((c, i) => routeCard(c, i, pick)).join("");
-    if (pick) box.querySelectorAll(".route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
-    const sel = state.routes[state.sel], r = sel.r, gaps = C.mainGaps(r);
-    const gapHtml = gaps.length
-      ? `<div class="gaps">${gaps.map((g, i) => `<button type="button" class="gap-item" data-g="${i}"><span class="gi-icon">${i + 1}</span><span>${C.esc(t("gapOn", { m: Math.round(g.length), name: g.names.slice(0, 2).map(I.place).join(", ") || t("aStreet") }))}<br><small>${t(g.busy ? "busyStreet" : "quietStreet")} · ${t("after", { d: C.fmtKm(g.start) })}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>`
-      : `<div class="no-gaps">${t("lanesWhole")}</div>`;
+    box.querySelectorAll("button.route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
+    const sel = state.routes[state.sel], r = sel.r;
+    const live = box.querySelector(`div.route-card[data-i="${state.sel}"]`); if (live) wireStretches(live, r);
     const turns = r.maneuvers.map((m) => `<li>${C.esc(I.maneuver(m))} <span class="turn-at">· ${C.fmtKm(m.at)}</span></li>`).join("");
     const share = canShare() ? `<button type="button" class="share-btn" aria-label="${t("share")}" title="${t("share")}">${SHARE_ICON}</button>` : "";
     const wl = state.wx && state.wxData ? `<p class="wind-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3"/></svg>${C.esc(windLine(r))}</p>` : "";
     // share sits next to "Let's ride!" (2026-11-04): beside a heading it read as "share the elevation"
     det.innerHTML = `${wl}
-      <h2>${t(state.winter ? "withoutLaneWinter" : "withoutLane")}</h2>${gapHtml}
       <details class="turns"><summary>${t("turnByTurn", { n: r.maneuvers.length })}</summary><ol>${turns}</ol></details>
       <div class="ride-row"><button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>${share}</div>
       ${gpsDefault() ? `<button type="button" id="ride-preview" class="ride-preview">${t("previewRide")}</button>` : ""}`;
-    det.querySelectorAll(".gap-item").forEach((b) => b.addEventListener("click", () => {
-      const g = gaps[+b.dataset.g]; const cur = C.buildCursor(r); const p = cur.at(g.start + g.length / 2);
-      map.easeTo({ center: [p.lon, p.lat], zoom: 17, duration: 600 });
-    }));
     $("#ride-go").onclick = () => rideTap(gpsDefault());
     const shareBtn = det.querySelector(".share-btn"); if (shareBtn) shareBtn.onclick = shareRoute;
     if ($("#ride-preview")) $("#ride-preview").onclick = () => rideTap(false);
   }
+
+  // ------------------------------------------------------------------ comic-print button shadows (2026-11-07)
+  // Navy dots behind each main button, shifted down and right, growing toward the bottom-right corner like a printed fade (style.css .ht).
+  // Only the band the button leaves uncovered gets dots; redrawn when a button changes size; new buttons are found as they appear.
+  const HT_SEL = ".primary, .ride-go, .share-btn, .map-controls .view-btn, .map-controls .round-btn, .map-controls > .ctl-btn, .bar button.seg";
+  const htSize = new WeakMap(), htSeen = new WeakSet();
+  const htResize = "ResizeObserver" in window ? new ResizeObserver((es) => es.forEach((e) => paintDots(e.target))) : null;
+  function paintDots(el) {
+    const W = Math.round(el.offsetWidth), H = Math.round(el.offsetHeight), key = W + "x" + H;
+    if (!W || !H || htSize.get(el) === key) return;
+    htSize.set(el, key);
+    const off = parseFloat(getComputedStyle(el).getPropertyValue("--ht-off")) || 5, dots = [];
+    for (let y = 1.3, row = 0; y < H; y += 2.6, row++) for (let x = 1.3 + (row % 2) * 1.6; x < W; x += 3.2) {
+      if (x < W - off - 3 && y < H - off - 3) continue;   // under the button: never seen
+      const k = Math.min(1, Math.max(0, 0.15 + 0.85 * ((x / W) * 0.45 + (y / H) * 0.55)));
+      dots.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(0.35 + 1.15 * k * k).toFixed(2)}"/>`);
+    }
+    el.style.setProperty("--ht", `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" fill="${NAVY}">${dots.join("")}</svg>`)}")`);
+  }
+  function halftone() {
+    document.querySelectorAll(HT_SEL).forEach((el) => {
+      if (htSeen.has(el)) return;
+      htSeen.add(el); el.classList.add("ht"); el.parentElement.classList.add("ht-host");
+      paintDots(el); if (htResize) htResize.observe(el);
+    });
+  }
+  let htQueued = false;
+  new MutationObserver(() => { if (!htQueued) { htQueued = true; requestAnimationFrame(() => { htQueued = false; halftone(); }); } }).observe(document.body, { childList: true, subtree: true });
+  halftone();
 
   // ------------------------------------------------------------------ share a route: the system share sheet, or the link on the clipboard
   const SHARE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3.5M8 7l4-4 4 4M8 10.5H6.5A1.5 1.5 0 0 0 5 12v7a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-7a1.5 1.5 0 0 0-1.5-1.5H16"/></svg>';
@@ -1496,7 +1623,7 @@
     ["net-casing", "net-ab", "net-c"].forEach((id) => vis(id, toggles.network));
     ["rem-casing", "rem-line"].forEach((id) => vis(id, toggles.rem));
     vis("net-not-cleared", toggles.network && state.winter);
-    if (map.getLayer("net-ab")) map.setPaintProperty("net-ab", "line-opacity", browse ? 0.9 : 0.45);
+    if (map.getLayer("net-ab")) map.setPaintProperty("net-ab", "line-opacity", browse ? 0.6 : 0.35);
     ["planned", "construction", "construction-tape"].forEach((id) => vis(id, toggles.planned && browse && !state.winter));
     vis("closed", toggles.works);
     // while riding, roadside pop-ups replace the map's POI icons (only metro stations stay)
@@ -1508,7 +1635,7 @@
     document.body.classList.toggle("riding", riding);
     vis("tint", toggles.tint); vis("relief", toggles.relief);
     ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
-    vis("bld-flat", toggles.buildings && !state.is3d); vis("bld-3d", toggles.buildings && state.is3d);
+    ["bld-shadow", "bld-flat", "bld-line"].forEach((id) => vis(id, toggles.buildings && !state.is3d)); vis("bld-3d", toggles.buildings && state.is3d);
     showTrees(toggles.trees && state.is3d);
     setTerrain(toggles.terrain && state.is3d);
     // with a route on screen, keep only the POIs and works along it (plus metro and REM stations) to cut clutter
@@ -1685,7 +1812,7 @@
 
   // you: a heading cone lying on the street + an upright pin facing the camera
   const coneEl = document.createElement("div"); coneEl.className = "rider-cone";
-  coneEl.innerHTML = '<svg viewBox="0 0 120 120"><defs><radialGradient id="cg" cx="50%" cy="100%" r="90%"><stop offset="0" stop-color="#0095E6" stop-opacity=".55"/><stop offset="1" stop-color="#0095E6" stop-opacity="0"/></radialGradient></defs><path d="M60 64 28 6h64z" fill="url(#cg)"/><circle cx="60" cy="64" r="13" fill="#0095E6" stroke="#fff" stroke-width="5"/></svg>';
+  coneEl.innerHTML = '<svg viewBox="0 0 120 120"><defs><radialGradient id="cg" cx="50%" cy="100%" r="90%"><stop offset="0" stop-color="#1e2160" stop-opacity=".5"/><stop offset="1" stop-color="#1e2160" stop-opacity="0"/></radialGradient></defs><path d="M60 64 28 6h64z" fill="url(#cg)"/><circle cx="60" cy="64" r="13" fill="#1e2160" stroke="#fff" stroke-width="5"/></svg>';
   const riderMarker = new maplibregl.Marker({ element: coneEl, rotationAlignment: "map", pitchAlignment: "map", ...MARKER_SHOW });
   const badgeEl = document.createElement("div"); badgeEl.className = "rider-badge";
   badgeEl.innerHTML = PIN.from;   // the same plain blue pin as the start (2026-11-03: it had a bike in it)
@@ -2097,9 +2224,9 @@
     const clip = list.filter((c) => c.start < d1 && c.start + c.length > d0)
       .map((c) => `<rect x="${X(c.start).toFixed(1)}" y="0" width="${(X(c.start + c.length) - X(c.start)).toFixed(1)}" height="${H}"/>`).join("");
     return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><defs><clipPath id="hc-clip">${clip}</clipPath></defs>` +
-      `<path d="${area}" fill="#e9e4dc"/><path d="${area}" fill="${CLIMB.spark}" clip-path="url(#hc-clip)"/>` +
+      `<path d="${area}" fill="#e8e9f6"/><path d="${area}" fill="${CLIMB.spark}" clip-path="url(#hc-clip)"/>` +
       `<path d="${line}" fill="none" stroke="${CLIMB.ink}" stroke-width="1.4" stroke-linejoin="round"/>` +
-      `<circle cx="${X(d).toFixed(1)}" cy="${Y(C.elevAt(r, d)).toFixed(1)}" r="3.8" fill="#0095E6" stroke="#fff" stroke-width="1.6"/></svg>`;
+      `<circle cx="${X(d).toFixed(1)}" cy="${Y(C.elevAt(r, d)).toFixed(1)}" r="3.8" fill="${NAVY}" stroke="#fff" stroke-width="1.6"/></svg>`;
   }
   function rideEvent(ev) {
     if (ev.type === "gap") { chime(); C.voice.say(C.gapSentence(ev.gap, ev.dist)); }
@@ -2198,9 +2325,10 @@
   // legend: the elevation colours as they look on the map (tint over the Positron background)
   function buildElevationLegend() {
     const ramp = (window.ELEVATION_TINT || {}).ramp; if (!ramp) return;
-    const BG = [242, 243, 240];
+    const BG = [244, 239, 227];   // the paper, and the layer's -0.55 saturation and about 0.6 opacity (2026-11-07)
     const stops = ramp.map(([m, rgba], i) => {
-      const [r, g, b, a] = rgba.match(/[\d.]+/g).map(Number);
+      const [r0, g0, b0, a0] = rgba.match(/[\d.]+/g).map(Number), avg = (r0 + g0 + b0) / 3, a = a0 * 0.6;
+      const [r, g, b] = [r0, g0, b0].map((v) => v + (avg - v) * 0.55);
       const mix = (v, j) => Math.round(v * a + BG[j] * (1 - a));
       return `rgb(${mix(r, 0)},${mix(g, 1)},${mix(b, 2)}) ${((i / (ramp.length - 1)) * 100).toFixed(1)}%`;
     });

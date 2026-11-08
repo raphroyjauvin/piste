@@ -321,8 +321,9 @@
     hillCache.set(route, h);
     return h;
   }
-  // muted green (flat or downhill) -> yellow (moderate) -> red (steeper than 7 %, the card's climbs)
-  const GRADE_RGB = [[163, 189, 167], [214, 204, 166], [204, 164, 154]];
+  // pale lavender (flat or downhill) -> periwinkle (moderate) -> deep navy (steeper than 7 %, the card's climbs); 2026-11-07, the navy theme
+  // (orange is kept for "no bike path", on the strip right under the chart)
+  const GRADE_RGB = [[230, 231, 243], [167, 170, 214], [59, 64, 160]];
   function gradeColor(g) {
     const [G, Y, R] = GRADE_RGB, mix = (p, q, u) => p.map((v, i) => Math.round(v + (q[i] - v) * u));
     const c = g <= 0.02 ? G : g < 0.045 ? mix(G, Y, (g - 0.02) / 0.025) : g <= STEEP ? mix(Y, R, (g - 0.045) / (STEEP - 0.045)) : R;
@@ -330,7 +331,7 @@
   }
   // the card's elevation chart: the area under the clean profile coloured by each stretch's grade, blended over a
   // few metres at the joins; stretches of 10 m or less (joins, crossings) keep the colour before them.
-  // No numbers on it: the sentence above the chart carries them.
+  // No numbers on it: the sentence above the chart carries them. opts.sel ({ start, length }): a tapped stretch; the rest is greyed out.
   function gradeProfileSVG(route, opts = {}) {
     const W = 336, H = opts.height || 68, pr = hills(route).profile; if (pr.length < 2) return "";
     const zs = pr.map((p) => p[1]); let lo = Math.min(...zs), hi = Math.max(...zs);
@@ -349,11 +350,13 @@
     const blend = L * 0.006;
     const stops = segs.map((s) => { const e = Math.min(blend, (s.b - s.a) / 3);
       return `<stop offset="${((s.a + e) / L).toFixed(4)}" stop-color="${s.col}"/><stop offset="${((s.b - e) / L).toFixed(4)}" stop-color="${s.col}"/>`; }).join("");
-    const id = "pg" + Math.random().toString(36).slice(2, 8);
+    const id = "pg" + Math.random().toString(36).slice(2, 8), sel = opts.sel;
+    const veil = sel ? `<path class="pg-veil" d="M0 0H${X(sel.start).toFixed(1)}V${H}H0ZM${X(sel.start + sel.length).toFixed(1)} 0H${W}V${H}H${X(sel.start + sel.length).toFixed(1)}Z" fill="#fffdf8" opacity="0.62"/>` +
+      `<path d="M${X(sel.start).toFixed(1)} 0V${H}M${X(sel.start + sel.length).toFixed(1)} 0V${H}" stroke="#1e2160" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>` : "";
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="${esc(opts.label || "Elevation profile")}">` +
       `<defs><linearGradient id="${id}" x1="0" x2="${W}" y1="0" y2="0" gradientUnits="userSpaceOnUse">${stops}</linearGradient></defs>` +
       `<path d="M0 ${H}L${line.slice(1)}L${W} ${H}Z" fill="url(#${id})"/>` +
-      `<path d="${line}" fill="none" stroke="#6b7883" stroke-width="1.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+      `<path d="${line}" fill="none" stroke="#1e2160" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${veil}</svg>`;
   }
 
   // ---------------------------------------------------------------- geocoding (local + City of Montréal address API)
