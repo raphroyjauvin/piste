@@ -1,4 +1,4 @@
-// Renders the app icons from the Piste logo (prototypes/icons/logo.svg: a white P with the bike chain on a blue square, full bleed).
+// Renders the app icons from the Piste logo (prototypes/icons/logo.svg: a white P with the bike chain on a navy square, full bleed).
 // Usage, from anywhere: node tools/shots/make_icons.mjs
 //   prototypes/icons/apple-touch-icon.png (180), icon-192.png, icon-512.png   the logo as it is: the P stays inside the maskable safe zone
 //                                                                          (the central circle of 80 % of the side), so the 512 serves "any" and "maskable"
@@ -9,15 +9,16 @@ import fs from "node:fs";
 
 const PROTO = new URL("../../prototypes/", import.meta.url);
 const LOGO = fs.readFileSync(new URL("icons/logo.svg", PROTO), "utf8");
-const LOGO_SCALE = ".9", FAVICON_SCALE = "1";   // the P's size relative to the 512 square, as written in logo.svg and as used for the favicon
+const LOGO_SMALL = fs.readFileSync(new URL("icons/logo-small.svg", PROTO), "utf8");   // the same P without the teeth and the slot, for 16 and 32 px, where they would blur
+const LOGO_SCALE = ".6", FAVICON_SCALE = ".84";   // the P's size relative to the 512 square, as written in logo.svg and as used for the favicon
 if (!LOGO.includes(`scale(${LOGO_SCALE})`)) throw new Error("logo.svg no longer scales the P by " + LOGO_SCALE + ": update LOGO_SCALE");
 
-const svgAt = (px, scale) => LOGO.replace('width="512" height="512"', `width="${px}" height="${px}"`).replace(`scale(${LOGO_SCALE})`, `scale(${scale})`);
+const svgAt = (px, scale, logo = LOGO) => logo.replace('width="512" height="512"', `width="${px}" height="${px}"`).replace(`scale(${LOGO_SCALE})`, `scale(${scale})`);
 
 const browser = await chromium.launch({ channel: "msedge", headless: true });
-async function render(px, scale) {
+async function render(px, scale, logo) {
   const page = await browser.newPage({ viewport: { width: px, height: px }, deviceScaleFactor: 1 });
-  await page.setContent(`<html><body style="margin:0;background:#0095E6">${svgAt(px, scale)}</body></html>`);
+  await page.setContent(`<html><body style="margin:0;background:#1e2160">${svgAt(px, scale, logo)}</body></html>`);
   const png = await page.screenshot({ clip: { x: 0, y: 0, width: px, height: px } });
   await page.close();
   return png;
@@ -30,7 +31,7 @@ for (const [name, px] of [["apple-touch-icon.png", 180], ["icon-192.png", 192], 
 
 // favicon.ico: PNG pictures in an ICO container (every browser since 2009 reads them)
 const sizes = [16, 32, 48];
-const pngs = await Promise.all(sizes.map((px) => render(px, FAVICON_SCALE)));
+const pngs = await Promise.all(sizes.map((px) => render(px, FAVICON_SCALE, px < 48 ? LOGO_SMALL : LOGO)));
 const head = Buffer.alloc(6 + 16 * sizes.length);
 head.writeUInt16LE(1, 2); head.writeUInt16LE(sizes.length, 4);   // type 1 = icon, then the picture count
 let offset = head.length;
