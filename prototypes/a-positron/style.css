@@ -21,7 +21,7 @@
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; overflow: hidden; }
 body { font: 15px/1.45 var(--font-ui); color: var(--ink); background: var(--paper-2); -webkit-font-smoothing: antialiased; }
-#map { position: absolute; inset: 0; }
+#map { position: absolute; inset: 0; z-index: 0; isolation: isolate; }   /* its markers stay in the map's own layer, under the ride cards (iPhone Safari let 3D-transformed ones through) */
 .wind-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
 button { font: inherit; color: inherit; cursor: pointer; }
 /* Whatever you press does not zoom the page when tapped twice quickly (iPhone Safari), and panning and pinch zoom still work. The map keeps

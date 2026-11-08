@@ -369,7 +369,7 @@ await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, as
       if (r) for (let k = 1; k < r.legs.length; k++) { const a = app.router._legCoords(r.legs[k - 1]), b = app.router._legCoords(r.legs[k]); worst = Math.max(worst, dm(a[a.length - 1], b[0])); }
       return Math.round(worst); });
     const sights = (s.routes[0] && s.routes[0].r.stops || []).filter((x) => x.sight).length;
-    const photo = getComputedStyle(document.querySelector(".cc-photo")).backgroundImage.includes("photos/oldport.jpg");
+    const photo = getComputedStyle(document.querySelector(".cc-photo")).backgroundImage.includes("photos/traced/oldport.png");
     return { cards, lengths, jumps, sights, photo, panelVisible: !document.querySelector("#classics").hidden, first: s.classic };
   });
   await page.evaluate(() => { const tr = document.querySelector("#classic-track"); const c = tr.children[3]; tr.scrollLeft = c.offsetLeft - (tr.clientWidth - c.offsetWidth) / 2; });

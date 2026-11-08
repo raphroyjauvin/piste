@@ -1375,7 +1375,7 @@
       const r = classicCache.get(`${c.id}|${state.winter}`), cr = PHOTO_CREDITS[c.id], blurb = `<p class="cc-blurb">${C.esc(c.blurb[L])}</p>`;
       const body = r ? cardParts(c.name[L], "", r, i === state.classic && !!sel, blurb) : `<div class="rc-top"><b>${C.esc(c.name[L])}</b><span class="time">…</span></div>${blurb}`;
       return `<article class="classic-card route-card${i === state.classic ? " sel" : ""}" data-i="${i}" tabindex="0" aria-label="${C.esc(c.name[L])}">
-        <div class="cc-photo" style="background-image:url('../shared/photos/${c.id}.jpg')">${cr ? `<a class="cc-credit" href="${C.esc(cr.source)}" target="_blank" rel="noopener">${C.esc(t("photoBy", { credit: `${cr.author}, ${cr.license}` }))}</a>` : ""}</div>
+        <div class="cc-photo" style="background-image:url('../shared/photos/traced/${c.id}.png')">${cr ? `<a class="cc-credit" href="${C.esc(cr.source)}" target="_blank" rel="noopener">${C.esc(t("photoBy", { credit: `${cr.author}, ${cr.license}` }))}</a>` : ""}</div>
         <div class="cc-body">${body}</div></article>`;
     }).join("");
     dots.innerHTML = CLASSICS.map((_, i) => `<i class="${i === state.classic ? "on" : ""}"></i>`).join("");
