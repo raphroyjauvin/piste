@@ -434,6 +434,10 @@
   const treeImages = ["", "-n"].map((n) => Object.entries(TREE_SET).flatMap(([kind, set]) => set.map((_, i) => treePics[`tree-${kind}-${i}${n}`])));
   state.treesGL = !!window.BikeTrees3D;
   const treeLayer = state.treesGL ? BikeTrees3D.create(map, { id: "trees-gl", source: "trees", sourceLayer: "trees", images: treeImages, demZoom: 14, opacity: 0.85, onFail: treesFallback }) : null;
+  // 3D building edges (shared/edges3d.js, 2026-11-07): thin ink lines on the roofs, bases and corners of the 3D buildings; navy by day, light periwinkle at night.
+  // If WebGL can't draw them the layer stops quietly (one console warning) and the buildings simply have no lines.
+  const EDGE_COLORS = { day: [30, 33, 96, 0.92], night: [170, 176, 230, 0.55] };
+  const edgeLayer = window.BikeEdges3D ? BikeEdges3D.create(map, { id: "edges-gl", layerId: "bld-3d", minzoom: 15, color: EDGE_COLORS.day }) : null;
   function treesFallback(reason) {
     if (!state.treesGL) return;
     console.warn(`3D trees: WebGL drawing stopped (${reason}); showing the flat tree pictures instead`);
@@ -502,6 +506,7 @@
     const sky = state.night ? "#0f1626" : state.winter ? "#f3f5f8" : "#f4efe3";
     map.setSky({ "sky-color": sky, "horizon-color": sky, "fog-color": sky, "sky-horizon-blend": 0.7, "horizon-fog-blend": 0.9, "fog-ground-blend": 0.35, "atmosphere-blend": 0 });
     paintTrees();
+    if (edgeLayer) edgeLayer.setColor(EDGE_COLORS[state.night ? "night" : "day"]);
   }
   // "Night map" in the Layers panel: Auto (between sunset and sunrise in Montréal, worked out here), On or Off; kept in localStorage "piste-night"
   const nightPref = () => (["auto", "on", "off"].includes(store.get("night", "auto")) ? store.get("night", "auto") : "auto");
@@ -1610,6 +1615,11 @@
     }
     vis("trees-gl", on && state.treesGL); vis("trees-src", on && state.treesGL); vis("trees", on && !state.treesGL);
   }
+  function showEdges(on) {   // above the 3D buildings, added the first time they are needed
+    if (!edgeLayer || edgeLayer.error) return;
+    if (on && !map.getLayer("edges-gl")) map.addLayer(edgeLayer, "net-casing");
+    vis("edges-gl", on);
+  }
   function poiOn(p) {   // parks and viewpoints are always on
     if (p.group === "outdoors" && p.kind !== "culture") return true;
     if (p.group === "transit") return toggles[p.kind];   // metro, REM
@@ -1637,6 +1647,7 @@
     ["contours-detail", "contours-minor", "contours-index", "contour-labels"].forEach((id) => vis(id, toggles.contours));
     ["bld-shadow", "bld-flat", "bld-line"].forEach((id) => vis(id, toggles.buildings && !state.is3d)); vis("bld-3d", toggles.buildings && state.is3d);
     showTrees(toggles.trees && state.is3d);
+    showEdges(toggles.buildings && state.is3d);
     setTerrain(toggles.terrain && state.is3d);
     // with a route on screen, keep only the POIs and works along it (plus metro and REM stations) to cut clutter
     const sel = state.routes[state.sel];
@@ -2379,7 +2390,7 @@
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
-    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup, trees: treeLayer, treesFallback, wind, precip };
+    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup, trees: treeLayer, edges: edgeLayer, treesFallback, wind, precip };
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
     computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };
