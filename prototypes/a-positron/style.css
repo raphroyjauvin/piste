@@ -311,55 +311,61 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .turn-card span { font-size: 17px; }
 .turn-icon { width: 46px; height: 46px; flex: none; }
 .turn-icon svg { width: 46px; height: 46px; fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.gap-card { position: absolute; top: calc(108px + var(--safe-top)); left: 50%; transform: translateX(-50%); width: min(520px, calc(100% - 32px));
-  background: var(--gap-soft); color: var(--gap-ink); border: 1.5px solid #ffc9a8; border-radius: 16px; padding: 11px 16px;
-  display: flex; gap: 12px; align-items: center; font-size: 16px; box-shadow: var(--shadow); }
-.gap-card .gc-icon { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--gap); color: #fff; display: grid; place-items: center; font: 800 16px/1 var(--font-display); }
-.gap-card b { font-family: var(--font-display); }
-.gap-card.inside { background: #fff7ef; }
-.gap-card.ok { background: var(--navy-soft); color: var(--navy); border-color: #c9cbe8; }
-.gap-card.ok .gc-icon { background: var(--navy); }
-.hill-card { position: absolute; left: 50%; bottom: calc(96px + var(--safe-bottom)); transform: translateX(-50%); width: min(520px, calc(100% - 32px));
-  background: rgba(255, 255, 255, .96); border-radius: 16px; box-shadow: var(--shadow); padding: 8px 14px 8px 8px; display: flex; gap: 12px; align-items: center; color: var(--ink-2); }
-.hill-card.on-climb { background: rgba(232, 233, 246, .97); }
-.hill-spark { flex: none; width: 132px; height: 44px; border-radius: 10px; overflow: hidden; background: var(--paper-2); }
-.hill-spark svg { display: block; }
-.hill-text { display: flex; flex-direction: column; min-width: 0; }
-.hill-text b { font: 800 17px/1.15 var(--font-display); color: var(--climb-ink); }
-.hill-text span { font-size: 14px; line-height: 1.3; }
-.ride-bar { position: absolute; left: 50%; bottom: calc(20px + var(--safe-bottom)); transform: translateX(-50%); width: min(600px, calc(100% - 32px)); background: var(--paper); border-radius: 18px; box-shadow: var(--shadow);
-  padding: 10px 12px; display: flex; gap: 10px; align-items: center; }
-.ride-progress { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
-.ride-progress .progress { flex: 1; height: 8px; background: var(--paper-2); border-radius: 4px; overflow: hidden; min-width: 30px; }
-.ride-progress .progress i { display: block; height: 100%; width: 0; background: var(--navy); }
-/* wind during a ride: a still badge instead of the moving streaks. The arrow shows where the wind blows relative to the way you ride (up = the way you go) */
-.wind-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px 3px 6px; border-radius: 12px; background: var(--navy-soft); }
-.wind-badge svg { width: 22px; height: 22px; flex: none; fill: none; stroke: var(--navy-deep); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
-.wind-badge b { display: block; font: 800 14px/1.1 var(--font-display); color: var(--ink); white-space: nowrap; }
-.wind-badge small { display: block; font-size: 12px; line-height: 1.2; color: var(--ink-2); white-space: nowrap; }
-.wind-badge small:empty { display: none; }
-.ride-buttons { display: flex; gap: 8px; align-items: center; }
-#ride-remaining { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The ride card (design B, 2026-11-08). One card at the bottom: the route as a strip (navy on a bike path, orange without), with the distance
+   and time left below it; on its right a speed + GPS dial and a wind dial, side by side like a car's gauges. A gap or a climb ahead opens a
+   tinted callout on top of the card (the card grows upward), with a notch and a dotted line down to where it happens on the strip. */
+.ride-bar { position: absolute; left: 50%; bottom: calc(20px + var(--safe-bottom)); transform: translateX(-50%); width: min(600px, calc(100% - 32px));
+  background: var(--paper); border: 1.5px solid var(--navy); border-radius: 6px; box-shadow: var(--shadow); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.ride-gauges { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+.ride-progress { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ride-strip { position: relative; height: 12px; }
+.strip-runs { display: flex; gap: 2px; height: 100%; }
+.strip-runs i { display: block; flex-basis: 0; min-width: 3px; height: 100%; border-radius: 2px; }
+.strip-done { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(255, 253, 248, .62); }
+.strip-you { position: absolute; top: 50%; left: 0; z-index: 1; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: #fff; border: 4px solid var(--navy); }
+.ride-left { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font: italic 700 20px/1 var(--font-num); color: var(--navy); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* the two dials: a number in the middle, a small line above and below, and a gauge arc (270 degrees, the share filled in navy) */
+.dial { position: relative; width: 64px; height: 64px; border-radius: 50%; border: 1.5px solid #d8cfbd; background: var(--paper); color: var(--navy);
+  display: grid; grid-template-rows: 15px 1fr 13px; justify-items: center; align-items: center; padding: 5px 0 6px; }
+.dial-arc { position: absolute; inset: -1.5px; width: 64px; height: 64px; transform: rotate(135deg); pointer-events: none; fill: none; stroke-width: 3; }
+.arc-track { stroke: var(--line); stroke-dasharray: 143.7 191.6; }
+.arc-fill { stroke: var(--navy); stroke-dasharray: 0 191.6; transition: stroke-dasharray .6s ease; }
+.dial-top { display: inline-flex; align-items: center; gap: 3px; font: italic 700 13px/1 var(--font-num); white-space: nowrap; }
+.dial-top small { font: inherit; }
+.dial > b { font: italic 700 22px/1 var(--font-num); font-variant-numeric: tabular-nums; }
+.dial-unit { display: block; font: 600 9.5px/1 var(--font-num); color: var(--ink-2); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; transform-origin: 50% 50%; }
+.dial-arrow { width: 22px; height: 22px; fill: none; stroke: var(--navy); stroke-width: 2.6; stroke-linecap: square; stroke-linejoin: miter; }
+.gps-dot { width: 6px; height: 6px; border-radius: 50%; background: #2a9d8f; flex: none; }
+.ride-gps.waiting .gps-dot { background: #9aa5ae; animation: gps-pulse 1.4s ease-in-out infinite; }
+.ride-gps.off .gps-dot { background: var(--gap); }
+.ride-gps.sim .gps-dot { display: none; }   /* the preview has no GPS: the dial shows the preview's speed only */
+@keyframes gps-pulse { 50% { opacity: .35; } }
+/* the callout: what is coming up, with a notch and a dotted line down to its place on the strip (drawn in .ride-leads) */
+.ride-event { background: var(--paper-2); border-radius: 4px; padding: 9px 10px; margin-bottom: 4px; display: flex; flex-direction: column; gap: 8px; }
+.ev-item:not([hidden]) ~ .ev-item:not([hidden]) { border-top: 1px solid var(--line); padding-top: 8px; }
+.ev-gps { margin: 0; font: 700 14px/1.3 var(--font-display); color: var(--ink-2); }
+.ev-gps.off { color: var(--gap-ink); }
+.gap-card { display: flex; align-items: center; gap: 9px; font-size: 14px; line-height: 1.3; color: var(--ink); }
+.gap-card b { font: italic 700 1.15em/1 var(--font-num); color: var(--gap-ink); }
+.gap-card.ok b { color: var(--navy); }
+.gc-icon { flex: none; width: 24px; height: 24px; display: block; }
+.hill-card { display: flex; flex-direction: column; gap: 5px; }
+.hill-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hill-text b { font: 700 15px/1.15 var(--font-display); color: var(--climb-ink); }
+.hill-text span { font-size: 13px; line-height: 1.3; color: var(--ink-2); }
+.hill-spark svg { display: block; width: 100%; height: 44px; }
+.ride-leads { position: absolute; inset: 0; pointer-events: none; }
+.ride-leads .notch { position: absolute; width: 0; height: 0; margin-left: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: var(--paper-2); }
+.ride-leads .lead { position: absolute; width: 0; margin-left: -.75px; border-left: 1.5px dotted rgba(30, 33, 96, .6); }
+.ride-leads .tick { position: absolute; width: 2px; margin-left: -1px; background: var(--navy); }
+.ride-buttons { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .ride-bar .ctl-btn { box-shadow: none; background: var(--paper-2); }
 .icon-btn { width: 44px; height: 44px; padding: 0; display: grid; place-items: center; }
 .icon-btn svg { width: 24px; height: 24px; fill: none; stroke: var(--ink); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-/* GPS ride: your speed and the GPS accuracy, in place of the preview's speed and pause buttons */
-.ride-gps { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px 0 11px; border-radius: 12px; background: var(--paper-2); font-variant-numeric: tabular-nums; }
-.ride-gps > span { display: flex; flex-direction: column; line-height: 1.1; }
-.ride-gps b { font: 800 16px/1.1 var(--font-display); white-space: nowrap; }
-.ride-gps small { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
-.ride-gps small:empty { display: none; }
-.gps-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--navy); box-shadow: 0 0 0 3px var(--navy-soft); flex: none; }
-.ride-gps.waiting b { font: 700 14px/1.2 var(--font-ui); color: var(--ink-2); }
-.ride-gps.waiting .gps-dot { background: #9aa5ae; box-shadow: 0 0 0 3px #e8ecef; animation: gps-pulse 1.4s ease-in-out infinite; }
-.ride-gps.off small { color: var(--gap-ink); font-weight: 700; }
-.ride-gps.off .gps-dot { background: var(--gap); box-shadow: 0 0 0 3px var(--gap-soft); }
-@keyframes gps-pulse { 50% { opacity: .35; } }
-/* "Re-center": shows once you move the map by hand during a GPS ride */
-.recenter { position: absolute; left: 50%; bottom: calc(96px + var(--safe-bottom)); transform: translateX(-50%); border: 0; background: var(--paper); color: var(--navy-deep);
+/* "Re-center": shows once you move the map by hand during a GPS ride, just above the ride card (whatever its height: --bar-h) */
+.recenter { position: absolute; left: 50%; bottom: calc(32px + var(--bar-h, 150px) + var(--safe-bottom)); transform: translateX(-50%); border: 0; background: var(--paper); color: var(--navy-deep);
   border-radius: 999px; box-shadow: var(--shadow); padding: 10px 17px 10px 13px; display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
 .recenter svg { width: 18px; height: 18px; fill: var(--navy); }
-.ride-hud.hill-on .recenter { bottom: calc(172px + var(--safe-bottom)); }
 /* a calm message with a choice (location refused or unavailable) */
 .notice { position: absolute; top: 16px; left: 404px; z-index: 25; width: min(420px, calc(100% - 420px)); background: var(--paper); border-radius: 16px; box-shadow: var(--shadow);
   padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
@@ -561,15 +567,7 @@ body.riding .me-dot { display: none; }
   .view-btn svg, .round-btn svg { width: 26px; height: 26px; }
   .layers { width: min(280px, calc(100vw - 24px)); max-height: 60vh; }
   .wx-card { top: calc(12px + var(--safe-top)); left: 12px; right: 70px; max-width: none; font-size: 13px; }
-  .hill-spark { width: 108px; }
-  .hill-text b { font-size: 16px; }
-  .hill-text span { font-size: 13px; }
-  .ride-bar { flex-wrap: wrap; padding: 8px 10px; }
-  .ride-progress { flex-basis: 100%; }
-  .ride-buttons { width: 100%; justify-content: space-between; }
-  .hill-card { bottom: calc(132px + var(--safe-bottom)); }
-  .recenter { bottom: calc(132px + var(--safe-bottom)); }
-  .ride-hud.hill-on .recenter { bottom: calc(206px + var(--safe-bottom)); }
+  .ride-bar { padding: 10px; }
   .notice { top: calc(12px + var(--safe-top)); left: 12px; right: 12px; width: auto; }
   .ride-summary { top: auto; left: 12px; right: 12px; bottom: calc(12px + var(--safe-bottom)); width: auto; max-height: calc(100% - 24px - var(--safe-bottom)); padding: 14px 14px 6px; gap: 10px; }
   .rs-stats dd { font-size: 19px; }

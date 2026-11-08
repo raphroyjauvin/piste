@@ -167,21 +167,43 @@
 
 <div id="ride-hud" class="ride-hud" hidden>
   <div class="turn-card"><div id="turn-icon" class="turn-icon" aria-hidden="true"></div><div><b id="turn-dist">—</b><span id="turn-text"></span></div></div>
-  <div id="gap-card" class="gap-card" hidden></div>
-  <div id="hill-card" class="hill-card" hidden aria-live="polite">
-    <div id="hill-spark" class="hill-spark" aria-hidden="true"></div>
-    <div class="hill-text"><b id="hill-title"></b><span id="hill-sub"></span></div>
-  </div>
+  <!-- the ride card (design B, 2026-11-08): the route strip with distance and time below it, then a speed + GPS dial and a wind dial side by side.
+       A gap or a climb ahead opens a callout above, with a notch and a dotted line down to where it happens on the strip. -->
   <div class="ride-bar">
-    <div class="ride-progress"><div class="progress"><i id="progress"></i></div><span id="wind-badge" class="wind-badge" hidden><svg id="wind-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V5M6 11l6-6 6 6"/></svg><span><b id="wind-speed"></b><small id="wind-kind"></small></span></span><span id="ride-remaining">—</span></div>
+    <div id="ride-event" class="ride-event" hidden>
+      <p id="gps-msg" class="ev-item ev-gps" role="status" aria-live="polite" hidden></p>
+      <div id="gap-card" class="ev-item gap-card" hidden></div>
+      <div id="hill-card" class="ev-item hill-card" hidden aria-live="polite">
+        <div class="hill-text"><b id="hill-title"></b><span id="hill-sub"></span></div>
+        <div id="hill-spark" class="hill-spark" aria-hidden="true"></div>
+      </div>
+    </div>
+    <div class="ride-gauges">
+      <div class="ride-progress">
+        <div id="ride-strip" class="ride-strip" aria-hidden="true"><div class="strip-runs"></div><i id="progress" class="strip-done"></i><i id="ride-you" class="strip-you"></i></div>
+        <div id="ride-remaining" class="ride-left"><span id="ride-left-km">—</span><span id="ride-left-min"></span></div>
+      </div>
+      <div id="ride-gps" class="dial ride-gps waiting">
+        <svg class="dial-arc" viewBox="0 0 64 64" aria-hidden="true"><circle class="arc-track" cx="32" cy="32" r="30.5"/><circle class="arc-fill" cx="32" cy="32" r="30.5"/></svg>
+        <span class="dial-top"><i class="gps-dot" aria-hidden="true"></i><small id="gps-sub"></small></span>
+        <b id="gps-main"></b>
+        <small id="gps-unit" class="dial-unit"></small>
+      </div>
+      <div id="wind-badge" class="dial wind-dial" hidden>
+        <svg class="dial-arc" viewBox="0 0 64 64" aria-hidden="true"><circle class="arc-track" cx="32" cy="32" r="30.5"/><circle class="arc-fill" cx="32" cy="32" r="30.5"/></svg>
+        <span id="wind-speed" class="dial-top"></span>
+        <svg id="wind-arrow" class="dial-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V4M5 11l7-7 7 7"/></svg>
+        <small id="wind-kind" class="dial-unit"></small>
+      </div>
+    </div>
     <div class="ride-buttons">
       <button type="button" id="ride-sound" class="ctl-btn icon-btn" title="Sound"></button>
       <button type="button" id="ride-view" class="view-btn small" aria-label="Switch view"><svg viewBox="0 0 32 32" aria-hidden="true"><g class="cube"><path d="M16 5 26 10.5v11L16 27 6 21.5v-11z"/><path d="M6 10.5 16 16l10-5.5M16 16v11"/></g><g class="flat"><rect x="7" y="7" width="18" height="18" rx="2"/></g></svg></button>
       <button type="button" id="ride-speed" class="ctl-btn" title="Simulation speed">4×</button>
       <button type="button" id="ride-pause" class="ctl-btn" data-i18n="pause"></button>
-      <div id="ride-gps" class="ride-gps waiting" role="status" aria-live="polite" hidden><i class="gps-dot" aria-hidden="true"></i><span><b id="gps-main"></b><small id="gps-sub"></small></span></div>
       <button type="button" id="ride-exit" class="ctl-btn" data-i18n="end"></button>
     </div>
+    <div id="ride-leads" class="ride-leads" aria-hidden="true"></div>
   </div>
   <button type="button" id="ride-recenter" class="recenter" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 20l-7-3.6L5 20z"/></svg><span data-i18n="recenter"></span></button>
 </div>

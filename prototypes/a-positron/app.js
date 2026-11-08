@@ -1440,18 +1440,19 @@
     const kinds = Object.entries(by).sort((a, b) => (s.on ? 0 : (b[0] === "4") - (a[0] === "4")) || b[1] - a[1]);
     return kinds.map(([tier, m]) => `${t(LABEL[tier])}${kinds.length > 1 ? ` <span class="num">${fmtLen(m)}</span>` : ""}`).join(" · ");
   }
+  function segBg(s) {   // a stretch's colour; short crossings inside it show as thin bands of their own colour
+    if (!s.pieces.some((p) => (p.tier <= 2) !== s.on)) return s.on ? COL.a : COL.gap;
+    const bands = [];   // neighbours of one colour join, and each band starts where the last ended, so no seam shows between them
+    for (const p of s.pieces) {
+      const col = p.tier <= 2 ? COL.a : COL.gap, end = Math.min(1, (p.start + p.length - s.start) / s.length) * 100, last = bands[bands.length - 1];
+      if (last && last.col === col) last.b = end; else bands.push({ col, a: last ? last.b : 0, b: end });
+    }
+    bands[bands.length - 1].b = 100;
+    return `linear-gradient(90deg, ${bands.map((x) => `${x.col} ${x.a.toFixed(2)}% ${x.b.toFixed(2)}%`).join(", ")})`;
+  }
   function strip(r, list, live, open) {   // live: the chips are buttons (the card in use); otherwise a picture of the route
     const segs = list.map((s, k) => {
-      let bg = s.on ? COL.a : COL.gap;
-      if (s.pieces.some((p) => (p.tier <= 2) !== s.on)) {   // short crossings inside a stretch show as thin bands of their own colour
-        const bands = [];   // neighbours of one colour join, and each band starts where the last ended, so no seam shows between them
-        for (const p of s.pieces) {
-          const col = p.tier <= 2 ? COL.a : COL.gap, end = Math.min(1, (p.start + p.length - s.start) / s.length) * 100, last = bands[bands.length - 1];
-          if (last && last.col === col) last.b = end; else bands.push({ col, a: last ? last.b : 0, b: end });
-        }
-        bands[bands.length - 1].b = 100;
-        bg = `linear-gradient(90deg, ${bands.map((x) => `${x.col} ${x.a.toFixed(2)}% ${x.b.toFixed(2)}%`).join(", ")})`;
-      }
+      const bg = segBg(s);
       const num = s.num && s.length / r.length > 0.05 ? s.num : "", style = `flex-grow:${Math.round(s.length)};background:${bg}`;
       const cls = `seg${s.on ? "" : " gap"}${open === k ? " on" : open !== null ? " dim" : ""}`;
       return live ? `<button type="button" class="${cls}" data-s="${k}" aria-expanded="${open === k}" aria-label="${C.esc(stretchTitle(s))}" style="${style}">${num}</button>`
@@ -1717,7 +1718,7 @@
     if (state.from) fromEl.value = state.fromLabel; if (state.to) toEl.value = state.toLabel;
     setMapTexts(); renderRoutes(); refreshList(); renderWxCard(); renderSound(); buildElevationLegend(); renderSummary(); if (state.mode === "ride") updateWindBadge(true);
     if (!state.ride) $("#ride-pause").textContent = t("pause");
-    if (state.gpsState) gpsStatus(state.gpsState);
+    if (state.gpsState && state.ride && state.ride.gps) gpsStatus(state.gpsState);
     document.dispatchEvent(new Event("piste:lang"));   // tour.js redraws its text
   }
   $("#lang-btn").onclick = () => setLang(I.lang === "fr" ? "en" : "fr");
@@ -1844,13 +1845,19 @@
   badgeEl.innerHTML = PIN.from;   // the same plain blue pin as the start (2026-11-03: it had a bike in it)
   const badgeMarker = new maplibregl.Marker({ element: badgeEl, anchor: "bottom", pitchAlignment: "viewport", rotationAlignment: "viewport", ...MARKER_SHOW });
   const poiMarkers = new Map();
-  let smoothBearing = 0, afterGapUntil = 0, lastGapId = null, sparkAt = -1e9;
+  let smoothBearing = 0, afterGapUntil = 0, lastGapEnd = null, sparkAt = -1e9, sparkW = 0;
 
-  // keep the rider low on the screen so you see more of what's ahead
+  // keep the rider low on the screen so you see more of what's ahead, but always above the ride card: when a callout makes the card
+  // taller, the rider glides up to stay clear of it (rideFrame eases ridePad toward padTarget)
+  let ridePad = 0, padTarget = 0, barTop = 0;
+  function ridePadTarget() {
+    const H = map.getContainer().clientHeight, at = state.rideView === "birdseye" ? CAM.bird.riderAt : CAM.top.riderAt;
+    const y = barTop > 0 ? Math.min(at * H, barTop - 72) : at * H;
+    return Math.round(Math.max(0, 2 * y - H));
+  }
   function setRidePadding() {
-    const H = map.getContainer().clientHeight;
-    const at = state.rideView === "birdseye" ? CAM.bird.riderAt : CAM.top.riderAt;
-    map.setPadding({ top: Math.round(Math.max(0, (2 * at - 1) * H)), bottom: 0, left: 0, right: 0 });
+    padTarget = ridePad = ridePadTarget();
+    map.setPadding({ top: ridePad, bottom: 0, left: 0, right: 0 });
   }
   addEventListener("resize", () => { if (state.mode === "ride") setRidePadding(); });
 
@@ -1872,12 +1879,15 @@
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
     $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false);
     set3d(state.rideView === "birdseye", false);
-    setRidePadding();
+    // the ride card starts with the strip of this route and no callout
+    buildStrip(r); for (const id of ["#gps-msg", "#gap-card", "#hill-card"]) $(id).hidden = true; syncEvent([]);
+    measureBar(); setRidePadding();
     riderMarker.setLngLat(r.coords[0]).addTo(map); badgeMarker.setLngLat(r.coords[0]).addTo(map);
     Object.values(markers).forEach((m) => (m.getElement().style.display = "none"));
     smoothBearing = map.getBearing(); state.hillK = 0; sparkAt = -1e9;
-    // the preview has a speed and a pause button; a GPS ride shows your speed and the GPS instead
-    $("#ride-speed").hidden = gps; $("#ride-pause").hidden = gps; $("#ride-gps").hidden = !gps;
+    // the preview has a speed and a pause button, and its dial shows the preview's speed; a GPS ride's dial shows your speed and the GPS
+    $("#ride-speed").hidden = gps; $("#ride-pause").hidden = gps;
+    const dial = $("#ride-gps"); dial.classList.toggle("sim", !gps); dial.classList.remove("waiting", "off"); state.gpsState = null;   // a GPS ride sets it at once (gpsStatus "wait")
     state.follow = true; state.holding = false; glide = null; $("#ride-recenter").hidden = true; showRider(true);
     state.reroutes = 0; state.rerouteLog = []; state.rerouteFailAt = -1e9; state.join = null;
     return sel;
@@ -1888,6 +1898,7 @@
     $("#ride-pause").textContent = t("pause"); $("#ride-speed").textContent = "4×";
     const pois = C.routePOIs(r, window.POIS, 70);
     state.ride = new C.RideSim(r, { mult: 4, pois, onFrame: rideFrame, onEvent: rideEvent });
+    setSpeed(state.ride.speed * 3.6, "");
     state.ride.start();
   }
 
@@ -1969,11 +1980,12 @@
     return { type: "FeatureCollection", features };
   }
   function gpsStatus(s) {
-    const el = $("#ride-gps"); state.gpsState = s;
-    el.classList.toggle("waiting", s.state === "wait"); el.classList.toggle("off", s.state === "off");
-    if (s.state === "wait") { $("#gps-main").textContent = t("gpsWaiting"); $("#gps-sub").textContent = ""; return; }
-    $("#gps-main").textContent = t("kmh", { v: Math.round(s.kmh || 0) });
-    $("#gps-sub").textContent = s.state === "off" ? t("offRoute") : t("gpsAcc", { m: Math.round(s.acc) });
+    const el = $("#ride-gps"), msg = $("#gps-msg"), wait = s.state === "wait", off = s.state === "off"; state.gpsState = s;
+    el.classList.remove("sim"); el.classList.toggle("waiting", wait); el.classList.toggle("off", off);
+    // "Waiting for GPS…" and "Off route" don't fit in the dial: they open the callout on top of the card
+    msg.textContent = wait ? t("gpsWaiting") : off ? t("offRoute") : ""; msg.classList.toggle("off", off); msg.hidden = !(wait || off);
+    setSpeed(wait ? null : s.kmh || 0, wait ? "" : t("gpsAcc", { m: Math.round(s.acc) }));
+    syncEvent(evTargets);
   }
   function gpsError(e) {   // location refused (or no location at all): back to the route, with the preview on offer
     endRide();
@@ -2025,8 +2037,8 @@
     state.reroutes++;
     if (leadIn) setLeadIn(lead, nr);
     for (const mk of poiMarkers.values()) mk.remove();
-    poiMarkers.clear(); afterGapUntil = 0; lastGapId = null; sparkAt = -1e9;
-    ride.setRoute(nr, C.routePOIs(nr, window.POIS, 70));
+    poiMarkers.clear(); afterGapUntil = 0; lastGapEnd = null; sparkAt = -1e9;
+    ride.setRoute(nr, C.routePOIs(nr, window.POIS, 70)); buildStrip(nr);
     map.getSource("route").setData(rideRouteData(nr));
     map.getSource("route-alts").setData(empty);
     map.getSource("stops").setData(stopsData(nr));
@@ -2103,7 +2115,8 @@
     const r = state.ride.route, climbList = state.ride.extras.climbs;
     const bird = state.rideView === "birdseye";
     const target = hillFactor(f.d, climbList);
-    if (state.snap || f.snap) { state.hillK = target; smoothBearing = f.pos.heading; state.snap = false; }
+    const snap = state.snap || f.snap;
+    if (snap) { state.hillK = target; smoothBearing = f.pos.heading; state.snap = false; }
     else { state.hillK += (target - state.hillK) * 0.05; smoothBearing = lerpAngle(smoothBearing, f.pos.heading, 0.12); }
     const k = bird ? state.hillK : 0;
     if (map.terrain) {
@@ -2112,6 +2125,10 @@
     }
     const cam = bird ? CAM.bird : CAM.top;
     const view = { center: [f.pos.lon, f.pos.lat], bearing: smoothBearing, pitch: cam.pitch + k * CAM.hill.pitch, zoom: cam.zoom + k * CAM.hill.zoom };
+    if (Math.abs(padTarget - ridePad) > 0.5) {   // the ride card grew or shrank: the rider glides to stay above it
+      ridePad = snap ? padTarget : ridePad + (padTarget - ridePad) * 0.08;
+      view.padding = { top: Math.round(ridePad), bottom: 0, left: 0, right: 0 };
+    }
     if (glide) {   // "Re-center": ease from where you left the map to the rider
       const u = (performance.now() - glide.t0) / 500;
       if (u >= 1) glide = null;
@@ -2131,26 +2148,28 @@
     if (L.next) { $("#turn-dist").textContent = C.fmtKm(L.nextDist); $("#turn-text").textContent = I.maneuver(L.next); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`; }
     else { $("#turn-dist").textContent = C.fmtKm(f.total - f.d); $("#turn-text").textContent = t("arrive", { name: state.rideEnd }); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`; }
     rideHeading = f.pos.heading; updateWindBadge();
-    // gap card: calm, specific (only stretches of 50 m or more)
+    // gap callout: calm, specific (only stretches of 50 m or more). It points to where the gap starts, or, inside it, to where the bike path comes back.
     const card = $("#gap-card");
     const on = (g) => (g.names[0] ? (I.lang === "fr" ? " sur " : " on ") + C.esc(I.place(g.names[0])) : "");
+    let gapAt = null;
     if (L.inGap) {
-      const left = L.inGap.start + L.inGap.length - f.d; lastGapId = L.inGap.start;
-      card.className = "gap-card inside"; card.hidden = false;
-      card.innerHTML = `<span class="gc-icon">!</span><span>${state.winter ? t("gapInsideWinter", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })
+      const left = L.inGap.start + L.inGap.length - f.d; lastGapEnd = gapAt = L.inGap.start + L.inGap.length;
+      card.className = "ev-item gap-card inside"; card.hidden = false;
+      card.innerHTML = `${GAP_BADGE}<span>${state.winter ? t("gapInsideWinter", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })
         : t("gapInside", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap), tip: t(L.inGap.busy ? "rideTraffic" : "quietTip") })}</span>`;
     } else if (L.nextGap && L.nextGapDist <= 400) {
-      card.className = "gap-card"; card.hidden = false;
-      card.innerHTML = `<span class="gc-icon">!</span><span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: Math.round(L.nextGap.length), on: on(L.nextGap), busy: L.nextGap.busy ? t("busyTag") : "" })}</span>`;
-    } else if (lastGapId !== null && performance.now() < afterGapUntil) {
-      card.className = "gap-card ok"; card.hidden = false; card.innerHTML = `<span class="gc-icon">✓</span><span>${t("backOnLane")}</span>`;
+      gapAt = L.nextGap.start; card.className = "ev-item gap-card"; card.hidden = false;
+      card.innerHTML = `${GAP_BADGE}<span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: Math.round(L.nextGap.length), on: on(L.nextGap), busy: L.nextGap.busy ? t("busyTag") : "" })}</span>`;
+    } else if (lastGapEnd !== null && performance.now() < afterGapUntil) {
+      gapAt = lastGapEnd; card.className = "ev-item gap-card ok"; card.hidden = false; card.innerHTML = `${OK_BADGE}<span>${t("backOnLane")}</span>`;
     } else card.hidden = true;
-    if (lastGapId !== null && !L.inGap && afterGapUntil === 0) afterGapUntil = performance.now() + 5000;
+    if (lastGapEnd !== null && !L.inGap && afterGapUntil === 0) afterGapUntil = performance.now() + 5000;
     if (L.inGap) afterGapUntil = 0;
-    updateHillCard(f, r, climbList);
-    // progress
-    $("#progress").style.width = `${(f.d / f.total) * 100}%`;
-    $("#ride-remaining").textContent = `${C.fmtKm(f.total - f.d)} · ${C.fmtMin(((f.total - f.d) / 1000 / 16) * 60)}`;
+    const hillAt = updateHillCard(f, r, climbList);
+    syncEvent([gapAt, hillAt].filter((m) => m !== null));
+    // progress: the strip, with distance and time left below it
+    placeYou(f.d);
+    $("#ride-left-km").textContent = C.fmtKm(f.total - f.d); $("#ride-left-min").textContent = C.fmtMin(((f.total - f.d) / 1000 / 16) * 60);
     // roadside POIs: pop up as you approach, on their real side of the street. At most 8 at once, names on the 3 nearest.
     const near = L.pois.map((p) => ({ p, ahead: p.along - f.d })).filter((o) => o.ahead > -15).sort((a, b) => a.ahead - b.ahead).slice(0, 8);
     const named = new Set(near.filter((o) => o.ahead < 140).slice(0, 3).map((o) => o.p.i));
@@ -2178,6 +2197,85 @@
     map.redraw();
   }
 
+  // ---- the ride card (design B, 2026-11-08) ----
+  // The strip shows the route's stretches as "Your route" does (navy on a bike path, orange without). Distances turn into pixels through the
+  // runs as drawn (with the gaps between them and their minimum width), measured once per layout, so the dot, the fade and the lines sit on them.
+  const GAP_BADGE = `<svg class="gc-icon" viewBox="0 0 26 26" aria-hidden="true"><path d="M6 1h14l5 5v14l-5 5H6l-5-5V6z" fill="${COL.gap}" stroke="${NAVY}" stroke-width="1.5"/><path d="M13 6.5v9" stroke="#fff" stroke-width="3"/><path d="M11.4 18.2h3.2v3.2h-3.2z" fill="#fff"/></svg>`;
+  const OK_BADGE = `<svg class="gc-icon" viewBox="0 0 26 26" aria-hidden="true"><path d="M6 1h14l5 5v14l-5 5H6l-5-5V6z" fill="${NAVY}"/><path d="M7.5 13.5l3.8 3.8 7.4-8" fill="none" stroke="#fff" stroke-width="2.6"/></svg>`;
+  let stripList = [], stripRuns = null, stripAt = -1, evTargets = [], evKey = "";
+  function buildStrip(r) {
+    stripList = stretches(r); stripRuns = null; stripAt = -1;
+    $("#ride-strip .strip-runs").innerHTML = stripList.map((s) => `<i style="flex-grow:${Math.max(1, Math.round(s.length))};background:${segBg(s)}"></i>`).join("");
+  }
+  function stripX(m) {   // px from the strip's left edge
+    if (!stripRuns) {
+      const left = $("#ride-strip").getBoundingClientRect().left;
+      stripRuns = [...$("#ride-strip .strip-runs").children].map((el, k) => {
+        const b = el.getBoundingClientRect(), s = stripList[k];
+        return { start: s.start, end: s.start + s.length, left: b.left - left, width: b.width };
+      });
+    }
+    for (const u of stripRuns) if (m <= u.end) return u.left + Math.max(0, Math.min(1, (m - u.start) / (u.end - u.start || 1))) * u.width;
+    const u = stripRuns[stripRuns.length - 1]; return u ? u.left + u.width : 0;
+  }
+  function placeYou(d) {   // the done part fades and the dot is you
+    const x = stripX(d); if (Math.abs(x - stripAt) <= 0.25) return;
+    stripAt = x; $("#progress").style.width = `${x.toFixed(1)}px`; $("#ride-you").style.left = `${x.toFixed(1)}px`;
+  }
+  // the dials: a gauge arc of 270 degrees (the ring's r is 30.5), the share filled in navy
+  function setDial(el, k) { el.querySelector(".arc-fill").style.strokeDasharray = `${(143.7 * Math.max(0, Math.min(1, k))).toFixed(1)} 191.6`; }
+  function setSpeed(kmh, sub) {   // kmh null: no speed yet (waiting for GPS). The arc fills up to 40 km/h.
+    $("#gps-main").textContent = kmh === null ? "—" : String(Math.round(kmh));
+    $("#gps-unit").textContent = kmh === null ? "" : t("kmh", { v: "" }).trim();
+    $("#gps-sub").textContent = sub;
+    setDial($("#ride-gps"), (kmh || 0) / 40);
+  }
+  function fitLabel(el) {   // a long label ("Vent de côté") shrinks to fit between the ends of the gauge arc
+    el.style.transform = ""; const w = el.offsetWidth;
+    if (w > 40) el.style.transform = `scale(${(40 / w).toFixed(3)})`;
+    if (document.fonts.status !== "loaded") document.fonts.ready.then(() => fitLabel(el));   // measured again in its own font
+  }
+  // The callout shows while it holds something. Its notches, dotted lines and ticks (one per item with a place on the route) are redrawn only
+  // when what they point to changes, or when the card changes size (the ResizeObserver below), never every frame.
+  function syncEvent(targets) {
+    evTargets = targets;
+    const ev = $("#ride-event"), any = [...ev.children].some((c) => !c.hidden);
+    if (ev.hidden === any) ev.hidden = !any;
+    const key = any ? targets.map((m) => Math.round(m)).join(",") : "";
+    if (key !== evKey) { evKey = key; layoutLeads(); }
+  }
+  function layoutLeads() {
+    const box = $("#ride-leads"), ev = $("#ride-event");
+    if (ev.hidden || !evTargets.length) { box.innerHTML = ""; return; }
+    const b = box.getBoundingClientRect(), s = $("#ride-strip").getBoundingClientRect(), e = ev.getBoundingClientRect();
+    const y0 = e.bottom - b.top, y1 = s.top - b.top - 3, px = (v) => `${v.toFixed(1)}px`;
+    box.innerHTML = evTargets.map((m) => {
+      const x = s.left - b.left + stripX(m), nx = Math.max(e.left - b.left + 12, Math.min(e.right - b.left - 12, x));
+      return `<i class="notch" style="left:${px(nx)};top:${px(y0)}"></i><i class="lead" style="left:${px(x)};top:${px(y0 + 7)};height:${px(Math.max(0, y1 - y0 - 7))}"></i>` +
+        `<i class="tick" style="left:${px(x)};top:${px(y1)};height:${px(s.height + 6)}"></i>`;
+    }).join("");
+  }
+  function measureBar() {   // the card's height lifts "Re-center" above it; its top keeps the rider clear of it
+    const b = $(".ride-bar").getBoundingClientRect();
+    barTop = b.top - map.getContainer().getBoundingClientRect().top;
+    $("#ride-hud").style.setProperty("--bar-h", `${Math.round(b.height)}px`);
+  }
+  const cardRO = new ResizeObserver(() => {
+    if ($("#ride-hud").hidden) return;
+    measureBar(); padTarget = ridePadTarget();
+    if (state.follow && !(state.ride && state.ride.running) && Math.abs(padTarget - ridePad) > 0.5) {   // paused: no frame will ease it, so move now
+      ridePad = padTarget; map.setPadding({ top: ridePad, bottom: 0, left: 0, right: 0 });
+    }
+    stripRuns = null; stripAt = -1; if (state.ride) placeYou(state.ride.d);
+    layoutLeads();
+    const w = $("#hill-spark").clientWidth;
+    if (w && w !== sparkW) {   // the profile is drawn at the callout's width: draw it again now (a paused ride has no next frame)
+      sparkW = w; sparkAt = -1e9;
+      if (state.ride && !$("#hill-card").hidden) { $("#hill-spark").innerHTML = sparkSVG(state.ride.route, state.ride.d, state.ride.extras.climbs); sparkAt = state.ride.d; }
+    }
+  });
+  for (const el of [$(".ride-bar"), $("#ride-strip")]) cardRO.observe(el);   // the strip narrows when the wind dial appears
+
   // Wind during a ride (2026-11-01). The rain radar layer stays on if "wind & rain" was on, but the moving streaks (the #wind canvas, redrawn
   // every frame) are off for the whole ride: they cost battery and make the 3D camera choppy. A still badge in the ride bar says what the
   // wind does instead: an arrow for where it blows relative to the way you ride (up = the way you go), its speed, and head / tail / cross.
@@ -2204,12 +2302,15 @@
     windBadge.at = now; windBadge.h = rideHeading;
     const calm = wx.now.wind < 3, w = windRelative(rideHeading, wx.now.dir);
     $("#wind-arrow").style.transform = `rotate(${Math.round(w.rot)}deg)`; $("#wind-arrow").style.display = calm ? "none" : "";
-    $("#wind-speed").textContent = calm ? t("calm") : t("kmh", { v: Math.round(wx.now.wind) });
-    $("#wind-kind").textContent = calm ? "" : t("windKind_" + w.kind);
-    el.hidden = false;
+    // the dial: speed on top, the arrow in the middle, head / tail / cross (or "Calm wind") below; the arc fills up to 50 km/h
+    $("#wind-speed").textContent = calm ? "" : t("kmh", { v: Math.round(wx.now.wind) });
+    $("#wind-kind").textContent = calm ? t("calm") : t("windKind_" + w.kind);
+    setDial(el, calm ? 0 : wx.now.wind / 50);
+    el.hidden = false; fitLabel($("#wind-kind"));
   }
 
-  // hill card: the next ~800 m of elevation, with the climb shaded and you as the blue dot
+  // climb callout: the next ~800 m of elevation, with the climb shaded and you as the dot. Returns where its line on the strip points:
+  // the start of a climb ahead, or the top of the climb you are on (or just finished); null with no climb near.
   function updateHillCard(f, r, list) {
     const card = $("#hill-card");
     let cur = null, next = null, topped = null;
@@ -2220,8 +2321,7 @@
       else if (c.start > f.d && !next) next = c;
     }
     const c = cur || topped || (next && next.start - f.d < 600 ? next : null);
-    $("#ride-hud").classList.toggle("hill-on", !!c);   // lifts the "Re-center" button above the card
-    if (!c) { card.hidden = true; return; }
+    if (!c) { card.hidden = true; return null; }
     card.hidden = false; card.classList.toggle("on-climb", !!cur);
     let title, sub;
     if (cur) {
@@ -2238,21 +2338,22 @@
     }
     $("#hill-title").textContent = title; $("#hill-sub").textContent = sub;
     if (Math.abs(f.d - sparkAt) > 4) { $("#hill-spark").innerHTML = sparkSVG(r, f.d, list); sparkAt = f.d; }
+    return cur || topped ? c.start + c.length : c.start;
   }
-  function sparkSVG(r, d, list) {
-    const W = 132, H = 44, d0 = d - 60, d1 = d + 740;
+  function sparkSVG(r, d, list) {   // drawn at the callout's own width (sparkW, kept by the ride card's ResizeObserver), so the dot stays round
+    const W = sparkW || (sparkW = $("#hill-spark").clientWidth) || 314, H = 44, d0 = d - 60, d1 = d + 740;
     const pts = C.profileWindow(r, d0, d1, 10);
     let zmin = Math.min(...pts.map((p) => p[1])), zmax = Math.max(...pts.map((p) => p[1]));
     if (zmax - zmin < 24) { const m = (zmax + zmin) / 2; zmin = m - 12; zmax = m + 12; }   // 2026-10-29: gentler (was 12 m)
-    const X = (v) => ((v - d0) / (d1 - d0)) * W, Y = (z) => 5 + (1 - (z - zmin) / (zmax - zmin)) * (H - 11);
+    const X = (v) => ((v - d0) / (d1 - d0)) * W, Y = (z) => 7 + (1 - (z - zmin) / (zmax - zmin)) * (H - 14);
     const line = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)} ${Y(p[1]).toFixed(1)}`).join("");
     const area = `${line}L${W} ${H}L0 ${H}Z`;
     const clip = list.filter((c) => c.start < d1 && c.start + c.length > d0)
       .map((c) => `<rect x="${X(c.start).toFixed(1)}" y="0" width="${(X(c.start + c.length) - X(c.start)).toFixed(1)}" height="${H}"/>`).join("");
     return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><defs><clipPath id="hc-clip">${clip}</clipPath></defs>` +
       `<path d="${area}" fill="#e8e9f6"/><path d="${area}" fill="${CLIMB.spark}" clip-path="url(#hc-clip)"/>` +
-      `<path d="${line}" fill="none" stroke="${CLIMB.ink}" stroke-width="1.4" stroke-linejoin="round"/>` +
-      `<circle cx="${X(d).toFixed(1)}" cy="${Y(C.elevAt(r, d)).toFixed(1)}" r="3.8" fill="${NAVY}" stroke="#fff" stroke-width="1.6"/></svg>`;
+      `<path d="${line}" fill="none" stroke="${CLIMB.ink}" stroke-width="1.5" stroke-linejoin="round"/>` +
+      `<circle cx="${X(d).toFixed(1)}" cy="${Y(C.elevAt(r, d)).toFixed(1)}" r="4.5" fill="#fff" stroke="${NAVY}" stroke-width="3"/></svg>`;
   }
   function rideEvent(ev) {
     if (ev.type === "gap") { chime(); C.voice.say(C.gapSentence(ev.gap, ev.dist)); }
@@ -2288,7 +2389,7 @@
     $("#panel").hidden = $("#legend").hidden = document.querySelector(".map-controls").hidden = showSum;   // the summary card takes their place until "Done"
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     hideSummary();
-    setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapId = null;
+    setMode(state.routes.length ? "route" : "explore"); afterGapUntil = 0; lastGapEnd = null;
     if (newRoute) drawRoutes();   // the planned routes again, not the reroute or the classic ride from where you were
     if (showSum) state.summary = sum;
     refreshSections(); wind.show(state.wx); renderWxCard();

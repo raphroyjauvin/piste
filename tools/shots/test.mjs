@@ -242,6 +242,50 @@ await run("climbs and hill-ahead (toned down)", `${APP}?trip=rachel`, async (pag
   return { ok: flatEx === 1.6 && ahead.ex > 1.6 && ahead.ex <= 2.5 && /Climb in/.test(ahead.card) && /Climbing/.test(on), climbs: sel.climbs.length, flatEx, ahead, on };
 }));
 
+// ---- the ride card, design B (2026-11-08): the route strip with distance and time below it, a speed dial and a wind dial on its right, and a
+// callout that opens on top of the card with a notch and a dotted line down to where the gap or climb is on the strip ----
+await run("ride card: route strip, two dials, and a callout whose line lands on its place on the strip; the rider stays above the card", `${APP}?from=-73.5817,45.5246&to=-73.6150,45.5035`, async (page) => page.evaluate(async () => {
+  const app = window.__app, s = app.state, C = window.BikeCommon, q = (x) => document.querySelector(x), box = (el) => (typeof el === "string" ? q(el) : el).getBoundingClientRect();
+  const frames = () => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+  app.startRide("birdseye"); app.pauseRide(true);
+  const r = s.ride.route, L = r.length, climbs = s.ride.extras.climbs, gaps = C.mainGaps(r);
+  const at = async (d) => { s.snap = true; s.ride.seek(d); await frames(); await frames(); };
+  // somewhere quiet (no gap or climb near): no callout, no lines
+  let calm = null;
+  for (let d = 0; d < L - 500 && calm === null; d += 50) {
+    const nearGap = gaps.some((g) => d < g.start + g.length + 80 && g.start - d < 450), nearClimb = climbs.some((c) => d < c.start + c.length + 80 && c.start - d < 650);
+    if (!nearGap && !nearClimb) calm = d;
+  }
+  let quiet = null;
+  if (calm !== null) { await at(calm); quiet = { event: q("#ride-event").hidden, lines: q("#ride-leads").children.length }; }
+  // 200 m before a gap: the callout warns, and one of its ticks sits where the gap's orange run starts
+  const gap = gaps.find((g, k) => g.start > 300 && (k === 0 || g.start - (gaps[k - 1].start + gaps[k - 1].length) > 260));   // with bike path before it
+  await at(gap.start - 200);
+  const strip = box("#ride-strip"), bar = box(".ride-bar"), ev = box("#ride-event"), you = box("#ride-you");
+  const runs = [...q("#ride-strip .strip-runs").children].map((el) => ({ left: box(el).left, orange: /255, 106, 31/.test(el.style.background) }));
+  const ticks = [...document.querySelectorAll("#ride-leads .tick")].map((t) => { const b = box(t); return b.left + b.width / 2; });
+  const leads = [...document.querySelectorAll("#ride-leads .lead")].map((t) => box(t)), notches = document.querySelectorAll("#ride-leads .notch").length;
+  const card = { event: !q("#ride-event").hidden, gapShown: !q("#gap-card").hidden, gapText: q("#gap-card").textContent.trim().slice(0, 60), ticks: ticks.length, notches, leads: leads.length,
+    tickOnGap: ticks.some((x) => runs.some((u) => u.orange && Math.abs(u.left - x) <= 3)),
+    ticksOnStrip: ticks.every((x) => x >= strip.left - 1 && x <= strip.right + 1),
+    leadsBetween: leads.every((b) => b.top >= ev.bottom - 1 && b.bottom <= strip.top + 1),
+    calloutAbove: ev.bottom < strip.top, youOnStrip: you.left + you.width / 2 >= strip.left - 1 && you.left + you.width / 2 <= Math.min(...ticks) + 1 };
+  // the dials: two 64 px circles side by side to the right of the strip, inside the card; the preview's speed dial shows its 16 km/h
+  const dials = ["#ride-gps", "#wind-badge"].filter((x) => !q(x).hidden).map((x) => box(x));
+  const gauges = { n: dials.length, round: dials.every((b) => Math.round(b.width) === 64 && Math.round(b.height) === 64), right: dials.every((b) => b.left >= strip.right),
+    inside: dials.every((b) => b.left >= bar.left && b.right <= bar.right), speed: q("#gps-main").textContent, unit: q("#gps-unit").textContent,
+    left: q("#ride-left-km").textContent + " | " + q("#ride-left-min").textContent };
+  // the rider is drawn above the (taller) card, and "Re-center" sits above it too
+  const rider = app.map.project(app.riderMarker.getLngLat()).y + box("#map").top;
+  const placed = { riderAboveCard: rider < bar.top - 30, recenterAbove: parseFloat(getComputedStyle(q("#ride-recenter")).bottom) >= innerHeight - bar.top, noSideScroll: document.documentElement.scrollWidth <= innerWidth };
+  app.endRide();
+  const ok = (quiet === null || (quiet.event && quiet.lines === 0)) && card.event && card.gapShown && card.ticks >= 1 && card.notches === card.ticks && card.leads === card.ticks
+    && card.tickOnGap && card.ticksOnStrip && card.leadsBetween && card.calloutAbove && card.youOnStrip
+    && gauges.n >= 1 && gauges.round && gauges.right && gauges.inside && gauges.speed === "16" && gauges.unit === "km/h" && /m/.test(gauges.left) && /min/.test(gauges.left)
+    && placed.riderAboveCard && placed.recenterAbove && placed.noSideScroll;
+  return { ok, calm, quiet, card, gauges, placed: { ...placed, rider: Math.round(rider), barTop: Math.round(bar.top) } };
+}), { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
 await run("suggest a ride: custom loops, stops, 100 km box, headwinds", `${APP}?trip=montroyal`, async (page) => page.evaluate(async (fix) => {
   const app = window.__app, s = app.state;
   app.setTab("suggest"); app.setSuggMode("custom");
@@ -923,7 +967,7 @@ await run("GPS ride (replayed track): follows the route, ignores poor fixes, re-
     document.querySelector("#ride-go").click(); window.__flatRide();
     const ride = s.ride, geo = ride.geo;
     const ui = { gps: !!(ride && ride.gps), speedHidden: document.querySelector("#ride-speed").hidden, pauseHidden: document.querySelector("#ride-pause").hidden,
-      gpsShown: !document.querySelector("#ride-gps").hidden, first: document.querySelector("#ride-gps").textContent };
+      gpsShown: !document.querySelector("#ride-gps").hidden, first: document.querySelector("#gps-msg").textContent };
     // at every map draw: is the rider on the route, near the latest fix and the true position, with the camera on it?
     const st = { frames: 0, backwards: 0, offLine: 0, fixMax: 0, fixSum: 0, trueMax: 0, trueSum: 0, camMax: 0, stepMax: 0, stepOver: 0, dtMax: 0, dtSum: 0 };
     const v = geo.v * geo.k;   // how fast the pretend rider really moves (m/s)
@@ -1220,9 +1264,9 @@ await run("GPS: location refused shows a calm message, and the preview still wor
   await sleep(1200); const d1 = s.ride ? s.ride.d : -1;
   for (const t0 = performance.now(); s.ride && s.ride.d <= d1 && performance.now() - t0 < 15000;) await sleep(100);   // slow machines draw few frames
   const d2 = s.ride ? s.ride.d : -1;
-  const preview = { sim: !!s.ride && !s.ride.gps, speedShown: !document.querySelector("#ride-speed").hidden, gpsHidden: document.querySelector("#ride-gps").hidden, noticeGone: document.querySelector("#notice").hidden };
+  const preview = { sim: !!s.ride && !s.ride.gps, speedShown: !document.querySelector("#ride-speed").hidden, dialSim: document.querySelector("#ride-gps").classList.contains("sim") && /^16$/.test(document.querySelector("#gps-main").textContent), noticeGone: document.querySelector("#notice").hidden };
   return { ok: previewLink && /can't use your location/.test(notice) && /accès à votre position/.test(fr) && back.ride && back.panel && back.hudHidden && back.previewButton
-      && preview.sim && preview.speedShown && preview.gpsHidden && preview.noticeGone && d1 >= 0 && d2 > d1,
+      && preview.sim && preview.speedShown && preview.dialSim && preview.noticeGone && d1 >= 0 && d2 > d1,
     previewLink, notice: notice.slice(0, 70), fr: fr.slice(0, 50), back, preview, previewAdvanced: [Math.round(d1), Math.round(d2)] };
 }));
 
@@ -1251,15 +1295,15 @@ await run("phone: GPS ride bar, preview link", `${APP}?trip=rachel&gps=replay&gp
   for (const t0 = performance.now(); !/km\/h/.test(document.querySelector("#ride-gps").textContent) && performance.now() - t0 < 20000;) await sleep(100);   // first fixes in
   await sleep(1500);
   const bar = document.querySelector(".ride-bar").getBoundingClientRect();
-  const shown = [...document.querySelectorAll(".ride-buttons > *")].filter((el) => !el.hidden);
+  const shown = [...document.querySelectorAll(".ride-buttons > *")].filter((el) => !el.hidden), dial = document.querySelector("#ride-gps");
   const ui = { gps: !!(s.ride && s.ride.gps), shown: shown.map((el) => el.id).join(","), status: document.querySelector("#ride-gps").textContent,
-    fits: shown.every((el) => { const r = el.getBoundingClientRect(); return r.left >= bar.left - 0.5 && r.right <= bar.right + 0.5 && r.bottom <= bar.bottom + 0.5; }),
+    fits: [...shown, dial].every((el) => { const r = el.getBoundingClientRect(); return r.left >= bar.left - 0.5 && r.right <= bar.right + 0.5 && r.bottom <= bar.bottom + 0.5; }),
     scrollW: document.documentElement.scrollWidth, innerW: innerWidth };
   app.endRide(); pv.click(); await sleep(800);
-  const preview = { sim: !!s.ride && !s.ride.gps, speedShown: !document.querySelector("#ride-speed").hidden, gpsHidden: document.querySelector("#ride-gps").hidden };
+  const preview = { sim: !!s.ride && !s.ride.gps, speedShown: !document.querySelector("#ride-speed").hidden, dialSim: document.querySelector("#ride-gps").classList.contains("sim") };
   app.endRide();
-  return { ok: link.coarse && link.preview && link.below && link.text === "Preview the ride" && ui.gps && ui.shown === "ride-sound,ride-view,ride-gps,ride-exit" && /km\/h/.test(ui.status)
-      && ui.fits && ui.scrollW <= ui.innerW && preview.sim && preview.speedShown && preview.gpsHidden, link, ui, preview };
+  return { ok: link.coarse && link.preview && link.below && link.text === "Preview the ride" && ui.gps && ui.shown === "ride-sound,ride-view,ride-exit" && /km\/h/.test(ui.status)
+      && ui.fits && ui.scrollW <= ui.innerW && preview.sim && preview.speedShown && preview.dialSim, link, ui, preview };
 }), { width: 402, height: 874 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ first test ride fixes (2026-11-01): music after prompts, shields, place names, wind, ride summary
@@ -2905,6 +2949,7 @@ await run("place pop-up: More info searches the name + Montréal in a new tab (n
 });
 
 // ---- REM (2026-11-02): light-rail tracks and stations next to the metro, with their own Layers checkbox and credit ----
+// 2026-11-08: the REM credit is in About & terms; the map's (i) holds only the basemap's line
 await run("REM: tracks and stations on the map, a Layers checkbox, the credit", `${APP}?trip=montroyal`, async (page) => {
   await page.evaluate(() => { window.__app.map.jumpTo({ center: [-73.5655, 45.4999], zoom: 15 }); });   // Gare Centrale
   await page.evaluate(idle);
@@ -2918,7 +2963,7 @@ await run("REM: tracks and stations on the map, a Layers checkbox, the credit", 
     cb.click(); await new Promise((r) => setTimeout(r, 300));
     const found = (await BikeCommon.makeGeocoder(window.__app.router).search("Gare Centrale")).some((r) => r.kind === "rem");
     return { before, stationCount: names.length, hasGare: names.includes("Gare Centrale"), lineColor: m.getPaintProperty("rem-line", "line-color"), image: m.hasImage("poi-rem"), off, found,
-      credit: document.querySelector(".maplibregl-ctrl-attrib-inner").textContent.includes("REM (OpenStreetMap)"), label: cb.parentElement.textContent.trim() };
+      credit: document.querySelector("#about").textContent.includes("REM (OpenStreetMap)"), label: cb.parentElement.textContent.trim() };
   });
   const ok = out.before.line > 0 && out.before.stations > 0 && out.before.visible && out.stationCount >= 20 && out.hasGare && out.lineColor === "#84BD00" && out.image
     && out.off.every((v) => v === "none") && out.found && out.credit && out.label === "REM";
