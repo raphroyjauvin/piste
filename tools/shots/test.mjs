@@ -347,10 +347,11 @@ await run("winter mode: 4-season routing, icy map, labels", `${APP}?trip=montroy
   await new Promise((r) => setTimeout(r, 500));
   const winter = { share: s.routes[0].r.infraShare, bg: m.getPaintProperty("background", "background-color"), pressed: document.querySelector("#winter-btn").getAttribute("aria-pressed"),
     card: document.querySelector("#wx-card").hidden ? "" : document.querySelector("#wx-card").textContent, notCleared: m.getLayoutProperty("net-not-cleared", "visibility"),
-    gapHeading: document.querySelector("#detail").textContent.includes("Without a winter-cleared bike path") };
+    gapHeading: (() => { const g = document.querySelector("#routes .route-card .bar .seg.gap"); if (!g) return true; g.click();   // 2026-11-07: the stretch's details say it
+      const ok = document.querySelector(".rc-det-type").textContent.includes("Without a winter-cleared bike path"); g.click(); return ok; })() };
   app.setWinter(false);
   const back = m.getPaintProperty("background", "background-color");
-  return { ok: winter.bg === "#eef4f8" && winter.pressed === "true" && /4-season/.test(winter.card) && winter.notCleared === "visible" && winter.gapHeading && JSON.stringify(back) === JSON.stringify(summer.bg),
+  return { ok: winter.bg === "#f3f5f8" && winter.pressed === "true" && /4-season/.test(winter.card) && winter.notCleared === "visible" && winter.gapHeading && JSON.stringify(back) === JSON.stringify(summer.bg),
     summerShare: Math.round(summer.share * 100), winterShare: Math.round(winter.share * 100), winterCard: winter.card.slice(0, 160) };
 }));
 
@@ -2222,7 +2223,7 @@ await run("offline: the service worker keeps the app and routing working without
 }, undefined, { serviceWorkers: "allow" });
 
 // ---- Night map (2026-11-02): Auto / On / Off in the Layers panel; the basemap goes dark, the route and bike-path colours do not change ----
-await run("night map: Auto/On/Off, dark basemap, route and bike-path colours unchanged, sunrise and sunset", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+await run("night map: Auto/On/Off, dark basemap, bike paths and route lighter (orange and warnings unchanged), sunrise and sunset", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
   const a = window.__app, m = a.map, wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const semantic = () => JSON.stringify(["route-solid", "route-shared", "route-quiet", "route-alts", "net-ab", "net-c", "construction", "closed"].map((id) => m.getPaintProperty(id, "line-color")));
   const bg = () => m.getPaintProperty("background", "background-color"), water = () => m.getPaintProperty("water", "fill-color");
@@ -2237,12 +2238,17 @@ await run("night map: Auto/On/Off, dark basemap, route and bike-path colours unc
   a.setWinter(true); radios.find((r) => r.value === "on").click(); await wait(500);
   const both = bg(); radios.find((r) => r.value === "off").click(); await wait(500);
   const winterBack = bg(); a.setWinter(false);
+  // 2026-11-07: navy bike paths and routes would vanish on the ink-navy ground, so at night they turn periwinkle; orange (no bike path),
+  // the alternatives, construction and closures keep their colours
+  const nightColours = (d, n) => { const D = JSON.parse(d), N = JSON.parse(n), keep = [2, 3, 6, 7], navy = [0, 1, 4, 5];
+    return keep.every((i) => JSON.stringify(D[i]) === JSON.stringify(N[i])) && navy.every((i) => JSON.stringify(D[i]) !== JSON.stringify(N[i]))
+      && JSON.stringify(D[0]).includes("#ff6a1f") && JSON.stringify(N[0]).includes("#ff6a1f") && JSON.stringify(N).includes("#aab0ff"); };
   // sunrise and sunset in Montréal (Jun 21: 05:06 / 20:46 EDT; Dec 21: 07:25 / 16:23 EST), 15 minutes either side
   const n = (s) => BikeCommon.isNight(new Date(s));
   const sun = [n("2026-06-21T08:50:00Z"), !n("2026-06-21T09:25:00Z"), !n("2026-06-22T00:30:00Z"), n("2026-06-22T01:05:00Z"),
     n("2026-12-21T12:10:00Z"), !n("2026-12-21T12:40:00Z"), !n("2026-12-21T21:10:00Z"), n("2026-12-21T21:40:00Z")];
-  const ok = day.checked === "off" && night.bg !== day.bg && night.water !== day.water && night.bg === "#0f1626" && night.semantic === day.semantic && !day.semantic.includes("null") && night.stored === "on" && night.body
-    && back === day.bg && both === "#0f1626" && winterBack === "#eef4f8" && sun.every(Boolean) && tap >= 44;
+  const ok = day.checked === "off" && night.bg !== day.bg && night.water !== day.water && night.bg === "#0f1626" && nightColours(day.semantic, night.semantic) && !day.semantic.includes("null") && night.stored === "on" && night.body
+    && back === day.bg && both === "#0f1626" && winterBack === "#f3f5f8" && sun.every(Boolean) && tap >= 44;
   return { ok, day, night, back, both, winterBack, sun, tap };
 }));
 

@@ -210,7 +210,7 @@
   // 2026-11-03: parks (tools/island_parks.py: OpenStreetMap parks, nature reserves and public gardens over the whole island, merged into one layer) as a quiet,
   // see-through green over the tint; water, hill shading, contours, buildings, paths and labels all draw over it. Parks keep their icons.
   add({ id: "parks", type: "fill", source: "parks", "source-layer": "parks", minzoom: 11,
-    paint: { "fill-color": "#8fcfbd", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.35, 14, 0.6] } }, "water");   // 2026-11-07: park teal
+    paint: { "fill-color": "#8fcfbd", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.3, 14, 0.45] } }, "water");   // 2026-11-07: park teal, see-through
   // 2026-10-29: shading halfway between the first prototype (0.75) and the strong version (0.95 → 0.72)
   add({ id: "relief", type: "raster", source: "relief",
     paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.5, 15, 0.45, 18, 0.4], "raster-fade-duration": 0 } }, firstRoad);   // 2026-11-07: lighter on the paper
@@ -344,7 +344,7 @@
 
   // ------------------------------------------------------------------ winter mode: icy colours, 4-season network, snow status
   const WINTER_PAINT = [
-    ["background", "background-color", "#f3f5f8"], ["parks", "fill-color", "#cfe0e2"], ["water", "fill-color", "#c3d1e6"],
+    ["background", "background-color", "#f3f5f8"], ["parks", "fill-color", "#cde2dc"], ["water", "fill-color", "#c3d1e6"],
     ["landuse_residential", "fill-color", "#eceff4"], ["landcover_wood", "fill-color", "#e3eaee"], ["waterway", "line-color", "#b3c3dd"],
     ["highway_major_casing", "line-color", "#d3dbe6"], ["highway_motorway_casing", "line-color", "#d3dbe6"],
     ["tint", "raster-hue-rotate", 170], ["tint", "raster-saturation", -0.7],

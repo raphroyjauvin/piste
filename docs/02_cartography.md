@@ -15,6 +15,7 @@ The look is unchanged; the same layers now cover the whole island (files, sizes 
 
 ## Update 2026-10-29: winter, weather, live BIXI, calmer elevation
 - **Winter palette** (the snowflake button): the same soft map, shifted to an icy light blue. "Soft map, loud route" still holds.
+- **2026-11-07, the clear-line redesign (branch `design`):** warm paper ground, white streets, white buildings outlined in thin navy, teal parks; bike paths and routes navy, orange where there's no bike path; winter is cool white. See the README decision log.
   - land `#eef4f8`, parks `#e1ecf1`, water `#b9d2e2`
   - also tinted: residential land `#e6eef4`, woods `#dbe6ed`, rivers `#a9c6d9`, buildings `#e2e9ef` (3D buildings `#f3f6f9` to `#d6e0e8`), major road casings `#c6d6e2`
   - the elevation colours are hue-rotated toward blue (and desaturated), so hills don't look warm on a cold map
