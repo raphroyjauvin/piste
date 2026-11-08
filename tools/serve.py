@@ -65,6 +65,8 @@ class Server(http.server.ThreadingHTTPServer):
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
     root = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prototypes")
-    with Server(("127.0.0.1", port), partial(Handler, directory=root)) as httpd:
-        print(f"Serving {root} at http://localhost:{port}/")
+    # this computer only, unless a third argument names an address on the home network (to try a branch on a phone on the same Wi-Fi)
+    host = sys.argv[3] if len(sys.argv) > 3 else "127.0.0.1"
+    with Server((host, port), partial(Handler, directory=root)) as httpd:
+        print(f"Serving {root} at http://{'localhost' if host == '127.0.0.1' else host}:{port}/")
         httpd.serve_forever()
