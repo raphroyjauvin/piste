@@ -1873,19 +1873,19 @@ await run("language button: top right of the card's header, visible at every she
   return { ok, out, fr, en, desk, inMapButtons };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
-// ------------------------------------------------------------------ the logo (2026-11-03): a white P with the bike chain on Piste blue (prototypes/icons/logo.svg, tools/shots/make_icons.mjs)
-const LOGO_BLUE = [0, 149, 230];   // #0095E6, the app's --blue
+// ------------------------------------------------------------------ the logo (2026-11-03): a white P with the bike chain on Piste navy (prototypes/icons/logo.svg, tools/shots/make_icons.mjs)
+const LOGO_NAVY = [30, 33, 96];   // #1e2160, the logo's navy
 // window.__logo(src) draws an image (a URL, or an inline <svg> serialised) at its own size and samples points given as fractions of its side: the P's stem (white), the hole in the
-// P's bowl and a spot near the bottom right (blue), and the top-left corner (blue on a full-bleed icon, see-through outside the header's disc); "white" is the share of white pixels.
+// P's bowl and a spot near the bottom right (navy), and the top-left corner (navy on a full-bleed icon, see-through outside the header's disc); "white" is the share of white pixels.
 const logoPixels = `window.__logo = async (src) => {
   const img = new Image(); img.src = src; await img.decode();
   const s = img.naturalWidth, c = new OffscreenCanvas(s, img.naturalHeight), g = c.getContext("2d"); g.drawImage(img, 0, 0);
   const at = (fx, fy) => [...g.getImageData(Math.min(s - 1, Math.round(fx * s)), Math.min(s - 1, Math.round(fy * s)), 1, 1).data];
   const all = g.getImageData(0, 0, s, s).data; let white = 0; for (let i = 0; i < all.length; i += 4) if (Math.min(all[i], all[i + 1], all[i + 2]) > 200 && all[i + 3] > 200) white++;
-  return { size: [img.naturalWidth, img.naturalHeight], stem: at(0.40, 0.49), hole: at(0.52, 0.35), corner: at(0.78, 0.78), edge: at(0.01, 0.01), white: white / (s * s) };
+  return { size: [img.naturalWidth, img.naturalHeight], stem: at(0.44, 0.53), hole: at(0.67, 0.37), corner: at(0.78, 0.78), edge: at(0.01, 0.01), white: white / (s * s) };
 };`;
-const isBlue = (p) => p.slice(0, 3).every((v, i) => Math.abs(v - LOGO_BLUE[i]) <= 3) && p[3] === 255, isWhite = (p) => p.slice(0, 3).every((v) => v >= 250) && p[3] === 255;
-await run("logo: the header mark is the new blue disc with the white P and has a name; icons, favicon and manifest match it", `${APP}?safe=47,34`, async (page) => {
+const isNavy = (p) => p.slice(0, 3).every((v, i) => Math.abs(v - LOGO_NAVY[i]) <= 3) && p[3] === 255, isWhite = (p) => p.slice(0, 3).every((v) => v >= 250) && p[3] === 255;
+await run("logo: the header mark is the new navy disc with the white P and has a name; icons, favicon and manifest match it", `${APP}?safe=47,34`, async (page) => {
   await page.evaluate(logoPixels);
   await page.evaluate(idle);   // the map's first burst of tile requests is over (a fetch in the middle of it can be dropped by the dev server)
   const header = async () => page.evaluate(async () => {
@@ -1915,20 +1915,20 @@ await run("logo: the header mark is the new blue disc with the white P and has a
       pics.push({ w: ico[e], h: ico[e + 1], px: { ...(await window.__logo(URL.createObjectURL(new Blob([ico.slice(off, off + len)], { type: "image/png" })))), signature: ico[off + 1] === 0x50 } }); }
     const svg = await (await fetch(href('link[rel="icon"][type="image/svg+xml"]'))).text();
     return { apple, icons, theme: { meta: document.querySelector('meta[name="theme-color"]').content, manifest: manifest.theme_color }, ico: { reserved: ico && dv.getUint16(0, true), type: ico && dv.getUint16(2, true), pics },
-      svg: { viewBox: svg.includes('viewBox="0 0 512 512"'), blue: svg.includes('fill="#0095E6"'), white: svg.includes('fill="#fff"') && svg.includes('fill-rule="evenodd"') } };
+      svg: { viewBox: svg.includes('viewBox="0 0 512 512"'), blue: svg.includes('fill="#1e2160"'), white: svg.includes('fill="#fff"') && svg.includes('fill-rule="evenodd"') } };
   });
-  const square = (px, side) => !!px && px.size[0] === side && px.size[1] === side && isBlue(px.edge) && isWhite(px.stem) && isBlue(px.hole) && isBlue(px.corner) && px.white > 0.1 && px.white < 0.3;
+  const square = (px, side) => !!px && px.size[0] === side && px.size[1] === side && isNavy(px.edge) && isWhite(px.stem) && isNavy(px.hole) && isNavy(px.corner) && px.white > 0.1 && px.white < 0.3;
   const icon = (side, purpose) => files.icons.find((i) => i.sizes === `${side}x${side}` && i.type === "image/png" && i.purpose.split(" ").includes(purpose));
   const by = Object.fromEntries(files.ico.pics.map((p) => [p.w, p]));
   const checks = {   // named, so a failure says which one
     markSize: desk.size.join() === "34,34" && phone.join() === "28,28",
-    discAndP: !!desk.disc && desk.disc.join() === "256,#0095E6" && desk.path.join() === "#fff,evenodd" && isBlue(desk.px.hole) && isWhite(desk.px.stem) && isBlue(desk.px.corner) && desk.px.edge[3] === 0,
+    discAndP: !!desk.disc && desk.disc.join() === "256,#1e2160" && desk.path.join() === "#fff,evenodd" && isNavy(desk.px.hole) && isWhite(desk.px.stem) && isNavy(desk.px.corner) && desk.px.edge[3] === 0,
     named: desk.role === "img" && desk.name === "Piste" && desk.hidden === null && namedImg === 1, noOldMark: !desk.oldMark, sameShapeAsLogoSvg: desk.sameShapeAsLogoSvg,
     homeScreenIcon: square(files.apple, 180),
     manifest192: square(icon(192, "any") && icon(192, "any").px, 192), manifest512: square(icon(512, "any") && icon(512, "any").px, 512), manifestMaskable: !!icon(512, "maskable") && square(icon(512, "maskable").px, 512),
     manifestSizesAreReal: files.icons.length >= 3 && files.icons.every((i) => i.px && `${i.px.size[0]}x${i.px.size[1]}` === i.sizes),
     themeColourMatches: files.theme.meta === files.theme.manifest,
-    favicon: files.ico.reserved === 0 && files.ico.type === 1 && [16, 32, 48].every((s) => by[s] && by[s].h === s && by[s].px.size[0] === s && by[s].px.signature && isBlue(by[s].px.edge) && by[s].px.white > 0.12 && by[s].px.white < 0.3),
+    favicon: files.ico.reserved === 0 && files.ico.type === 1 && [16, 32, 48].every((s) => by[s] && by[s].h === s && by[s].px.size[0] === s && by[s].px.signature && isNavy(by[s].px.edge) && by[s].px.white > 0.12 && by[s].px.white < 0.3),
     svgFavicon: files.svg.viewBox && files.svg.blue && files.svg.white,
   };
   const bad = Object.keys(checks).filter((k) => !checks[k]);
