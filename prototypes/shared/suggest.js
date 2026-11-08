@@ -23,6 +23,17 @@
   const ROUTE_FACTOR = 1.25;   // a bike route is ~25% longer than the straight line here
   const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   const compass = (b) => COMPASS[Math.round((((b % 360) + 360) % 360) / 45) % 8];
+  const LOOP_TRIES = 7;       // shapes tried per direction before the least faulty one is kept
+  const TURN_STEP = 15;       // degrees a loop is swung when it turns back on itself
+  // The circle radius to try next so a ride of length len comes out at D: in proportion, or along the line through the last two
+  // tries; if a bigger circle gave the same ride (the waypoints snapped to the same intersections), a bigger step.
+  function nextRadius(R, len, D, prev) {
+    let next = R * D / len;
+    if (prev && Math.abs(len - prev.len) > 50) { const slope = (R - prev.R) / (len - prev.len); if (slope > 0) next = R + (D - len) * slope; }
+    else if (prev) next = R * (D / len) ** 3;
+    return Math.max(0.6 * R, Math.min(1.6 * R, next));
+  }
+  const CALIBRATE_N = 8;      // places ridden first to learn how much longer than the straight line a ride is here
   const tick = () => new Promise((r) => setTimeout(r, 0));   // let the page breathe between batches of routing
 
   // ---------------------------------------------------------------- local first (2026-11-03)
@@ -122,12 +133,42 @@
   function offset(lon, lat, d, b) {
     return [lon + (d * Math.sin(b * D2R)) / (111320 * Math.cos(lat * D2R)), lat + (d * Math.cos(b * D2R)) / 110540];
   }
-  // share of a ride spent on streets it already used
+  // share of a ride spent on streets it already used (either way)
   function retraced(route) {
     const seen = new Set(); let dup = 0;
     for (const l of route.legs) { if (seen.has(l.e)) dup += l.len || 0; else seen.add(l.e); }
     return route.length ? dup / route.length : 0;
   }
+  // heading (degrees) of a leg where it starts or ends, over its first or last HEADING_M metres (less on a short street)
+  const HEADING_M = 25;
+  function legHeading(router, l, atEnd) {
+    const pts = router.edgeCoords(l.e, !!l.fwd), i = atEnd ? pts.length - 1 : 0, step = atEnd ? -1 : 1;
+    let j = i + step;
+    while (j + step >= 0 && j + step < pts.length && distM(pts[i][0], pts[i][1], pts[j][0], pts[j][1]) < HEADING_M) j += step;
+    if (distM(pts[i][0], pts[i][1], pts[j][0], pts[j][1]) < 1) return null;
+    return atEnd ? bearing(pts[j][0], pts[j][1], pts[i][0], pts[i][1]) : bearing(pts[i][0], pts[i][1], pts[j][0], pts[j][1]);
+  }
+  // U-turns: a leg that goes back onto the street just ridden, or leaves an intersection almost the way it arrived
+  const U_TURN_DEG = 160;
+  function turnbacks(router, route) {
+    let n = 0; const L = route.legs;
+    for (let i = 1; i < L.length; i++) {
+      if (L[i].e === L[i - 1].e) { if (L[i].fwd !== L[i - 1].fwd) n++; continue; }
+      const a = legHeading(router, L[i - 1], true), b = legHeading(router, L[i], false);
+      if (a !== null && b !== null && 180 - Math.abs(180 - ((((b - a) % 360) + 360) % 360)) >= U_TURN_DEG) n++;
+    }
+    return n;
+  }
+  // A ride may be this far (metres) off the asked length, either way (Raph, 2026-11-08): it never needs padding to fit.
+  // A very short ride gets a quarter of its length instead.
+  const LENGTH_TOL = 500;
+  const tolM = (D) => Math.min(LENGTH_TOL, D / 4);
+  // what is wrong with a ride, and what that costs in the ranking: a U-turn outweighs any gain in bike-path share
+  function faults(router, route, D) {
+    return { turns: turnbacks(router, route), retrace: retraced(route), excess: Math.max(0, Math.abs(route.length - D) - tolM(D)) };
+  }
+  const faultCost = (f, D) => 3 * f.turns + 4 * f.retrace + (8 * f.excess) / D;
+  const isClean = (f) => f.turns === 0 && f.retrace < 0.02 && f.excess === 0;
   function overlap(a, b) {
     let c = 0; for (const e of a.sig) if (b.sig.has(e)) c++;
     return c / Math.max(1, Math.min(a.sig.size, b.sig.size));
@@ -141,14 +182,27 @@
   class Suggester {
     constructor(router, pois) { this.router = router; this.pois = pois; }
 
-    // Ride through the points in order. Later legs avoid streets already ridden (4x cost), so a loop comes back another way.
+    // A point to ride through near `pt`: the closest intersection where the ride can go on in more than one direction. A waypoint
+    // on a dead end or mid-block makes the ride turn round there (a spur); at an intersection it just carries on.
+    junction(pt) {
+      const r = this.router; let best = null;
+      for (const c of r.snapCandidates(pt[0], pt[1], 400, 150, 16)) {
+        for (const u of [r.ea[c.e], r.eb[c.e]]) {
+          const d = distM(pt[0], pt[1], r.lon[u], r.lat[u]);
+          if (r.off[u + 1] - r.off[u] >= 3 && (!best || d < best.d)) best = { d, p: [r.lon[u], r.lat[u]] };
+        }
+      }
+      return best && best.d <= 400 ? best.p : pt;
+    }
+
+    // Ride through the points in order. Later legs avoid streets already ridden (6x cost), so a loop comes back another way.
     // labels[i] names a real stop after leg i (it becomes a "Stop: …" instruction); waypoints have none.
     chain(points, labels, weights) {
       const r = this.router, pen = new Float32Array(r.m).fill(1), parts = [];
       for (let i = 1; i < points.length; i++) {
         const part = r.route(points[i - 1], points[i], Object.assign({}, weights, { penalty: pen }));
         if (!part) return null;
-        for (const l of part.legs) pen[l.e] = 4;
+        for (const l of part.legs) pen[l.e] = 6;
         parts.push(part);
       }
       const route = parts.length === 1 ? parts[0] : r.join(parts, labels || []);
@@ -163,10 +217,10 @@
       const D = Math.max(1000, opts.km * 1000), now = opts.now || new Date();
       const cands = opts.stop ? await this._viaStop(opts, D, now)
         : opts.loop ? await this._loops(opts, D)
-        : await this._toPlaces(opts.start, D / ROUTE_FACTOR, END_KINDS, false, opts.weights, now);
+        : await this._toPlaces(opts.start, D, END_KINDS, false, opts.weights, now);
       for (const c of cands) {
-        const off = Math.abs(c.route.length - D) / D;
-        c.score = c.route.infraShare - 1.5 * off - 0.8 * (c.retrace || 0) + (c.poi && c.poi.real ? REAL_SCORE : 0);
+        c.faults ||= faults(this.router, c.route, D);
+        c.score = c.route.infraShare - faultCost(c.faults, D) + (c.poi && c.poi.real ? REAL_SCORE : 0);
         // avoid headwinds: extra minutes lost to the wind count against a ride, relative to its length
         if (opts.windCost) {
           const w = opts.windCost(c.route);
@@ -190,31 +244,53 @@
       return pick;
     }
 
-    // loops with no stop: a circle through the start, tried in 8 directions, resized until its length fits
+    // loops with no stop: a circle through the start, tried in 8 directions. Each is resized until its length is within the
+    // tolerance and, if it still turns back on itself, swung a little: never padded with a detour.
     async _loops({ start, weights }, D) {
       const out = [];
       for (let k = 0; k < 8; k++) {
-        const theta = k * 45;
-        let R = D / (2 * Math.PI * ROUTE_FACTOR), best = null;
-        for (let iter = 0; iter < 3; iter++) {
-          const c = offset(start[0], start[1], R, theta), back = theta + 180;
-          const route = this.chain([start, offset(c[0], c[1], R, back + 120), offset(c[0], c[1], R, back + 240), start], [], weights);
-          if (!route) break;
-          if (!best || Math.abs(route.length - D) < Math.abs(best.length - D)) best = route;
-          const ratio = D / route.length;
-          if (Math.abs(1 - ratio) < 0.07) break;
-          R *= Math.max(0.6, Math.min(1.6, ratio));
-        }
-        if (best) out.push({ route: best, title: { key: "loopDir", vars: { dirKey: compass(theta) } }, retrace: retraced(best) });
+        const best = this._loop(start, k * 45, D, weights);
+        if (best) out.push({ route: best.route, faults: best.f, title: { key: "loopDir", vars: { dirKey: compass(k * 45) } } });
         await tick();
       }
       return out;
     }
+    _loop(start, theta0, D, weights) {
+      let R = D / (2 * Math.PI * ROUTE_FACTOR), theta = theta0, swings = 0, best = null, prev = null;
+      for (let iter = 0; iter < LOOP_TRIES; iter++) {
+        const c = offset(start[0], start[1], R, theta), back = theta + 180;
+        const via = [120, 240].map((a) => this.junction(offset(c[0], c[1], R, back + a)));
+        const route = this.chain([start, ...via, start], [], weights);
+        if (!route) break;
+        const f = faults(this.router, route, D);
+        if (!best || faultCost(f, D) < faultCost(best.f, D)) best = { route, f };
+        if (isClean(f)) break;
+        if (f.excess) { const next = nextRadius(R, route.length, D, prev); prev = { R, len: route.length }; R = next; }
+        else { swings++; theta = theta0 + (swings % 2 ? 1 : -1) * TURN_STEP * Math.ceil(swings / 2); }   // the right length but a spur: swing the circle and look again
+      }
+      return best;
+    }
 
     // through a stop: out to it and (for a loop) back another way
     _viaStop({ start, loop, stop, weights }, D, now) {
-      const kinds = (STOP_KINDS[stop] || {}).kinds || [];
-      return this._toPlaces(start, loop ? D / (2 * ROUTE_FACTOR) : D / ROUTE_FACTOR, kinds, loop, weights, now);
+      return this._toPlaces(start, D, (STOP_KINDS[stop] || {}).kinds || [], loop, weights, now);
+    }
+
+    // start -> place -> start. If coming back turns round or retraces the way out, try a waypoint to the side of the way out
+    // (each side) so the return takes another street; the cleanest ride is kept.
+    _outAndBack(start, p, label, D, weights) {
+      let best = null;
+      const consider = (via) => {
+        const route = this.chain(via ? [start, [p.lon, p.lat], via, start] : [start, [p.lon, p.lat], start], via ? [label, null] : [label], weights);
+        if (!route) return false;
+        const f = faults(this.router, route, D);
+        if (!best || faultCost(f, D) < faultCost(best.f, D)) best = { route, f };
+        return isClean(f);
+      };
+      if (consider(null)) return best;
+      const mid = [(start[0] + p.lon) / 2, (start[1] + p.lat) / 2], side = Math.max(300, p.d * 0.4);
+      for (const turn of [90, -90]) if (consider(this.junction(offset(mid[0], mid[1], side, p.b + turn)))) break;
+      return best;
     }
 
     // the places of these kinds a ride may go to: no chains, fast food or big-box shops (they stay on the map)
@@ -246,25 +322,39 @@
       return picked;
     }
 
-    // a ride to each picked place (out and back another way, for a loop); a place the route reaches after closing time is left out
-    async _toPlaces(start, ideal, kinds, loop, weights, now = new Date()) {
-      const picked = this.pick(start, ideal, kinds, now), out = [];
-      for (let j = 0; j < picked.length; j++) {
-        const p = picked[j];
-        // unnamed places (most public toilets, many parks) are called by their kind: "Public restroom", "Park"
-        const kindLabel = (window.BikeCommon && window.BikeCommon.poiLabel(p.kind)) || p.kind;
-        const place = p.kind === "metro" ? { key: "metroOf", vars: { name: p.name } } : p.name ? { raw: p.name, kind: p.kind } : { poiKind: p.kind };
-        const label = p.kind === "metro" ? `${p.name} metro` : p.name || kindLabel;
-        const route = this.chain(loop ? [start, [p.lon, p.lat], start] : [start, [p.lon, p.lat]], loop ? [label] : [], weights);
-        const at = route && (loop && route.stops && route.stops[0] ? route.stops[0].at : route && route.length);   // metres ridden to the place
-        if (route && !closedOnArrival(this.pois[p.i], now, rideMin(at, (route.climb * at) / Math.max(1, route.length)))) {
-          out.push({ route, poi: p, place, title: { key: loop ? "loopBy" : "toPlace", vars: { place } }, retrace: loop ? retraced(route) : 0 });
+    // The ride to one picked place (out and back another way, for a loop), or null: no route, or the place is shut by the time you get there.
+    _rideTo(start, p, loop, D, weights, now) {
+      // unnamed places (most public toilets, many parks) are called by their kind: "Public restroom", "Park"
+      const kindLabel = (window.BikeCommon && window.BikeCommon.poiLabel(p.kind)) || p.kind;
+      const place = p.kind === "metro" ? { key: "metroOf", vars: { name: p.name } } : p.name ? { raw: p.name, kind: p.kind } : { poiKind: p.kind };
+      const label = p.kind === "metro" ? `${p.name} metro` : p.name || kindLabel;
+      const made = loop ? this._outAndBack(start, p, label, D, weights) : { route: this.chain([start, [p.lon, p.lat]], [], weights) };
+      const route = made && made.route;
+      if (!route) return null;
+      const at = loop && route.stops && route.stops[0] ? route.stops[0].at : route.length;   // metres ridden to the place
+      if (closedOnArrival(this.pois[p.i], now, rideMin(at, (route.climb * at) / Math.max(1, route.length)))) return null;
+      return { route, poi: p, place, title: { key: loop ? "loopBy" : "toPlace", vars: { place } }, faults: made.f };
+    }
+
+    // A ride to each picked place. Places are first picked by a guess of how much longer than the straight line a ride is; the
+    // nearest few are ridden and show how winding the streets here really are, and the places are picked again by that.
+    async _toPlaces(start, D, kinds, loop, weights, now = new Date()) {
+      const legs = loop ? 2 : 1, out = [], done = new Set();
+      const ride = async (picks) => {
+        for (let j = 0; j < picks.length; j++) {
+          done.add(picks[j].i);
+          const c = this._rideTo(start, picks[j], loop, D, weights, now);
+          if (c) out.push(c);
+          if (j % 6 === 5) await tick();
         }
-        if (j % 6 === 5) await tick();
-      }
+      };
+      await ride(this.pick(start, D / legs / ROUTE_FACTOR, kinds, now).slice(0, CALIBRATE_N));
+      const ratios = out.map((c) => c.route.length / legs / c.poi.d).sort((x, y) => x - y);
+      const factor = ratios.length >= 3 ? ratios[ratios.length >> 1] : ROUTE_FACTOR;
+      await ride(this.pick(start, D / legs / factor, kinds, now).filter((p) => !done.has(p.i)));
       return out;
     }
   }
 
-  window.BikeSuggest = { Suggester, STOP_KINDS, FLAGS, poiFlags, parseHours, openAt, closedOnArrival };
+  window.BikeSuggest = { Suggester, STOP_KINDS, FLAGS, poiFlags, parseHours, openAt, closedOnArrival, turnbacks, retraced, faults, LENGTH_TOL };
 })();

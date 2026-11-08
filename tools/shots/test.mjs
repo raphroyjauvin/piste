@@ -318,6 +318,45 @@ await run("ride suggester: local first, real destinations first, never closed on
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), chains, counts, rides, late: late.length };
 }));
 
+// ---- sensible rides (2026-11-08): a suggested ride never turns round for no reason (no out-and-back spur, no U-turn), reuses almost no street it
+// already rode, and is within 500 m of the asked length (a built-in tolerance, so it never needs padding to reach an exact figure) ----
+// Thresholds: 0 U-turns; at most 10% of a ride on a street already ridden (the real rides are under 5%; the worst we know is a single bridge that
+// has to be crossed twice, about 10%) and 3% on average; the first (selected) suggestion within 500 m, and every one within 2 km (the three rides
+// are different shapes, so a third may sit farther off when no other fits the streets).
+await run("ride suggester: no spurs or U-turns, little reuse, length within 500 m", APP, async (page) => page.evaluate(async () => {
+  const S = window.BikeSuggest, app = window.__app, r = app.router, weights = BikeRouter.weightsFor(0.8, false), TOL = S.LENGTH_TOL;
+  // the detector itself: riding a street and straight back onto it is a U-turn; carrying on is not
+  const e = 100;
+  const unit = {
+    reversed: S.turnbacks(r, { legs: [{ e, fwd: 1 }, { e, fwd: 0 }] }) === 1,
+    sameWay: S.turnbacks(r, { legs: [{ e, fwd: 1 }, { e, fwd: 1 }] }) === 0,
+    retrace: Math.abs(S.retraced({ length: 300, legs: [{ e: 1, len: 100 }, { e: 2, len: 100 }, { e: 1, len: 100 }] }) - 1 / 3) < 1e-9,
+    tolerance: TOL === 500,
+    junctions: (() => { let n = 0, ok = 0; for (let i = 0; i < 60; i++) { const p = [-73.60 + (i % 10) * 0.006, 45.50 + Math.floor(i / 10) * 0.006], j = app.suggester.junction(p);
+      const u = r.snapCandidates(j[0], j[1], 5, 5, 1)[0]; if (!u) continue; n++; const node = [r.ea[u.e], r.eb[u.e]].find((k) => Math.abs(r.lon[k] - j[0]) < 1e-9 && Math.abs(r.lat[k] - j[1]) < 1e-9);
+      if (node === undefined || r.off[node + 1] - r.off[node] >= 3) ok++; } return n > 30 && ok === n; })(),
+  };
+  const starts = { "Mont-Royal east": [-73.5495, 45.5640], Plateau: [-73.5795, 45.5235], Rosemont: [-73.5810, 45.5460], NDG: [-73.6200, 45.4730], Hochelaga: [-73.5330, 45.5430] };
+  const cases = [{ km: 8, loop: true }, { km: 15, loop: true }, { km: 10, loop: false }, { km: 10, loop: true, stop: "cafe" }];
+  const rows = [], bad = [];
+  for (const [name, start] of Object.entries(starts)) for (const c of cases) {
+    const t0 = performance.now();
+    const picks = await app.suggester.suggest({ start, km: c.km, loop: c.loop, stop: c.stop || "", weights });
+    const ms = performance.now() - t0, tag = `${name} ${c.km} km ${c.stop ? "via " + c.stop : c.loop ? "loop" : "one-way"}`;
+    const m = picks.map((p) => ({ err: Math.round(p.route.length - c.km * 1000), u: S.turnbacks(r, p.route), reuse: S.retraced(p.route) }));
+    rows.push({ tag, ms: Math.round(ms), m });
+    if (picks.length < 2) bad.push(tag + ": only " + picks.length + " suggestions");
+    if (m.some((x) => x.u)) bad.push(tag + ": U-turn");
+    if (m.some((x) => x.reuse > 0.10)) bad.push(tag + ": reuses " + Math.round(100 * Math.max(...m.map((x) => x.reuse))) + "%");
+    if (m[0] && Math.abs(m[0].err) > TOL) bad.push(tag + ": first ride " + m[0].err + " m off");
+    if (m.some((x) => Math.abs(x.err) > 2000)) bad.push(tag + ": a ride is over 2 km off");
+  }
+  const all = rows.flatMap((x) => x.m), meanReuse = all.reduce((s, x) => s + x.reuse, 0) / all.length, slowest = Math.max(...rows.map((x) => x.ms));
+  if (meanReuse > 0.03) bad.push("mean reuse " + (100 * meanReuse).toFixed(1) + "%");
+  const failed = Object.keys(unit).filter((k) => !unit[k]);
+  return { ok: !failed.length && !bad.length, ...(failed.length || bad.length ? { error: [...failed, ...bad].join("; ") } : {}), unit, rides: all.length, meanReusePct: +(100 * meanReuse).toFixed(1), slowestMs: slowest, rows: rows.map((x) => `${x.tag}: ${x.m.map((y) => y.err).join("/")}`) };
+}));
+
 await run("classic rides: 10 cards, routes, swipe", `${APP}?classic=oldport`, async (page) => {
   const out = await page.evaluate(async () => {
     const app = window.__app, s = app.state;
