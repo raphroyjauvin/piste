@@ -16,7 +16,7 @@
   const WIDTH = 0.75;            // the picture's width over its height (72 / 96): its bottom edge stands on the ground
   const CORE = 0.6;              // texels at least this opaque are drawn first and hide what is behind them
   const EDGE = 0.02;             // fainter texels are not drawn at all
-  const STRIDE = 5;              // per tree: x, y (m from the origin, east and south), ground height (m), size (m), seed
+  const STRIDE = 5;              // per tree: x, y (m from the origin, east and south), raw ground height (m, before the exaggeration), size (m), seed
   const EARTH_C = 2 * Math.PI * 6371008.8;   // MapLibre's earth circumference, m
   const mercX = (lng) => (180 + lng) / 360;
   const mercY = (lat) => (180 - (180 / Math.PI) * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))) / 360;
@@ -25,6 +25,7 @@
   const VERT = `
 uniform mat4 u_matrix;     // local metres (x east, y south, z up) to clip space
 uniform vec2 u_right;      // the screen's right, on the ground
+uniform float u_exag;      // the terrain's exaggeration now: the ground height is stored raw and scaled here, so it follows the ride camera's boost
 uniform vec3 u_pic;        // first column, number of columns, row (0 day, 1 night)
 uniform vec4 u_cell;       // atlas cell size and picture offset, as fractions of the texture
 uniform vec2 u_picsize;    // picture size, as fractions of the texture
@@ -35,7 +36,7 @@ varying vec2 v_uv;
 void main() {
   float col = u_pic.x + floor(mod(a_seed + 0.5, u_pic.y));
   vec2 xy = a_tree.xy + u_right * (a_corner.x * ${WIDTH.toFixed(2)} * a_tree.w);
-  gl_Position = u_matrix * vec4(xy, a_tree.z + a_corner.y * a_tree.w, 1.0);
+  gl_Position = u_matrix * vec4(xy, a_tree.z * u_exag + a_corner.y * a_tree.w, 1.0);
   v_uv = vec2(col, u_pic.z) * u_cell.xy + u_cell.zw + vec2(a_corner.x + 0.5, 1.0 - a_corner.y) * u_picsize;
 }`;
   const FRAG = `
@@ -78,7 +79,7 @@ void main() {
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error("tree shaders: " + (gl.getProgramInfoLog(p) || "did not link"));
     const loc = {};
-    for (const n of ["u_matrix", "u_right", "u_pic", "u_cell", "u_picsize", "u_atlas", "u_opacity", "u_keep"]) loc[n] = gl.getUniformLocation(p, n);
+    for (const n of ["u_matrix", "u_right", "u_pic", "u_cell", "u_picsize", "u_atlas", "u_opacity", "u_keep", "u_exag"]) loc[n] = gl.getUniformLocation(p, n);
     for (const n of ["a_corner", "a_tree", "a_seed"]) loc[n] = gl.getAttribLocation(p, n);
     return { p, loc };
   }
@@ -174,16 +175,17 @@ void main() {
       this.stats.rebuilds++; this.stats.rebuildMs = +(performance.now() - t0).toFixed(1); this.stats.elevMs = +(performance.now() - t1).toFixed(1);
       map.triggerRepaint();
     }
-    // the ground under each tree: the terrain's height (exaggerated, as drawn) when the terrain is on, else 0; true if any changed
+    // the ground under each tree: the terrain's true height when the terrain is on, else 0; true if any changed. The exaggeration (which the ride
+    // camera changes as a hill comes up, without any event) is divided out here and applied again every frame (u_exag), so trees never float or sink.
     sampleElevation() {
       const map = this.map, on = !!(map.getTerrain && map.getTerrain()), T = map.terrain;
       const at = T && typeof T.getElevationForLngLatZoom === "function" ? (ll) => T.getElevationForLngLatZoom(ll, this.opt.demZoom)
         : (ll) => map.queryTerrainElevation(ll) || 0;
-      const ll = new maplibregl.LngLat(0, 0), state = on ? "terrain" : "flat";
+      const ll = new maplibregl.LngLat(0, 0), state = on ? "terrain" : "flat", ex = (T && T.exaggeration) || 1;
       let changed = false;
       for (const t of this.tiles.values()) {
         if (t.elevFor === state) continue;
-        if (on) for (let i = 0; i < t.n; i++) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; t.elev[i] = at(ll); }
+        if (on) for (let i = 0; i < t.n; i++) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; t.elev[i] = at(ll) / ex; }
         else t.elev.fill(0);
         t.elevFor = state; changed = true;
       }
@@ -262,6 +264,7 @@ void main() {
       gl.useProgram(g.prog.p);
       gl.uniformMatrix4fv(L.u_matrix, false, M);
       gl.uniform2f(L.u_right, Math.cos(b), Math.sin(b));
+      gl.uniform1f(L.u_exag, map.terrain ? map.terrain.exaggeration : 1);
       gl.uniform3f(L.u_pic, this.pic[0], this.pic[1], this.pic[2]);
       gl.uniform4f(L.u_cell, ATLAS.cellW / ATLAS.w, ATLAS.cellH / ATLAS.h, (ATLAS.cellW - ATLAS.picW) / 2 / ATLAS.w, (ATLAS.cellH - ATLAS.picH) / 2 / ATLAS.h);
       gl.uniform2f(L.u_picsize, ATLAS.picW / ATLAS.w, ATLAS.picH / ATLAS.h);

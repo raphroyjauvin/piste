@@ -18,7 +18,7 @@
   const TURN = 0.6;              // rad (about 34 degrees): a corner line where the outline turns by more than this
   const BASE_LIFT = 0.05;        // m: the base line sits just above the ground it stands on
   const BUFFER = 0.1;            // an axis-aligned edge within this share of a tile from its border is a tile cut
-  const STRIDE = 3;              // per line end: x, y (m from the origin, east and south), z (m above sea level)
+  const STRIDE = 4;              // per line end: x, y (m from the origin, east and south), the ground's raw height (m), height above the ground (m)
   const EARTH_C = 2 * Math.PI * 6371008.8;   // MapLibre's earth circumference, m
   const mercX = (lng) => (180 + lng) / 360;
   const mercY = (lat) => (180 - (180 / Math.PI) * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))) / 360;
@@ -26,9 +26,10 @@
 
   const VERT = `
 uniform mat4 u_matrix;     // local metres (x east, y south, z up) to clip space
-attribute vec3 a_pos;
+uniform float u_exag;      // the terrain's exaggeration now (the ride camera changes it without any event): ground heights are stored raw
+attribute vec4 a_pos;      // x, y, ground height, height above the ground
 void main() {
-  vec4 q = u_matrix * vec4(a_pos, 1.0);
+  vec4 q = u_matrix * vec4(a_pos.xy, a_pos.z * u_exag + a_pos.w, 1.0);
   q.z -= 0.0001 * q.w;     // a little toward the camera, so a line is not hidden by the wall it lies on
   gl_Position = q;
 }`;
@@ -62,7 +63,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
     gl.bindAttribLocation(p, 0, "a_pos");
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error("edge shaders: " + (gl.getProgramInfoLog(p) || "did not link"));
-    return { p, matrix: gl.getUniformLocation(p, "u_matrix"), color: gl.getUniformLocation(p, "u_edgecolor") };
+    return { p, matrix: gl.getUniformLocation(p, "u_matrix"), color: gl.getUniformLocation(p, "u_edgecolor"), exag: gl.getUniformLocation(p, "u_exag") };
   }
 
   const polygons = (g) => (!g ? [] : g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : []);
@@ -186,24 +187,24 @@ void main() { gl_FragColor = u_edgecolor; }`;
       this.stats.rebuilds++; this.stats.rebuildMs = +(performance.now() - t0).toFixed(1);
       map.triggerRepaint();
     }
-    // the ground under each building (at its polygon's centroid, as MapLibre lifts it): the terrain's height (exaggerated, as drawn) when
-    // the terrain is on, else 0; true if any changed
+    // the ground under each building (at its polygon's centroid, as MapLibre lifts it): the terrain's true height (the exaggeration is divided
+    // out and applied again every frame, as in trees3d.js) when the terrain is on, else 0; true if any changed
     sampleElevation() {
       const map = this.map, on = !!(map.getTerrain && map.getTerrain()), T = map.terrain;
       const at = T && typeof T.getElevationForLngLatZoom === "function" ? (ll) => T.getElevationForLngLatZoom(ll, this.opt.demZoom)
         : (ll) => map.queryTerrainElevation(ll) || 0;
-      const ll = new maplibregl.LngLat(0, 0), state = on ? "terrain" : "flat";
+      const ll = new maplibregl.LngLat(0, 0), state = on ? "terrain" : "flat", ex = (T && T.exaggeration) || 1;
       let changed = false;
       for (const t of this.tiles.values()) {
         if (t.elevFor === state) continue;
-        if (on) for (let i = 0; i < t.nb; i++) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; t.elev[i] = at(ll); }
+        if (on) for (let i = 0; i < t.nb; i++) { ll.lng = t.lng[i]; ll.lat = t.lat[i]; t.elev[i] = at(ll) / ex; }
         else t.elev.fill(0);
         t.elevFor = state; changed = true;
       }
       if (changed) {
         let lo = Infinity, hi = -Infinity;
         for (const t of this.tiles.values()) for (let i = 0; i < t.nb; i++) { if (t.elev[i] < lo) lo = t.elev[i]; if (t.elev[i] > hi) hi = t.elev[i]; }
-        this.stats.elevMin = isFinite(lo) ? +lo.toFixed(1) : 0; this.stats.elevMax = isFinite(hi) ? +hi.toFixed(1) : 0;
+        this.stats.elevMin = isFinite(lo) ? +(lo * ex).toFixed(1) : 0; this.stats.elevMax = isFinite(hi) ? +(hi * ex).toFixed(1) : 0;
       }
       return changed;
     }
@@ -227,18 +228,18 @@ void main() { gl_FragColor = u_edgecolor; }`;
       this.stats.capped = capped;
       const out = new Float32Array(lines * 2 * STRIDE), keys = new Set(used.map((t) => t.key));
       let j = 0;
-      const put = (x, y, z) => { out[j++] = (x - ox) / k; out[j++] = (y - oy) / k; out[j++] = z; };
+      const put = (x, y, g, z) => { out[j++] = (x - ox) / k; out[j++] = (y - oy) / k; out[j++] = g; out[j++] = z; };
       for (const t of used) {
         const zc = t.z + 1, child = (mx, my) => keys.has(`${zc}/${Math.floor(mx * 2 ** zc)}/${Math.floor(my * 2 ** zc)}`);
         const covered = [0, 1].some((dx) => [0, 1].some((dy) => keys.has(`${zc}/${2 * t.x + dx}/${2 * t.y + dy}`)));
         for (let i = 0; i < t.n; i++) {
           const b = t.bld[i], q = i * 4;
           if (covered && child(mercX(t.lng[b]), mercY(t.lat[b]))) continue;
-          const roof = t.elev[b] + t.h[b], base = t.elev[b] + BASE_LIFT;
+          const g = t.elev[b], roof = t.h[b], base = BASE_LIFT;
           if (t.kind[i] === 0) {
-            put(t.seg[q], t.seg[q + 1], roof); put(t.seg[q + 2], t.seg[q + 3], roof);
-            put(t.seg[q], t.seg[q + 1], base); put(t.seg[q + 2], t.seg[q + 3], base);
-          } else { put(t.seg[q], t.seg[q + 1], base); put(t.seg[q], t.seg[q + 1], roof); }
+            put(t.seg[q], t.seg[q + 1], g, roof); put(t.seg[q + 2], t.seg[q + 3], g, roof);
+            put(t.seg[q], t.seg[q + 1], g, base); put(t.seg[q + 2], t.seg[q + 3], g, base);
+          } else { put(t.seg[q], t.seg[q + 1], g, base); put(t.seg[q], t.seg[q + 1], g, roof); }
         }
       }
       return { data: out.subarray(0, j), count: j / (2 * STRIDE), origin: [ox, oy, k] };
@@ -249,7 +250,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
       const api = vaoApi(gl), prog = program(gl), vao = api.create(), buffer = gl.createBuffer();
       api.bind(vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
       api.bind(null);
       this.gl = { api, prog, vao, buffer };
       this.stats.webgl = api.version;
@@ -275,6 +276,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
       gl.useProgram(g.prog.p);
       gl.uniformMatrix4fv(g.prog.matrix, false, M);
       gl.uniform4fv(g.prog.color, this.color);
+      gl.uniform1f(g.prog.exag, map.terrain ? map.terrain.exaggeration : 1);
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false);
       g.api.bind(g.vao);
