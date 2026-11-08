@@ -183,7 +183,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     gapsOk: window.__app.state.routes.every((c) => [...document.querySelectorAll(".route-card .bar .seg.gap")].length === BikeCommon.mainGaps(window.__app.state.routes[window.__app.state.sel].r).length),
     chevLayer: !!window.__app.map.getLayer("climb-chev"),
     gapBoxes: !!window.__app.map.getLayer("gap-labels"),
-    stopRadius: window.__app.map.getPaintProperty("stops", "circle-radius"),
+    stopRing: (() => { const m = window.__app.map, l = m.getLayer("stops"); return !!l && l.type === "symbol" && /stop/.test(JSON.stringify(m.getLayoutProperty("stops", "icon-image"))); })(),   // 2026-11-08: the clear-line ring image
     popTransition: (() => { const d = document.createElement("div"); d.className = "poi-pop"; document.body.appendChild(d); const v = getComputedStyle(d).transitionDuration; d.remove(); return v; })(),
     rideText: document.querySelector("#ride-go") && document.querySelector("#ride-go").textContent,
     previewLink: !!document.querySelector("#ride-preview"),   // desktop: "Let's ride!" is the preview, so no separate link
@@ -198,7 +198,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
   const fromAfterTap = await page.evaluate(() => window.__app.state.to && window.__app.state.to.join(","));
   await page.click("#view-btn"); await page.waitForTimeout(1200);
   const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
-  const ok = !before.gapBoxes && before.stopRadius === 7.5 && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windOnlyInSuggest && before.routedGone && noFloatingCopy
+  const ok = !before.gapBoxes && before.stopRing && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windOnlyInSuggest && before.routedGone && noFloatingCopy
     && !before.tripChips && !before.exploreNote && before.avoidHills === "Hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
     && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
   return { ok, ...before, noFloatingCopy, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
