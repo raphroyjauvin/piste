@@ -282,7 +282,7 @@ await run("ride card: route strip, two dials, and a callout whose line lands on 
   let refollow = null;
   if (calm !== null) {
     await at(calm); s.follow = false; await at(gap.start - 200);
-    for (let i = 1; i <= 120; i++) { s.ride.seek(gap.start - 200 + i * 0.01); await new Promise(requestAnimationFrame); }   // frames go by while the map is not following (the glide finishes unseen)
+    await at(gap.start - 199);   // one more frame while the map is not following: the padding settles unseen (a snapped frame, so no long glide: the map draws slowly on GitHub)
     s.follow = true; s.ride.seek(gap.start - 198); await frames();   // "Re-center": the very next frame puts the rider above the card
     const top = box(".ride-bar").top, y = app.map.project(app.riderMarker.getLngLat()).y + box("#map").top;
     refollow = { rider: Math.round(y), barTop: Math.round(top), above: y < top - 30 };
