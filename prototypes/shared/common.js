@@ -383,12 +383,13 @@
 
   // ---------------------------------------------------------------- geocoding (local + City of Montréal address API)
   function makeGeocoder(router) {
-    const local = [];
+    const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+    const local = [], folded = [];   // folded[i]: local[i]'s name without accents or capitals, worked out once (2026-11-09: it was redone for every place at every keystroke)
     (window.POIS || []).forEach((p) => {
       if (!p[1] || p[0] === "parking") return;
       local.push({ label: p[1], kind: p[0], lon: p[2], lat: p[3], rank: p[0] === "metro" || p[0] === "rem" ? 3 : p[0] === "park" ? 2 : 1 });
+      folded.push(norm(p[1]));
     });
-    const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
     // intersections "Rachel & Papineau"
     const nodeNames = new Map();
     for (let e = 0; e < router.m; e++) {
@@ -415,7 +416,7 @@
       if (m) { const a = +m[1], b = +m[2]; return [{ label: q, sub: lang() === "fr" ? "Coordonnées" : "Coordinates", lon: a < -60 ? a : b, lat: a < -60 ? b : a }]; }
       const res = [...intersections(q)];
       let offline = false;
-      local.filter((p) => norm(p.label).includes(nq)).sort((a, b) => b.rank - a.rank).slice(0, 6).forEach((p) => res.push(Object.assign({ sub: poiLabel(p.kind) }, p)));
+      local.filter((p, i) => folded[i].includes(nq)).sort((a, b) => b.rank - a.rank).slice(0, 6).forEach((p) => res.push(Object.assign({ sub: poiLabel(p.kind) }, p)));
       if (ctrl) ctrl.abort();
       ctrl = new AbortController();
       try {

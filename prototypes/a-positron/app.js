@@ -304,7 +304,6 @@
     paint: { "text-color": "#5a5d7c", "text-halo-color": HALO, "text-halo-width": 1.6 } });
 
   await C.addMapIcons(map);
-  map.addImage("pill", pillImage("#fdf1e6", "#f3c29a"), { pixelRatio: 2, stretchX: [[20, 44]], stretchY: [[16, 24]], content: [14, 6, 50, 34] });
   // the BIXI count badge: a chamfered navy-outlined plate, 64x40 at pixelRatio 2 (the same 9-slice as before)
   const svgImageData = async (svg, w, h) => { const img = await C.svgToImage(svg), c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d"); x.drawImage(img, 0, 0, w, h); return x.getImageData(0, 0, w, h); };
   for (const [lvl, fill] of [["ok", "#1d6a2c"], ["low", "#c26b12"], ["empty", "#6a6d8a"], ["off", "#44476a"]]) {
@@ -576,11 +575,11 @@
     if (wet ? wet.kind === "snow" : state.winter) {
       const s = WX.snowOutlook(wx, state.winter);
       const txt = s.now ? t("snowNow", { cm: I.num(s.cm) }) : s.at ? t("snowAt", { h: s.at, p: s.prob != null ? I.pct(s.prob / 100) : "" }).replace(" ()", "") : t("noSnowFor", { n: s.dryHours });
-      return `<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg><span>${txt}</span></div>`;
+      return `<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg><span>${C.esc(txt)}</span></div>`;
     }
     const rain = WX.rainOutlook(wx);
     const txt = rain.now ? t("rainNow", { mm: I.num(rain.mm) }) : rain.at ? t("rainAt", { h: rain.at, p: rain.prob != null ? I.pct(rain.prob / 100) : "" }) : t("dryFor", { n: rain.dryHours });
-    return `<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c3.5 5 6 8.2 6 11a6 6 0 0 1-12 0c0-2.8 2.5-6 6-11z"/></svg><span>${txt}</span></div>`;
+    return `<div class="wx-row"><svg class="wx-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c3.5 5 6 8.2 6 11a6 6 0 0 1-12 0c0-2.8 2.5-6 6-11z"/></svg><span>${C.esc(txt)}</span></div>`;
   }
   function renderWxCard() {
     const card = $("#wx-card");
@@ -609,15 +608,25 @@
   map.on("rotate", () => { const a = $("#wx-card .wx-arrow"); if (a && state.wxData) a.style.transform = `rotate(${(state.wxData.now.dir + 180) % 360 - map.getBearing()}deg)`; });
 
   // ------------------------------------------------------------------ live BIXI
+  // The first load always runs (it swaps the plain station icons for the live ones). After that the feed is asked again, every minute, only
+  // while its numbers can be seen: the BIXI layer on and the map close enough to show the stations (zoom 14.6), or during a ride (the
+  // roadside pop-ups). Zooming in after a quiet spell fetches at once (2026-11-09: it used to poll every minute whatever was on screen).
+  const BIXI_ZOOM = 14.6;
+  const bixiWanted = () => !state.bixi || state.mode === "ride" || (toggles["pois-bike"] && map.getZoom() >= BIXI_ZOOM);
+  let bixiBusy = false;
   async function loadBixi() {
-    if (document.hidden) return;
+    if (document.hidden || bixiBusy || !bixiWanted()) return;
+    bixiBusy = true;
     try {
       state.bixi = await BX.load();
       map.getSource("bixi-live").setData(state.bixi);
       applyLayers();
     } catch (e) { console.warn("BIXI live unavailable", e); }
+    bixiBusy = false;
   }
+  const bixiCatchUp = () => { if (state.bixi && Date.now() - BX.loadedAt() > 60e3) loadBixi(); };   // back in view with numbers over a minute old
   loadBixi(); setInterval(loadBixi, 60e3);
+  map.on("zoomend", bixiCatchUp);
   function bixiByName(name) { return state.bixi && state.bixi.features.find((f) => f.properties.name === name); }
   function bixiText(p) {
     if (!p.renting) return t("bixiClosed");
@@ -708,7 +717,8 @@
       sugTimer = setTimeout(async () => {
         const text = el.value;
         if (recentMatches(text).length || savedMatches(text).length) showSuggest(text, []);   // saved and recent places first, without waiting for the address service
-        showSuggest(text, text.trim() ? await geocoder.search(text) : []);
+        const found = text.trim() ? await geocoder.search(text) : [];
+        if (el.value === text) showSuggest(text, found);   // the text changed while the address service answered: those results are stale
       }, 160);
     });
     el.addEventListener("keydown", (e) => {
@@ -1300,7 +1310,8 @@
     const wx = state.avoidWind ? state.wxData || (await loadWeather()) : null;
     const picks = await suggester.suggest({ start: state.from, km: state.sugg.km, loop: state.sugg.loop, stop: state.sugg.stop,
       weights: Object.assign({}, weightsFor(strictness(), hills.checked), windWeights(), worksWeights()), windCost: wx ? (route) => WX.windOnRoute(route, wx) : null });
-    if (token !== suggToken) return;   // a newer request started meanwhile
+    // a newer request started meanwhile, or the rider moved on (another tab, a ride): these rides are no longer wanted
+    if (token !== suggToken || state.tab !== "suggest" || state.smode !== "custom" || state.mode === "ride") return;
     state.lastMs = performance.now() - t1;
     state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, end: c.end, loop: c.loop }));
     state.sel = 0;
@@ -1617,7 +1628,7 @@
   const treesBox = document.querySelector('#layers input[data-layer="trees"]');
   treesBox.checked = store.get("trees", "1") !== "0";
   treesBox.addEventListener("change", () => store.set("trees", treesBox.checked ? "1" : "0"));
-  document.querySelectorAll("#layers input[data-layer]").forEach((cb) => { toggles[cb.dataset.layer] = cb.checked; cb.addEventListener("change", () => { toggles[cb.dataset.layer] = cb.checked; applyLayers(); }); });
+  document.querySelectorAll("#layers input[data-layer]").forEach((cb) => { toggles[cb.dataset.layer] = cb.checked; cb.addEventListener("change", () => { toggles[cb.dataset.layer] = cb.checked; applyLayers(); bixiCatchUp(); }); });
   function vis(id, on) { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none"); }
   function setTerrain(on) {
     if (on === state.terrainOn) return;   // re-creating terrain is costly: only on a real change
@@ -1877,10 +1888,10 @@
     state.rideEnd = placeText(sel.end) || state.toLabel || t("destination");
     state.rideView = view;
     $("#panel").hidden = true; $("#legend").hidden = true; document.querySelector(".map-controls").hidden = true;
-    $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false);
+    $("#ride-hud").hidden = false; setMode("ride"); renderWxCard(); wind.show(false); bixiCatchUp();   // the roadside pop-ups show live BIXI counts
     set3d(state.rideView === "birdseye", false);
     // the ride card starts with the strip of this route and no callout
-    buildStrip(r); for (const id of ["#gps-msg", "#gap-card", "#hill-card"]) $(id).hidden = true; syncEvent([]);
+    hudNow.clear(); buildStrip(r); for (const id of ["#gps-msg", "#gap-card", "#hill-card"]) $(id).hidden = true; syncEvent([]);
     measureBar(); setRidePadding();
     riderMarker.setLngLat(r.coords[0]).addTo(map); badgeMarker.setLngLat(r.coords[0]).addTo(map);
     Object.values(markers).forEach((m) => (m.getElement().style.display = "none"));
@@ -1940,7 +1951,7 @@
       loop: j.loop || null, target: j.target || null, outback: sel.kind === "outback", reached: j.kind !== "lead", notices: [] };
     if (!j.route) return;   // "start" (you are at the usual start) or "none" (no lead-in from here): the ride as planned
     if (j.lead) setLeadIn(j.lead, j.route);
-    state.ride.setRoute(j.route, C.routePOIs(j.route, window.POIS, 70));
+    state.ride.setRoute(j.route, C.routePOIs(j.route, window.POIS, 70)); buildStrip(j.route);   // the ride card's strip is this route (lead-in, then the loop)
     if (j.joinAt > 0) state.rideEnd = placeLabel(j.join[0], j.join[1]);   // the ride ends where it joined the loop
     map.getSource("route").setData(rideRouteData(j.route));
     map.getSource("stops").setData(stopsData(j.route));
@@ -2125,10 +2136,10 @@
     }
     const cam = bird ? CAM.bird : CAM.top;
     const view = { center: [f.pos.lon, f.pos.lat], bearing: smoothBearing, pitch: cam.pitch + k * CAM.hill.pitch, zoom: cam.zoom + k * CAM.hill.zoom };
-    if (Math.abs(padTarget - ridePad) > 0.5) {   // the ride card grew or shrank: the rider glides to stay above it
-      ridePad = snap ? padTarget : ridePad + (padTarget - ridePad) * 0.08;
-      view.padding = { top: Math.round(ridePad), bottom: 0, left: 0, right: 0 };
-    }
+    // the ride card grew or shrank: the rider glides to stay above it. The padding goes with every frame: one eased while the map was
+    // moved by hand (no jumpTo then) still applies at "Re-center".
+    if (snap) ridePad = padTarget; else if (Math.abs(padTarget - ridePad) > 0.5) ridePad += (padTarget - ridePad) * 0.08;
+    view.padding = { top: Math.round(ridePad), bottom: 0, left: 0, right: 0 };
     if (glide) {   // "Re-center": ease from where you left the map to the rider
       const u = (performance.now() - glide.t0) / 500;
       if (u >= 1) glide = null;
@@ -2145,23 +2156,23 @@
     badgeMarker.setLngLat([f.pos.lon, f.pos.lat]);
     // turn card
     const L = f.look;
-    if (L.next) { $("#turn-dist").textContent = C.fmtKm(L.nextDist); $("#turn-text").textContent = I.maneuver(L.next); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`; }
-    else { $("#turn-dist").textContent = C.fmtKm(f.total - f.d); $("#turn-text").textContent = t("arrive", { name: state.rideEnd }); $("#turn-icon").innerHTML = `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`; }
+    if (L.next) { put("#turn-dist", C.fmtKm(L.nextDist)); put("#turn-text", I.maneuver(L.next)); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`, true); }
+    else { put("#turn-dist", C.fmtKm(f.total - f.d)); put("#turn-text", t("arrive", { name: state.rideEnd })); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`, true); }
     rideHeading = f.pos.heading; updateWindBadge();
     // gap callout: calm, specific (only stretches of 50 m or more). It points to where the gap starts, or, inside it, to where the bike path comes back.
     const card = $("#gap-card");
+    const gapCard = (kind, html) => { put("#gap-card", html, true); const cls = `ev-item gap-card${kind ? " " + kind : ""}`; if (card.className !== cls) card.className = cls; card.hidden = false; };
     const on = (g) => (g.names[0] ? (I.lang === "fr" ? " sur " : " on ") + C.esc(I.place(g.names[0])) : "");
     let gapAt = null;
     if (L.inGap) {
       const left = L.inGap.start + L.inGap.length - f.d; lastGapEnd = gapAt = L.inGap.start + L.inGap.length;
-      card.className = "ev-item gap-card inside"; card.hidden = false;
-      card.innerHTML = `${GAP_BADGE}<span>${state.winter ? t("gapInsideWinter", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })
-        : t("gapInside", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap), tip: t(L.inGap.busy ? "rideTraffic" : "quietTip") })}</span>`;
+      gapCard("inside", `${GAP_BADGE}<span>${state.winter ? t("gapInsideWinter", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })
+        : t("gapInside", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap), tip: t(L.inGap.busy ? "rideTraffic" : "quietTip") })}</span>`);
     } else if (L.nextGap && L.nextGapDist <= 400) {
-      gapAt = L.nextGap.start; card.className = "ev-item gap-card"; card.hidden = false;
-      card.innerHTML = `${GAP_BADGE}<span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: Math.round(L.nextGap.length), on: on(L.nextGap), busy: L.nextGap.busy ? t("busyTag") : "" })}</span>`;
+      gapAt = L.nextGap.start;
+      gapCard("", `${GAP_BADGE}<span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: Math.round(L.nextGap.length), on: on(L.nextGap), busy: L.nextGap.busy ? t("busyTag") : "" })}</span>`);
     } else if (lastGapEnd !== null && performance.now() < afterGapUntil) {
-      gapAt = lastGapEnd; card.className = "ev-item gap-card ok"; card.hidden = false; card.innerHTML = `${OK_BADGE}<span>${t("backOnLane")}</span>`;
+      gapAt = lastGapEnd; gapCard("ok", `${OK_BADGE}<span>${t("backOnLane")}</span>`);
     } else card.hidden = true;
     if (lastGapEnd !== null && !L.inGap && afterGapUntil === 0) afterGapUntil = performance.now() + 5000;
     if (L.inGap) afterGapUntil = 0;
@@ -2169,7 +2180,7 @@
     syncEvent([gapAt, hillAt].filter((m) => m !== null));
     // progress: the strip, with distance and time left below it
     placeYou(f.d);
-    $("#ride-left-km").textContent = C.fmtKm(f.total - f.d); $("#ride-left-min").textContent = C.fmtMin(((f.total - f.d) / 1000 / 16) * 60);
+    put("#ride-left-km", C.fmtKm(f.total - f.d)); put("#ride-left-min", C.fmtMin(((f.total - f.d) / 1000 / 16) * 60));
     // roadside POIs: pop up as you approach, on their real side of the street. At most 8 at once, names on the 3 nearest.
     const near = L.pois.map((p) => ({ p, ahead: p.along - f.d })).filter((o) => o.ahead > -15).sort((a, b) => a.ahead - b.ahead).slice(0, 8);
     const named = new Set(near.filter((o) => o.ahead < 140).slice(0, 3).map((o) => o.p.i));
@@ -2203,6 +2214,10 @@
   const GAP_BADGE = `<svg class="gc-icon" viewBox="0 0 26 26" aria-hidden="true"><path d="M6 1h14l5 5v14l-5 5H6l-5-5V6z" fill="${COL.gap}" stroke="${NAVY}" stroke-width="1.5"/><path d="M13 6.5v9" stroke="#fff" stroke-width="3"/><path d="M11.4 18.2h3.2v3.2h-3.2z" fill="#fff"/></svg>`;
   const OK_BADGE = `<svg class="gc-icon" viewBox="0 0 26 26" aria-hidden="true"><path d="M6 1h14l5 5v14l-5 5H6l-5-5V6z" fill="${NAVY}"/><path d="M7.5 13.5l3.8 3.8 7.4-8" fill="none" stroke="#fff" stroke-width="2.6"/></svg>`;
   let stripList = [], stripRuns = null, stripAt = -1, evTargets = [], evKey = "";
+  // The ride's cards are filled in at every frame, but their words change a few times a second at most: only a change touches the page
+  // (2026-11-09: writing the same HTML 60 times a second rebuilt it each time, and woke the page-wide observer that looks for new buttons).
+  const hudNow = new Map();
+  const put = (sel, v, html = false) => { if (hudNow.get(sel) === v) return; hudNow.set(sel, v); const el = $(sel); if (html) el.innerHTML = v; else el.textContent = v; };
   function buildStrip(r) {
     stripList = stretches(r); stripRuns = null; stripAt = -1;
     $("#ride-strip .strip-runs").innerHTML = stripList.map((s) => `<i style="flex-grow:${Math.max(1, Math.round(s.length))};background:${segBg(s)}"></i>`).join("");
@@ -2336,7 +2351,7 @@
       title = t("climbIn", { d: C.fmtKm(c.start - f.d) });
       sub = t("climbStats", { rise: Math.round(c.rise), d: C.fmtKm(c.length), avg: I.pct(c.grade), max: max > c.grade + 0.01 ? t("maxPart", { g: I.pct(max) }) : "" });
     }
-    $("#hill-title").textContent = title; $("#hill-sub").textContent = sub;
+    put("#hill-title", title); put("#hill-sub", sub);
     if (Math.abs(f.d - sparkAt) > 4) { $("#hill-spark").innerHTML = sparkSVG(r, f.d, list); sparkAt = f.d; }
     return cur || topped ? c.start + c.length : c.start;
   }
@@ -2443,12 +2458,6 @@
   };
 
   // ------------------------------------------------------------------ helpers
-  function pillImage(fill, stroke) {
-    const c = document.createElement("canvas"); c.width = 64; c.height = 40; const x = c.getContext("2d");
-    x.fillStyle = fill; x.strokeStyle = stroke; x.lineWidth = 2;
-    x.beginPath(); x.roundRect(2, 2, 60, 36, 14); x.fill(); x.stroke();
-    return x.getImageData(0, 0, 64, 40);
-  }
   // legend: the elevation colours as they look on the map (tint over the Positron background)
   function buildElevationLegend() {
     const ramp = (window.ELEVATION_TINT || {}).ramp; if (!ramp) return;
@@ -2505,7 +2514,7 @@
   }
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
-    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, paintTrees, poiPopup, trees: treeLayer, edges: edgeLayer, treesFallback, wind, precip };
+    startGpsRide, endRide, gpsDefault, setFollow, riderMarker, loadBixi, paintTrees, poiPopup, trees: treeLayer, edges: edgeLayer, treesFallback, wind, precip };
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
     computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };

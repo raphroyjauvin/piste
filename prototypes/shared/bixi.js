@@ -4,6 +4,7 @@
   "use strict";
   const BASE = "https://gbfs.velobixi.com/gbfs/2-2/en/";
   let info = null, loadedAt = 0;
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
   async function getJSON(name) {
     const r = await fetch(BASE + name, { cache: "no-store" });
     if (!r.ok) throw new Error(`BIXI ${name}: ${r.status}`);
@@ -18,10 +19,11 @@
       type: "FeatureCollection",
       features: info.map((s, i) => {
         const x = status.get(s.station_id) || {};
-        const bikes = x.num_bikes_available ?? 0, ebikes = x.num_ebikes_available ?? 0;
-        return { type: "Feature", id: i, geometry: { type: "Point", coordinates: [s.lon, s.lat] },
-          properties: { name: s.name, bikes, ebikes, docks: x.num_docks_available ?? 0, cap: s.capacity || 0,
-            renting: x.is_renting ?? 1, returning: x.is_returning ?? 1, updated: x.last_reported || 0,
+        // counts are forced to numbers and the name to text: the app writes them into its pop-ups (it escapes the name there)
+        const bikes = num(x.num_bikes_available), ebikes = num(x.num_ebikes_available);
+        return { type: "Feature", id: i, geometry: { type: "Point", coordinates: [+s.lon, +s.lat] },
+          properties: { name: String(s.name ?? ""), bikes, ebikes, docks: num(x.num_docks_available), cap: num(s.capacity),
+            renting: x.is_renting ?? 1, returning: x.is_returning ?? 1, updated: num(x.last_reported),
             level: !x.is_renting ? "off" : bikes === 0 ? "empty" : bikes <= 2 ? "low" : "ok" } };
       }),
     };

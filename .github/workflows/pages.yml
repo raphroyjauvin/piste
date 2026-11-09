@@ -10,10 +10,10 @@ on:
     branches: ["**"]   # every branch is tested; only main is published
   workflow_dispatch:
 
+# Every job may only read the code. Publishing rights are given to the deploy job alone (below), so the test job, which runs
+# on every branch and installs the test tools from npm, can never publish.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
   test:
@@ -60,6 +60,10 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     concurrency:
       group: pages
       cancel-in-progress: true

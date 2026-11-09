@@ -278,13 +278,77 @@ await run("ride card: route strip, two dials, and a callout whose line lands on 
   // the rider is drawn above the (taller) card, and "Re-center" sits above it too
   const rider = app.map.project(app.riderMarker.getLngLat()).y + box("#map").top;
   const placed = { riderAboveCard: rider < bar.top - 30, recenterAbove: parseFloat(getComputedStyle(q("#ride-recenter")).bottom) >= innerHeight - bar.top, noSideScroll: document.documentElement.scrollWidth <= innerWidth };
+  // 2026-11-09: the card grows while the map is not following (moved by hand); when it follows again the rider must still be above the card
+  let refollow = null;
+  if (calm !== null) {
+    await at(calm); s.follow = false; await at(gap.start - 200);
+    for (let i = 1; i <= 120; i++) { s.ride.seek(gap.start - 200 + i * 0.01); await new Promise(requestAnimationFrame); }   // frames go by while the map is not following (the glide finishes unseen)
+    s.follow = true; s.ride.seek(gap.start - 198); await frames();   // "Re-center": the very next frame puts the rider above the card
+    const top = box(".ride-bar").top, y = app.map.project(app.riderMarker.getLngLat()).y + box("#map").top;
+    refollow = { rider: Math.round(y), barTop: Math.round(top), above: y < top - 30 };
+  }
   app.endRide();
-  const ok = (quiet === null || (quiet.event && quiet.lines === 0)) && card.event && card.gapShown && card.ticks >= 1 && card.notches === card.ticks && card.leads === card.ticks
+  const ok = (refollow === null || refollow.above) && (quiet === null || (quiet.event && quiet.lines === 0)) && card.event && card.gapShown && card.ticks >= 1 && card.notches === card.ticks && card.leads === card.ticks
     && card.tickOnGap && card.ticksOnStrip && card.leadsBetween && card.calloutAbove && card.youOnStrip
     && gauges.n >= 1 && gauges.round && gauges.right && gauges.inside && gauges.speed === "16" && gauges.unit === "km/h" && /m/.test(gauges.left) && /min/.test(gauges.left)
     && placed.riderAboveCard && placed.recenterAbove && placed.noSideScroll;
-  return { ok, calm, quiet, card, gauges, placed: { ...placed, rider: Math.round(rider), barTop: Math.round(bar.top) } };
+  return { ok, calm, quiet, card, gauges, placed: { ...placed, rider: Math.round(rider), barTop: Math.round(bar.top) }, refollow };
 }), { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ---- 2026-11-09, from the code review ----
+// - rides suggested for "Design your own ride" that finish after the rider went back to "Go somewhere" are dropped (they replaced the route);
+// - address results that arrive after the text changed are dropped (they showed under the newer text);
+// - the unused "pill" picture is gone (its roundRect() kept the app from starting on Safari before 16);
+// - a ride writes its cards only when their words change (it rewrote the turn arrow and the gap warning at every frame);
+// - BIXI is asked again only while its numbers can be seen (the layer on and zoom 14.6 or closer, or a ride), and its counts are numbers.
+await run("review fixes: late suggestions and late address results are dropped; ride cards written on change only; BIXI polled only when seen, counts are numbers", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms)), q = (x) => document.querySelector(x);
+  const app = window.__app, s = app.state, m = app.map;
+  // late suggestions
+  let suggested = false; const sg = app.suggester.suggest;
+  app.suggester.suggest = async function (...a) { const r = await sg.apply(this, a); suggested = true; return r; };
+  q("#tab-custom").click(); await sleep(5); q("#tab-go").click();
+  for (const t0 = performance.now(); !suggested && performance.now() - t0 < 60000;) await sleep(50);
+  await sleep(200); app.suggester.suggest = sg;
+  const tabs = { suggested, tab: s.tab, routes: s.routes.length, key: s.routes[0] && s.routes[0].key, cards: document.querySelectorAll("#routes .route-card").length };
+  // late address results: the address service never answers (until it is cancelled); the first text's local matches must not show under the second text
+  const realFetch = window.fetch;
+  window.fetch = (u, o = {}) => (/api\.montreal\.ca/.test(String(u)) ? new Promise((_, rej) => o.signal && o.signal.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")))) : realFetch(u, o));
+  const to = q("#to"), type = (v) => { to.value = v; to.dispatchEvent(new Event("input", { bubbles: true })); };
+  to.focus(); type("papineau"); await sleep(400); type("zzzzzz"); await sleep(700);
+  const search = { bar: to.value, stale: [...document.querySelectorAll("#suggest li")].filter((li) => !q("#suggest").hidden && /papineau/i.test(li.textContent)).length };
+  window.fetch = realFetch; to.value = s.toLabel; to.blur(); await sleep(250);
+  const pill = m.hasImage("pill");
+  // a running preview: the turn arrow and the gap card are not rebuilt at every frame, and the numbers still move
+  app.startRide("birdseye"); await sleep(1200);
+  let arrow = 0, gapWrites = 0; const left0 = q("#ride-left-km").textContent + q("#turn-dist").textContent, d0 = s.ride.d;
+  const mo1 = new MutationObserver((l) => (arrow += l.length)), mo2 = new MutationObserver((l) => (gapWrites += l.length));
+  mo1.observe(q("#turn-icon"), { childList: true, subtree: true }); mo2.observe(q("#gap-card"), { childList: true });
+  let frames = 0, on = true; const tick = () => { frames++; if (on) requestAnimationFrame(tick); }; requestAnimationFrame(tick);
+  await sleep(2500); on = false; mo1.disconnect(); mo2.disconnect();
+  const writes = { frames, arrow, gapWrites, moved: Math.round(s.ride.d - d0), numbersChanged: q("#ride-left-km").textContent + q("#turn-dist").textContent !== left0 };
+  app.endRide();
+  // BIXI: no request while the stations can't be seen; one when they can; none with the layer off; counts forced to numbers
+  for (const t0 = performance.now(); !s.bixi && performance.now() - t0 < 20000;) await sleep(100);
+  let calls = 0, tamper = false;
+  window.fetch = async (u, o) => {
+    if (!/gbfs\.velobixi\.com/.test(String(u))) return realFetch(u, o);
+    calls++; const r = await realFetch(u, o); if (!tamper) return r;
+    const j = await r.json(); j.data.stations[0].num_bikes_available = "7"; j.data.stations[0].num_docks_available = "<img src=x onerror=alert(1)>";
+    return new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const call = async () => { const n = calls; await app.loadBixi(); return calls - n; };
+  m.jumpTo({ center: [-73.5747, 45.5225], zoom: 12 }); await sleep(100); const far = await call();
+  m.jumpTo({ zoom: 16 }); await sleep(100); const near = await call();
+  const layerBox = q('#layers input[data-layer="pois-bike"]'); layerBox.click(); const layerOff = await call(); layerBox.click();
+  tamper = true; await app.loadBixi(); tamper = false; window.fetch = realFetch;
+  const types = s.bixi.features.map((f) => f.properties), odd = types.filter((p) => ![p.bikes, p.ebikes, p.docks, p.cap].every((v) => typeof v === "number" && Number.isFinite(v)) || typeof p.name !== "string").length;
+  const bixi = { far, near, layerOff, odd, sevens: types.filter((p) => p.bikes === 7).length >= 1, stations: types.length };
+  const ok = tabs.suggested && tabs.tab === "go" && tabs.routes === 1 && tabs.key === "yourRoute" && tabs.cards === 1 && search.bar === "zzzzzz" && search.stale === 0 && !pill
+    && writes.frames > 5 && writes.moved > 5 && writes.numbersChanged && writes.arrow <= 6 && writes.gapWrites <= Math.max(6, writes.frames / 3)
+    && bixi.far === 0 && bixi.near === 1 && bixi.layerOff === 0 && bixi.odd === 0 && bixi.sevens && bixi.stations > 0;
+  return { ok, tabs, search, pill, writes, bixi };
+}));
 
 await run("suggest a ride: custom loops, stops, 100 km box, headwinds", `${APP}?trip=montroyal`, async (page) => page.evaluate(async (fix) => {
   const app = window.__app, s = app.state;
@@ -1188,7 +1252,8 @@ await run("GPS ride (replayed track): a classic ride from 1 km away: lead-in to 
   await sleep(300);
   const drawn = (await app.map.getSource("route").getData()).features, leadF = drawn.filter((f) => f.properties.lead === 1);
   const dot = (await app.map.getSource("ends").getData()).features[0];
-  const start = { kind: J.kind, ms: J.ms, routed: J.routed, cands: J.cands, leadM: Math.round(J.at), toNearestM: toNearest && Math.round(toNearest.length), joinAt: Math.round(J.joinAt),
+  const stripM = () => [...document.querySelectorAll("#ride-strip .strip-runs i")].reduce((a, el) => a + +el.style.flexGrow, 0);   // each run grows by its metres
+  const start = { stripM: stripM(), kind: J.kind, ms: J.ms, routed: J.routed, cands: J.cands, leadM: Math.round(J.at), toNearestM: toNearest && Math.round(toNearest.length), joinAt: Math.round(J.joinAt),
     loopM: loop && Math.round(loop.length), plannedM: Math.round(L), routeM: Math.round(r0.length), riderToStartM: Math.round(gap(r0.coords[0], from)),
     endToJoinM: +gap(r0.coords.at(-1), J.join).toFixed(2), leadEndToJoinM: J.lead ? +gap(J.lead.coords.at(-1), J.join).toFixed(2) : null, joinToUsualStartM: Math.round(gap(J.join, planned.coords[0])),
     leadDrawnM: leadF.reduce((a, f) => a + f.properties.len, 0), leadPieces: leadF.length, loopPieces: drawn.length - leadF.length,
@@ -1196,7 +1261,7 @@ await run("GPS ride (replayed track): a classic ride from 1 km away: lead-in to 
   // the detour 250 m into the lead-in: one reroute, back to the same join point, then the same loop
   for (const t0 = performance.now(); s.reroutes < 1 && performance.now() - t0 < 60000;) await sleep(200);
   const r1 = ride.route, log = s.rerouteLog[0] || {};
-  const reroute = { reroutes: s.reroutes, leadIn: log.leadIn, newLeadM: Math.round(J.at), loopM: Math.round(r1.length - J.at), sameLoop: J.loop === loop, endToJoinM: +gap(r1.coords.at(-1), J.join).toFixed(2),
+  const reroute = { stripM: stripM(), routeM: Math.round(r1.length), reroutes: s.reroutes, leadIn: log.leadIn, newLeadM: Math.round(J.at), loopM: Math.round(r1.length - J.at), sameLoop: J.loop === loop, endToJoinM: +gap(r1.coords.at(-1), J.join).toFixed(2),
     leadEndToJoinM: J.lead ? +gap(J.lead.coords.at(-1), J.join).toFixed(2) : null, fixToStartM: log.at ? Math.round(gap(log.at, r1.coords[0])) : null, reachedYet: J.reached };
   // on to the loop
   for (const t0 = performance.now(); !J.reached && performance.now() - t0 < 120000;) await sleep(200);
@@ -1208,7 +1273,8 @@ await run("GPS ride (replayed track): a classic ride from 1 km away: lead-in to 
   BikeI18n.lang = "fr"; const fr = [BikeI18n.t("leadInLoop", { d: "1,1 km" }), BikeI18n.t("onLoop", { d: "10 km" }), BikeI18n.t("leadInRide", { d: "4 km" }), BikeI18n.t("onRide", { d: "56 km" })]; BikeI18n.lang = "en";
   app.endRide();
   const restored = (await app.map.getSource("route").getData()).features.length === C.routePiecesGeoJSON(planned).features.length;
-  const ok = start.kind === "lead" && start.ms < 250 && start.routed >= 2 && start.leadM > 500 && start.leadM < 2500 && start.toNearestM && start.leadM <= start.toNearestM + 1
+  const ok = Math.abs(start.stripM - start.routeM) <= 30 && Math.abs(reroute.stripM - reroute.routeM) <= 30   // 2026-11-09: the strip showed the loop alone
+    && start.kind === "lead" && start.ms < 250 && start.routed >= 2 && start.leadM > 500 && start.leadM < 2500 && start.toNearestM && start.leadM <= start.toNearestM + 1
     && start.loopM === start.plannedM && Math.abs(start.routeM - start.leadM - start.plannedM) <= 1 && start.riderToStartM < 60 && start.endToJoinM < 0.01 && start.leadEndToJoinM < 0.01
     && start.joinToUsualStartM > 300 && Math.abs(start.leadDrawnM - start.leadM) <= start.leadPieces && start.loopPieces > 0 && start.leadLayer === "[0,1.7]" && start.dotToJoinM < 0.01
     && reroute.reroutes === 1 && reroute.leadIn === true && reroute.sameLoop && Math.abs(reroute.loopM - start.plannedM) <= 1 && reroute.endToJoinM < 0.01 && reroute.leadEndToJoinM < 0.01
