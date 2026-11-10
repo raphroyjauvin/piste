@@ -2649,7 +2649,7 @@ const cardSnap = () => { const a = window.__app, C = window.BikeCommon, s = a.st
     const on = (segs.filter((x) => !x.classList.contains("gap")).reduce((m, x) => m + grow(x), 0) / Math.max(1, segs.reduce((m, x) => m + grow(x), 0))) * 100;
     const cs = el.getBoundingClientRect(), sv = svg && svg.getBoundingClientRect(), br = bar && bar.getBoundingClientRect();
     const colour = (q) => { const x = el.querySelector(q); return x && getComputedStyle(x).backgroundColor; };
-    return { tag: el.tagName, sel: el.classList.contains("sel"), order: [...el.children].map((c) => c.className.split(" ")[0] || c.tagName).join(),
+    return { tag: el.tagName, sel: el.classList.contains("sel"), order: [...el.children].filter((c) => !c.classList.contains("ink-svg")).map((c) => c.className.split(" ")[0] || c.tagName).join(),   // the pen outline (ink.js) is not part of the card's content
       title: el.querySelector(".rc-top b").textContent, time: el.querySelector(".rc-top .time").textContent, km: el.querySelector(".rc-km").textContent, climb: el.querySelector(".rc-climb").textContent,
       pct: el.querySelector(".rc-pct").textContent, label: svg && svg.getAttribute("aria-label"), role: svg && svg.getAttribute("role"), stops: svg ? [...svg.querySelectorAll("stop")].map((x) => x.getAttribute("stop-color")) : [],
       onPct: on, offs: el.querySelectorAll(".bar .seg.gap").length, offColour: colour(".bar .seg.gap"),
@@ -2706,7 +2706,7 @@ await run("route card: one card that follows the slider and Avoid; climbs over 7
   const clName = await page.evaluate(() => window.__app.state.routes[0].title.raw);
   // 2026-11-08: a classic ride's card is its card in the carousel (photo, then the route card's parts with the ride's description); nothing in #routes
   const cls = await page.evaluate(() => { const el = document.querySelector("#classics .classic-card.sel"), body = el && el.querySelector(".cc-body");
-    return { inRoutes: document.querySelectorAll("#routes .route-card").length, order: body ? [...body.children].map((c) => c.className.split(" ")[0]).join() : "",
+    return { inRoutes: document.querySelectorAll("#routes .route-card").length, order: body ? [...body.children].filter((c) => !c.classList.contains("ink-svg")).map((c) => c.className.split(" ")[0]).join() : "",
       title: el && el.querySelector(".rc-top b").textContent, photo: !!(el && el.querySelector(".cc-photo")), gone: !document.querySelector(".cc-meta, .cc-start"),
       segs: el ? el.querySelectorAll(".bar button.seg").length : 0, pctOnce: el ? (el.textContent.match(/% on bike paths/g) || []).length : 0,
       others: document.querySelectorAll("#classics .classic-card:not(.sel) .bar button.seg").length }; });
