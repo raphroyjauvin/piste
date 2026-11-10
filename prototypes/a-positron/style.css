@@ -46,6 +46,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   background: var(--paper-2); color: var(--ink-2); font: 800 12px/1 var(--font-display); letter-spacing: .04em; }
 .lang-btn::after { content: ""; position: absolute; inset: -6px; }
 .lang-btn:hover { background: var(--hover); color: var(--ink); }
+/* night map button (2026-11-09), same size and style as the language button; the state shows in the shape, not in colour:
+   outline moon + "A" = Auto, filled moon = On, plain outline moon = Off */
+.night-btn svg { display: block; }
+.night-btn text { display: none; font-family: var(--font-display); }
+.night-btn[data-state="auto"] text { display: inline; }
+.night-btn[data-state="on"] path { fill: currentColor; }
 
 /* tabs: "Go somewhere" / "Suggest a ride", and the classics / custom switch */
 .tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; background: var(--paper-2); border-radius: var(--r-btn); padding: 4px; }
@@ -234,7 +240,7 @@ body.riding .tour-again { visibility: hidden; }
 .view-btn.is3d .cube { opacity: 0; transform: scale(.7); }
 .view-btn.is3d .flat { opacity: 1; transform: none; }
 .view-btn span { position: absolute; bottom: 3px; font: 800 9px/1 var(--font-display); letter-spacing: .08em; color: var(--ink-3); }
-.view-btn.small { width: 44px; height: 44px; border-radius: var(--r-btn); border: 0; background: var(--paper-2); }
+.view-btn.small { width: 44px; height: 44px; border-radius: var(--r-btn); border: 1.5px solid var(--navy); background: var(--paper-2); }
 .round-btn[aria-pressed="true"] { background: var(--navy); }
 .round-btn[aria-pressed="true"] svg { stroke: #fff; }
 #wx-btn .drop { fill: rgba(30, 33, 96, .15); }
@@ -250,9 +256,6 @@ body.winter #wx-btn .flake { display: inline; }
 .layers h3 + label { margin-top: 2px; }
 .layers label + h3 { margin-top: 8px; }
 .layers label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
-.layers .night { display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; margin-top: 6px; font-size: 14px; }
-.layers .night > span { margin-right: auto; }
-.layers .night label { min-height: 44px; }   /* the whole label is the 44 px tap target */
 .layers em { font-style: normal; font-size: 11px; color: var(--ink-3); margin-left: auto; }
 
 /* weather and winter card */
@@ -275,7 +278,6 @@ body.winter #wx-btn .flake { display: inline; }
 .sw-a { background: var(--navy); } .sw-b { background: var(--navy-2); } .sw-c { background: repeating-linear-gradient(90deg, var(--navy-2) 0 6px, transparent 6px 10px); }
 .sw-gap { background: repeating-linear-gradient(90deg, var(--gap) 0 7px, #ffc9a8 7px 10px); }
 .sw-rev { background: var(--navy); height: 5px; } .sw-net { background: var(--navy-2); height: 3px; opacity: .7; }
-.sw-plan { background: repeating-linear-gradient(90deg, #d9b400 0 5px, transparent 5px 9px); height: 3px; }
 .sw-4s { background: var(--navy); height: 4px; } .sw-not4s { background: repeating-linear-gradient(90deg, #aebbc6 0 5px, transparent 5px 9px); height: 3px; }
 .sw-contour { background: var(--navy); height: 2px; opacity: .35; }
 .winter-only { display: none !important; }
@@ -559,6 +561,10 @@ body.riding .me-dot { display: none; }
   .brand { touch-action: none; }
   .brand .mark { width: 28px; height: 28px; }
   .brand h1 { font-size: 19px; }
+  /* 2026-11-09: with a route showing, the header is one line (smaller logo, "Piste", the two buttons) to leave room for the route; the buttons keep their 44 px tap area */
+  .brand.compact .mark { width: 22px; height: 22px; }
+  .brand.compact h1 { font-size: 16px; }
+  .brand.compact p { display: none; }
   .classics { margin: 0 -16px; }
   .classic-track { padding: 2px 16px 6px; grid-auto-columns: 86%; }
   .legend { display: none; }

@@ -947,33 +947,17 @@ def task_pois():
     return c
 
 
-# ================================================================ planned / closures / works (build_layers.layer_planned on the island)
+# ================================================================ closures / works (build_layers.layer_planned on the island)
+# 2026-11-09: road works and closures only; planned and in-construction bike paths were removed from the app.
 def task_planned():
     feats = []
     tiles = RAW / "mtl_live_tiles_island"
-    proj = json.loads((tiles / "pistes-cyclables-projete.geojson").read_text(encoding="utf-8"))["features"]
-    status = {"D": "construction", "P": "planned", "GP": "planned"}
-    for f in proj:
-        p = f["properties"]
-        st = status.get(p.get("avancementCode"))
-        if not st:
-            continue
-        feats.append({"type": "Feature", "geometry": bl.round_geom(f["geometry"]),
-                      "properties": {"status": st, "name": p.get("projetNom") or "", "rev": int(p.get("revAxes") == "Oui"),
-                                     "year": p.get("projetProgramAnnee") or 0, "src": "Ville de Montréal"}})
     live = json.loads((tiles / "pistes-cyclables.geojson").read_text(encoding="utf-8"))["features"]
     for f in live:
         if f["properties"].get("avancementCode") == "FT":
             feats.append({"type": "Feature", "geometry": bl.round_geom(f["geometry"]),
                           "properties": {"status": "closed", "name": f["properties"].get("projetNom") or "",
                                          "src": "Ville de Montréal"}})
-    # OSM bike lanes under construction (layer_planned reads these from bikeways.json; for the island a narrow query holds just them)
-    bw = json.loads((RAW / "osm_overpass" / "bikeways_construction_island.json").read_text(encoding="utf-8"))["elements"]
-    for el in bw:
-        t = el.get("tags", {})
-        if t.get("highway") == "construction" and t.get("construction") == "cycleway":
-            feats.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": [bl.r6([p["lon"], p["lat"]]) for p in el["geometry"]]},
-                          "properties": {"status": "construction", "name": t.get("name", ""), "src": "OpenStreetMap"}})
     # works blocking a bike lane today (permit point + impacted street)
     permits = {}
     with open(RAW / "mtl_info_travaux_snapshot" / "entraves-travaux-en-cours.csv", encoding="utf-8-sig") as fh:

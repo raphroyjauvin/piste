@@ -1,7 +1,7 @@
 """Build the display layers the prototypes load (prototypes/shared/data/*.js, one window.<NAME> each).
 
     network.js    bike infrastructure by tier (from the routing graph, so map and router always agree)
-    planned.js    planned / in-development bike routes, temporary closures, works blocking bike lanes
+    planned.js    temporary closures and road works blocking bike lanes (window.PLANNED; no planned paths since 2026-11-09)
     pois.js       cyclist POIs: BIXI, metro, cafes, food, bakeries, water, repair, parking, parks, culture
     buildings.js  OSM footprints with heights from the 2023 LiDAR (DSM - DTM, 70th percentile)
     contours.js   5 m contours from the 1 m LiDAR terrain model
@@ -101,31 +101,17 @@ def layer_network():
     write_js("network.js", "BIKE_NETWORK", fc(feats))
 
 
-# ---------------------------------------------------------------- planned / closures / works
+# ---------------------------------------------------------------- closures / works
+# 2026-11-09: planned.js (window.PLANNED, name kept) holds road works and closures only; planned and
+# in-construction bike paths were removed from the app.
 def layer_planned():
     feats = []
-    proj = json.loads((RAW / "mtl_live_tiles" / "pistes-cyclables-projete.geojson").read_text(encoding="utf-8"))["features"]
-    status = {"D": "construction", "P": "planned", "GP": "planned"}
-    for f in proj:
-        p = f["properties"]
-        st = status.get(p.get("avancementCode"))
-        if not st:
-            continue
-        feats.append({"type": "Feature", "geometry": round_geom(f["geometry"]),
-                      "properties": {"status": st, "name": p.get("projetNom") or "", "rev": int(p.get("revAxes") == "Oui"),
-                                     "year": p.get("projetProgramAnnee") or 0, "src": "Ville de Montréal"}})
     live = json.loads((RAW / "mtl_live_tiles" / "pistes-cyclables.geojson").read_text(encoding="utf-8"))["features"]
     for f in live:
         if f["properties"].get("avancementCode") == "FT":
             feats.append({"type": "Feature", "geometry": round_geom(f["geometry"]),
                           "properties": {"status": "closed", "name": f["properties"].get("projetNom") or "",
                                          "src": "Ville de Montréal"}})
-    bw = json.loads((RAW / "osm_overpass" / "bikeways.json").read_text(encoding="utf-8"))["elements"]
-    for el in bw:
-        t = el.get("tags", {})
-        if t.get("highway") == "construction" and t.get("construction") == "cycleway":
-            feats.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": [r6([p["lon"], p["lat"]]) for p in el["geometry"]]},
-                          "properties": {"status": "construction", "name": t.get("name", ""), "src": "OpenStreetMap"}})
     # works blocking a bike lane today (permit point + impacted street)
     permits = {}
     with open(RAW / "mtl_info_travaux_snapshot" / "entraves-travaux-en-cours.csv", encoding="utf-8-sig") as fh:

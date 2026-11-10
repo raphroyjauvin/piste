@@ -28,7 +28,7 @@
   const NAVY = "#1e2160";
   const COL = {
     a: NAVY, b: "#3d43a8", c: "#3d43a8", gap: "#ff6a1f", gapQuiet: "#ffa25e", closed: "#d7263d",
-    rev: NAVY, ridden: "#2a9d8f", netA: NAVY, netB: "#3d43a8", netC: "#9296d6", planned: "#d9b400", alt: "#9aa5ae", notCleared: "#aebbc6",
+    rev: NAVY, ridden: "#2a9d8f", netA: NAVY, netB: "#3d43a8", netC: "#9296d6", alt: "#9aa5ae", notCleared: "#aebbc6",
   };
   // the same at night, light enough to read on the ink-navy map
   const COL_NIGHT = { a: "#aab0ff", b: "#8a90e6", c: "#8a90e6", net: "#aab0ff", netB: "#8a90e6", netC: "#6f75c0" };
@@ -194,7 +194,7 @@
   map.addSource("trees", { type: "vector", url: TILES("trees") });
   map.addSource("parks", { type: "vector", url: TILES("parks") });
   map.addSource("network", { type: "geojson", data: networkGeoJSON() });
-  map.addSource("planned", { type: "geojson", data: window.PLANNED });
+  map.addSource("planned", { type: "geojson", data: window.PLANNED });   // source id kept; road works and closures only (2026-11-09)
   if (window.REM) map.addSource("rem", { type: "geojson", data: { type: "Feature", geometry: { type: "MultiLineString", coordinates: window.REM.lines } } });
   map.addSource("pois", { type: "geojson", data: C.poisGeoJSON(window.POIS) });
   map.addSource("terrain", { type: "raster-dem", tiles: ["piste-dem://{z}/{x}/{y}"], encoding: "terrarium", tileSize: 256, maxzoom: 14 });
@@ -262,13 +262,7 @@
   }
   add({ id: "net-not-cleared", type: "line", source: "network", filter: ["==", ["get", "s4"], 0], layout: { visibility: "none" },
     paint: { "line-color": COL.notCleared, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.8, 16, 2.2], "line-dasharray": [1.2, 1.4] } });
-  // planned & construction (browse only), closures and works (always, toggle)
-  add({ id: "planned", type: "line", source: "planned", filter: ["==", ["get", "status"], "planned"], layout: { visibility: "none" },
-    paint: { "line-color": COL.planned, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.2, 16, 3], "line-dasharray": [2, 1.6], "line-opacity": 0.9 } });
-  add({ id: "construction", type: "line", source: "planned", filter: ["==", ["get", "status"], "construction"], layout: { visibility: "none" },
-    paint: { "line-color": "#ffd900", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2, 16, 5] } });
-  add({ id: "construction-tape", type: "line", source: "planned", filter: ["==", ["get", "status"], "construction"], layout: { visibility: "none" },
-    paint: { "line-color": "#2a2a2a", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2, 16, 5], "line-dasharray": [0.5, 1.1] } });
+  // closures (always, with the works toggle); 2026-11-09: planned and in-construction paths are gone, window.PLANNED holds road works and closures only
   add({ id: "closed", type: "line", source: "planned", filter: ["==", ["get", "status"], "closed"],
     paint: { "line-color": COL.closed, "line-width": 3, "line-dasharray": [1, 1] } });
   // routes
@@ -512,7 +506,7 @@
     if (map.getLayer("stops")) map.setLayoutProperty("stops", "icon-image", state.night ? "stop-ring-night" : "stop-ring");
     if (edgeLayer) edgeLayer.setColor(EDGE_COLORS[state.night ? "night" : "day"]);
   }
-  // "Night map" in the Layers panel: Auto (between sunset and sunrise in Montréal, worked out here), On or Off; kept in localStorage "piste-night"
+  // "Night map" (the moon button in the header): Auto (between sunset and sunrise in Montréal, worked out here), On or Off; kept in localStorage "piste-night"
   const nightPref = () => (["auto", "on", "off"].includes(store.get("night", "auto")) ? store.get("night", "auto") : "auto");
   function applyNight() {
     const pref = nightPref(), on = pref === "on" || (pref === "auto" && C.isNight(new Date()));
@@ -521,10 +515,19 @@
     document.body.classList.toggle("night", on);
     paintMap();
   }
-  document.querySelectorAll("input[name=night]").forEach((r) => {
-    r.checked = r.value === nightPref();
-    r.addEventListener("change", () => { store.set("night", r.value); applyNight(); });
+  // the night button in the brand header (2026-11-09): a tap cycles Auto, On, Off; the icon and the label follow the saved choice
+  const nightBtn = document.getElementById("night-btn");
+  function renderNightBtn() {
+    const pref = nightPref();
+    nightBtn.dataset.state = pref;
+    nightBtn.title = `${t("lyNight")}${I.lang === "fr" ? " : " : ": "}${t({ auto: "nightAuto", on: "nightOn", off: "nightOff" }[pref])}`;
+    nightBtn.setAttribute("aria-label", nightBtn.title);
+  }
+  nightBtn.addEventListener("click", () => {
+    store.set("night", { auto: "on", on: "off", off: "auto" }[nightPref()]);
+    renderNightBtn(); applyNight();
   });
+  renderNightBtn();
   paintTrees(); applyNight();
   setInterval(applyNight, 60000);   // Auto: the sun sets while the app is open
 
@@ -1546,6 +1549,7 @@
     return `<${tag} ${tag === "button" ? `type="button" ` : ""}data-i="${i}" class="route-card${pick && i === state.sel ? " sel" : ""}">${cardParts(routeTitle(c), routeNote(c), c.r, live)}</${tag}>`;
   }
   function renderRoutes() {
+    $("#brand").classList.toggle("compact", state.routes.length > 0);   // phones: a route showing makes the header one line (2026-11-09)
     const box = $("#routes"), det = $("#detail");
     if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
     const pick = state.routes.length > 1, sel = state.routes[state.sel], r = sel.r;   // Design your own ride's three; one card for a route
@@ -1661,7 +1665,6 @@
     ["rem-casing", "rem-line"].forEach((id) => vis(id, toggles.rem));
     vis("net-not-cleared", toggles.network && state.winter);
     if (map.getLayer("net-ab")) map.setPaintProperty("net-ab", "line-opacity", browse ? 0.6 : 0.35);
-    ["planned", "construction", "construction-tape"].forEach((id) => vis(id, toggles.planned && browse && !state.winter));
     vis("closed", toggles.works);
     // while riding, roadside pop-ups replace the map's POI icons (only metro stations stay)
     const liveBixi = !!state.bixi;
@@ -1721,7 +1724,7 @@
   function setLang(l) {
     if (l !== I.lang) count("language", { lang: l });
     I.lang = l; I.save(); I.apply(); syncFieldLabels();
-    $("#lang-btn").textContent = l === "fr" ? "EN" : "FR";
+    $("#lang-btn").textContent = l === "fr" ? "EN" : "FR"; renderNightBtn();
     viewBtn.title = t(viewBtn.dataset.i18nTitle || "to3d");
     strictOut.textContent = strictLabel(+strict.value); kmLabel(); renderStopChips();
     classicCache.clear(); classicsRouted = false;   // sight names are part of the route
@@ -2159,7 +2162,7 @@
     if (L.next) { put("#turn-dist", C.fmtKm(L.nextDist)); put("#turn-text", I.maneuver(L.next)); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`, true); }
     else { put("#turn-dist", C.fmtKm(f.total - f.d)); put("#turn-text", t("arrive", { name: state.rideEnd })); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG.arrive}</svg>`, true); }
     rideHeading = f.pos.heading; updateWindBadge();
-    // gap callout: calm, specific (only stretches of 50 m or more). It points to where the gap starts, or, inside it, to where the bike path comes back.
+    // gap callout: calm, specific (only stretches of 100 m or more, C.GAP_WARN_MIN). It points to where the gap starts, or, inside it, to where the bike path comes back.
     const card = $("#gap-card");
     const gapCard = (kind, html) => { put("#gap-card", html, true); const cls = `ev-item gap-card${kind ? " " + kind : ""}`; if (card.className !== cls) card.className = cls; card.hidden = false; };
     const on = (g) => (g.names[0] ? (I.lang === "fr" ? " sur " : " on ") + C.esc(I.place(g.names[0])) : "");
@@ -2325,17 +2328,18 @@
   }
 
   // climb callout: the next ~800 m of elevation, with the climb shaded and you as the dot. Returns where its line on the strip points:
-  // the start of a climb ahead, or the top of the climb you are on (or just finished); null with no climb near.
+  // the start of a climb ahead, or the top of the climb you are on; null when nothing is worth saying.
+  // 2026-11-09: only while C.CLIMB_CALLOUT_MIN_RISE (10 m) or more of climbing is still to come, so no small climbs and no "top of the climb" line.
   function updateHillCard(f, r, list) {
     const card = $("#hill-card");
-    let cur = null, next = null, topped = null;
+    let cur = null, next = null, left = 0;
     for (const c of list) {
       const end = c.start + c.length;
-      if (f.d >= c.start && f.d < end) cur = c;
-      else if (f.d >= end && f.d - end < 60) topped = c;
-      else if (c.start > f.d && !next) next = c;
+      if (f.d >= c.start && f.d < end) { cur = c; left = C.elevAt(r, end) - C.elevAt(r, f.d); }
+      else if (c.start > f.d && !next && c.rise >= C.CLIMB_CALLOUT_MIN_RISE) next = c;
     }
-    const c = cur || topped || (next && next.start - f.d < 600 ? next : null);
+    if (cur && left < C.CLIMB_CALLOUT_MIN_RISE) cur = null;
+    const c = cur || (next && next.start - f.d < 600 ? next : null);
     if (!c) { card.hidden = true; return null; }
     card.hidden = false; card.classList.toggle("on-climb", !!cur);
     let title, sub;
@@ -2343,9 +2347,7 @@
       const end = c.start + c.length, span = Math.max(5, Math.min(30, end - f.d));
       const now = (C.elevAt(r, f.d + span) - C.elevAt(r, f.d)) / span;
       title = t("climbing", { g: I.pct(Math.max(0, now)) });
-      sub = t("toTop", { d: C.fmtKm(end - f.d), m: Math.max(0, Math.round(C.elevAt(r, end) - C.elevAt(r, f.d))) });
-    } else if (topped) {
-      title = t("topOfClimb"); sub = t("riseDone", { m: Math.round(c.rise) });
+      sub = t("toTop", { d: C.fmtKm(end - f.d), m: Math.round(left) });
     } else {
       const max = c.maxGrade ?? (c.maxGrade = C.climbMaxGrade(r, c));
       title = t("climbIn", { d: C.fmtKm(c.start - f.d) });
@@ -2353,7 +2355,7 @@
     }
     put("#hill-title", title); put("#hill-sub", sub);
     if (Math.abs(f.d - sparkAt) > 4) { $("#hill-spark").innerHTML = sparkSVG(r, f.d, list); sparkAt = f.d; }
-    return cur || topped ? c.start + c.length : c.start;
+    return cur ? c.start + c.length : c.start;
   }
   function sparkSVG(r, d, list) {   // drawn at the callout's own width (sparkW, kept by the ride card's ResizeObserver), so the dot stays round
     const W = sparkW || (sparkW = $("#hill-spark").clientWidth) || 314, H = 44, d0 = d - 60, d1 = d + 740;

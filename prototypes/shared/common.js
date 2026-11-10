@@ -202,6 +202,11 @@
   // stretches without a bike path worth telling the rider about (shorter ones are street crossings and joins)
   const GAP_MIN = 50;
   const mainGaps = (route, min = GAP_MIN) => route.gaps.filter((g) => g.length >= min);
+  // 2026-11-09 (Raph): the ride card says nothing about small things. A stretch without a bike path warns (callout, chime, voice) only from
+  // GAP_WARN_MIN; stretches of GAP_MIN to GAP_WARN_MIN still count as "without a bike path" everywhere else (route card, strip, ride summary).
+  // A climb gets a callout only while CLIMB_CALLOUT_MIN_RISE metres or more of climbing are still to come.
+  const GAP_WARN_MIN = 100;
+  const CLIMB_CALLOUT_MIN_RISE = 10;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   // ---------------------------------------------------------------- route POIs & ride look-ahead
@@ -252,10 +257,10 @@
 
   function lookahead(route, d, extras) {
     const next = route.maneuvers.find((m) => m.at > d + 3);
-    const gaps = extras.gaps || route.gaps;
+    const gaps = extras.warnGaps || extras.gaps || route.gaps;
     const inGap = gaps.find((g) => d >= g.start && d < g.start + g.length);
     const nextGap = gaps.find((g) => g.start > d);
-    const hills = extras.climbs || [];
+    const hills = (extras.climbs || []).filter((h) => h.rise >= CLIMB_CALLOUT_MIN_RISE);   // the climb notice skips small ones (2026-11-09)
     const hill = hills.find((h) => h.start + h.length > d && h.start - d < 600);
     const pois = (extras.pois || []).filter((p) => p.along > d - 20 && p.along < d + 320);
     return { next, nextDist: next ? next.at - d : null, inGap, nextGap, nextGapDist: nextGap ? nextGap.start - d : null, hill, pois };
@@ -451,7 +456,7 @@
     // a new route to follow (a reroute): its own cursor, climbs, gaps and roadside places, and fresh events
     setRoute(route, pois = []) {
       this.route = route; this.cursor = buildCursor(route); this._fired = new Set();
-      this.extras = { climbs: climbs(route), pois, gaps: mainGaps(route) };
+      this.extras = { climbs: climbs(route), pois, gaps: mainGaps(route), warnGaps: mainGaps(route, GAP_WARN_MIN) };   // gaps: every stretch counted (summary); warnGaps: the ones the ride warns about
     }
     _emit(extra) {
       const pos = (extra && extra.pos) || this.cursor.at(this.d);
@@ -1138,7 +1143,7 @@
 
   window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, pillSVG, stopSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
-    elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN,
+    elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN, GAP_WARN_MIN, CLIMB_CALLOUT_MIN_RISE,
     cleanProfile, hills, gradeColor, gradeProfileSVG, STEEP, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, sliceRoute, tailRoute, rotateRoute, joinRoutes, JOIN, planJoin, voice, audioSession, gapSentence, buildCursor, distM,
     cleanTrail, rideSummary, SUMMARY, isNight };
 })();

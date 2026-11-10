@@ -26,7 +26,6 @@ const SHOTS = [
   { name: "A5-ride-hill-ahead", url: `${APP}?trip=rachel&ride=bird&at=650&paused`, ...desktop, steps: [["wait", 4000]] },
   { name: "A6-ride-climbing", url: `${APP}?trip=rachel&ride=bird&at=1500&paused`, ...desktop, steps: [["wait", 4000]] },
   { name: "A7-ride-topdown", url: `${APP}?trip=biodome&ride=top&at=600&paused`, ...desktop, steps: [["wait", 3000]] },
-  { name: "A8-explore-planned", url: `${APP}`, ...desktop, steps: [["eval", "document.querySelector('[data-layer=planned]').click(); window.__app.map.jumpTo({center:[-73.585,45.537],zoom:13.3})"], ["wait", 2500]] },
   { name: "A9-suggest-loop", url: `${APP}?trip=montroyal&suggest=loop&km=10&stop=cafe`, ...desktop, steps: [["wait", 2000]] },
   { name: "A10-classics", url: `${APP}?classic=lachine`, ...desktop, steps: [["wait", 2500]] },
   { name: "A11-winter", url: `${APP}?trip=montroyal&winter=1`, ...desktop, steps: [["wait", 3500]] },

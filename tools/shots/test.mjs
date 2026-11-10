@@ -178,7 +178,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
     relief: document.querySelector('[data-layer="relief"]').parentElement.textContent.trim(),
     works: document.querySelector('[data-layer="works"]').parentElement.textContent.trim(),
     metroToggle: !!document.querySelector('[data-layer="metro"]'), parksToggle: !!document.querySelector('[data-layer="pois-out"]'),
-    buildingsInMap: document.querySelector('[data-layer="buildings"]').closest(".layers").querySelectorAll("h3").length === 2,
+    buildingsInMap: document.querySelector('[data-layer="buildings"]').closest(".layers").querySelectorAll("h3").length === 3,
     label2d: document.querySelector("#view-label").textContent,
     gapsOk: window.__app.state.routes.every((c) => [...document.querySelectorAll(".route-card .bar .seg.gap")].length === BikeCommon.mainGaps(window.__app.state.routes[window.__app.state.sel].r).length),
     chevLayer: !!window.__app.map.getLayer("climb-chev"),
@@ -199,7 +199,7 @@ await run("UI clean-up: no test trips, labels, layers panel, 2D/3D button, gaps 
   await page.click("#view-btn"); await page.waitForTimeout(1200);
   const label3d = await page.evaluate(() => document.querySelector("#view-label").textContent);
   const ok = !before.gapBoxes && before.stopRing && /^0s/.test(before.popTransition) && before.rideText === "Let's ride!" && !before.previewLink && before.windOnlyInSuggest && before.routedGone && noFloatingCopy
-    && !before.tripChips && !before.exploreNote && before.avoidHills === "Hills" && !/LiDAR/.test(before.relief) && before.works === "Construction"
+    && !before.tripChips && !before.exploreNote && before.avoidHills === "Hills" && !/LiDAR/.test(before.relief) && before.works === "Road works"
     && before.metroToggle && !before.parksToggle && before.label2d === "3D" && label3d === "2D" && opened && closed && !before.chevLayer && before.gapsOk;
   return { ok, ...before, noFloatingCopy, layersOpened: opened, layersClosedByTap: closed, destinationKept: fromAfterTap, label3d };
 });
@@ -294,6 +294,102 @@ await run("ride card: route strip, two dials, and a callout whose line lands on 
     && placed.riderAboveCard && placed.recenterAbove && placed.noSideScroll;
   return { ok, calm, quiet, card, gauges, placed: { ...placed, rider: Math.round(rider), barTop: Math.round(bar.top) }, refollow };
 }), { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// ---- 2026-11-09 (Raph): the Layers panel has three groups; planned and in-construction paths are gone (road works and closures stay) ----
+await run("layers panel: Bike network / Places / Map look (EN and FR) with the right ticks; no planned or construction layer, tick or data; road works and closures stay", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
+  const app = window.__app, m = app.map, P = window.PLANNED.features;
+  const groups = () => [...document.querySelectorAll("#layers h3")].map((h) => {
+    const ids = []; for (let e = h.nextElementSibling; e && e.tagName === "LABEL"; e = e.nextElementSibling) ids.push(e.querySelector("input").dataset.layer);
+    return { h: h.textContent.trim(), ids: ids.join() };
+  });
+  const label = (id) => document.querySelector(`#layers [data-layer="${id}"]`).closest("label");
+  const en = groups(), tree = label("trees").textContent.replace(/\s+/g, " ").trim(), roadworks = label("works").textContent.trim();
+  app.setLang("fr"); const fr = groups(), worksFr = label("works").textContent.trim(); app.setLang("en");
+  const want = [["Bike network", "network,works"], ["Places", "pois-food,pois-shop,pois-bike,metro,rem,culture"], ["Map look", "buildings,trees,tint,relief,contours,terrain"]];
+  const wantFr = ["Réseau cyclable", "Lieux", "Apparence de la carte"];
+  const statuses = [...new Set(P.map((f) => f.properties.status))].sort().join();
+  const gone = { tick: !document.querySelector('[data-layer="planned"]'), layers: ["planned", "construction", "construction-tape"].every((id) => !m.getLayer(id)),
+    text: !/browse only|Planned|in construction/i.test(document.querySelector("#layers").textContent + document.querySelector("#legend").textContent), statuses,
+    kept: !!(m.getLayer("works") && m.getLayer("works-near") && m.getLayer("closed")), nWorks: P.filter((f) => f.properties.status === "works").length, nClosed: P.filter((f) => f.properties.status === "closed").length };
+  const ok = en.length === 3 && en.every((g, i) => g.h === want[i][0] && g.ids === want[i][1]) && fr.every((g, i) => g.h === wantFr[i] && g.ids === want[i][1])
+    && roadworks === "Road works" && worksFr === "Travaux" && /in 3D/.test(tree) && gone.tick && gone.layers && gone.text && statuses === "closed,works" && gone.kept && gone.nWorks > 0 && gone.nClosed > 0
+    && document.querySelectorAll("#layers input[data-layer]").length === 14;
+  return { ok, en, fr, tree, roadworks, worksFr, gone };
+}));
+
+// ---- 2026-11-09: the ride card says nothing about small things ----
+await run("ride card: a climb with under 10 m to go says nothing (no top-of-climb line, no voice); a bigger one does; #ride-view has the same outline as the other buttons", `${APP}?trip=rachel`, async (page) => page.evaluate(async () => {
+  const app = window.__app, s = app.state, C = BikeCommon, q = (x) => document.querySelector(x);
+  const said = [], say = C.voice.say; C.voice.say = (t) => said.push(t);
+  app.startRide("birdseye"); app.pauseRide(true);
+  const r = s.ride.route, big = s.ride.extras.climbs.slice().sort((a, b) => b.rise - a.rise)[0], end = big.start + big.length;
+  const at = (d) => { s.snap = true; s.ride.seek(d); return { shown: !q("#hill-card").hidden, title: q("#hill-title").textContent }; };   // the frame is drawn inside seek
+  const climbVoices = () => said.filter((t) => /climb|côte/i.test(t)).length;
+  const left = (d) => C.elevAt(r, end) - C.elevAt(r, d);
+  s.ride.extras.climbs = [big];   // this climb alone
+  let dShow = big.start, dHide = end - 1;
+  for (let d = big.start; d < end; d += 2) { if (left(d) >= 12) dShow = d; else { dHide = d; break; } }
+  while (left(dHide) > 9 && dHide < end - 1) dHide += 2;
+  const ahead = at(Math.max(0, big.start - 200)), voiceAfterAhead = climbVoices();
+  const onFirst = at(dShow), onLast = at(dHide), atTop = at(end - 1), pastTop = at(end + 20);
+  // the same climb, but only 6 m of rise: nothing ahead, no voice
+  said.length = 0;
+  s.ride.extras.climbs = [{ ...big, start: big.start + 0.25, rise: 6 }];
+  const smallAhead = at(Math.max(0, big.start - 200)), smallVoice = climbVoices();
+  // the buttons of the ride card share one outline
+  const bs = (id) => { const c = getComputedStyle(q(id)); return [c.borderTopWidth, c.borderTopStyle, c.borderTopColor, c.borderRadius].join(" "); };
+  const outline = { view: bs("#ride-view"), pause: bs("#ride-pause"), same: bs("#ride-view") === bs("#ride-pause") && !/^0px/.test(bs("#ride-view")) };
+  app.endRide(); C.voice.say = say;
+  const ok = big.rise >= 15 && ahead.shown && /Climb in/.test(ahead.title) && voiceAfterAhead === 1 && onFirst.shown && /Climbing/.test(onFirst.title) && left(dShow) >= 10
+    && left(dHide) < 10 && !onLast.shown && !atTop.shown && !pastTop.shown && !smallAhead.shown && smallVoice === 0 && outline.same;
+  return { ok, rise: big.rise, ahead, voiceAfterAhead, onFirst, onLast, leftShow: +left(dShow).toFixed(1), leftHide: +left(dHide).toFixed(1), atTop, pastTop, smallAhead, smallVoice, outline };
+}));
+
+await run("ride card: a stretch without a bike path of 50 to 100 m gives no callout, chime or voice, one of 100 m or more does; both stay in the route card and the summary's count", `${APP}?from=-73.5817,45.5246&to=-73.6150,45.5035`, async (page) => page.evaluate(async () => {
+  const app = window.__app, s = app.state, C = BikeCommon, q = (x) => document.querySelector(x);
+  const tones = [], node = () => ({ connect: (x) => x, start() {}, stop() {}, frequency: {}, gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} } });
+  window.AudioContext = class { constructor() { this.state = "running"; this.currentTime = 0; this.destination = {}; } resume() { return Promise.resolve(); } suspend() { return Promise.resolve(); }
+    createBuffer() { return {}; } createBufferSource() { return node(); } createGain() { return node(); } createOscillator() { tones.push(1); return node(); } };
+  const said = [], say = C.voice.say; C.voice.say = (t) => said.push(t);
+  const r = s.routes[s.sel].r;
+  // two known stretches in place of the real ones: 70 m (short) and 130 m (long)
+  r.gaps = [{ start: 500, length: 70, names: ["Rue Courte"], busy: false }, { start: 1200, length: 130, names: ["Rue Longue"], busy: false }];
+  app.setLang("en");   // draws the route card again
+  const card = { segs: document.querySelectorAll(".route-card .bar .seg.gap").length, main: C.mainGaps(r).length, listed: C.mainGaps(r).map((g) => g.length).join() };
+  app.startRide("birdseye"); app.pauseRide(true);
+  const at = (d) => { s.snap = true; s.ride.seek(d); return { card: !q("#gap-card").hidden, tones: tones.length, voices: said.filter((t) => /bike path|piste/i.test(t)).length }; };
+  const shortAhead = at(300), shortIn = at(530), between = at(700);
+  const longAhead = at(1000), longIn = at(1250);
+  const extras = { counted: s.ride.extras.gaps.map((g) => g.length).join(), warned: s.ride.extras.warnGaps.map((g) => g.length).join() };
+  app.endRide(); C.voice.say = say;
+  const ok = card.segs === 2 && card.main === 2 && card.listed === "70,130" && !shortAhead.card && shortAhead.tones === 0 && shortAhead.voices === 0 && !shortIn.card && !between.card
+    && longAhead.card && longAhead.tones === 2 && longAhead.voices === 1 && longIn.card && extras.counted === "70,130" && extras.warned === "130";
+  return { ok, card, shortAhead, shortIn, between, longAhead, longIn, extras };
+}));
+
+// ---- 2026-11-09: on a phone, a route showing makes the header one line (smaller logo, "Piste", language and night buttons; no tagline) ----
+await run("brand header: one line on a phone while a route shows, the full header without one and on a wide screen; buttons keep a 44 px tap area", `${APP}?trip=montroyal`, async (page) => {
+  const read = () => page.evaluate(() => {
+    const q = (x) => document.querySelector(x), b = (x) => q(x).getBoundingClientRect(), mid = (x) => { const r = b(x); return r.top + r.height / 2; };
+    const tag = getComputedStyle(q("#brand p")), hit = (x) => { const c = getComputedStyle(q(x), "::after"); return Math.min(parseFloat(c.width), parseFloat(c.height)); };
+    const mids = ["#brand .mark", "#brand h1", "#lang-btn", "#night-btn"].map(mid);
+    return { compact: q("#brand").classList.contains("compact"), routes: window.__app.state.routes.length, tagline: tag.display !== "none", height: Math.round(b("#brand").height), mark: Math.round(b("#brand .mark").width),
+      oneLine: Math.max(...mids) - Math.min(...mids) < 4, tap: Math.min(hit("#lang-btn"), hit("#night-btn")), scroll: q("#panel").scrollTop, noSideScroll: document.documentElement.scrollWidth <= innerWidth };
+  });
+  await page.waitForFunction(() => window.__app.state.routes.length > 0);
+  const withRoute = await read();
+  await page.goto(BASE + `${APP}?from=-73.5817,45.5246`, { waitUntil: "load" });
+  await page.waitForFunction(() => !!window.__app);
+  const noRoute = await read();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(BASE + `${APP}?trip=montroyal`, { waitUntil: "load" });
+  await page.waitForFunction(() => !!window.__app && window.__app.state.routes.length > 0);
+  const wide = await read();
+  const ok = withRoute.compact && withRoute.routes > 0 && !withRoute.tagline && withRoute.oneLine && withRoute.mark < noRoute.mark && withRoute.height < noRoute.height && withRoute.tap >= 44
+    && !noRoute.compact && noRoute.routes === 0 && noRoute.tagline && noRoute.mark === 28 && noRoute.tap >= 44 && withRoute.scroll === 0 && withRoute.noSideScroll
+    && wide.tagline && wide.mark === 34;
+  return { ok, withRoute, noRoute, wide };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ---- 2026-11-09, from the code review ----
 // - rides suggested for "Design your own ride" that finish after the rider went back to "Go somewhere" are dropped (they replaced the route);
@@ -2394,34 +2490,45 @@ await run("offline: the service worker keeps the app and routing working without
   return { ok, kept, note, ...out };
 }, undefined, { serviceWorkers: "allow" });
 
-// ---- Night map (2026-11-02): Auto / On / Off in the Layers panel; the basemap goes dark, the route and bike-path colours do not change ----
+// ---- Night map (2026-11-02; a moon button next to the language button since 2026-11-09): Auto / On / Off; the basemap goes dark, the route and bike-path colours do not change ----
 await run("night map: Auto/On/Off, dark basemap, bike paths and route lighter (orange and warnings unchanged), sunrise and sunset", `${APP}?trip=montroyal`, async (page) => page.evaluate(async () => {
   const a = window.__app, m = a.map, wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const semantic = () => JSON.stringify(["route-solid", "route-shared", "route-quiet", "route-alts", "net-ab", "net-c", "construction", "closed"].map((id) => m.getPaintProperty(id, "line-color")));
+  const semantic = () => JSON.stringify(["route-solid", "route-shared", "route-quiet", "route-alts", "net-ab", "net-c", "closed"].map((id) => m.getPaintProperty(id, "line-color")));
   const bg = () => m.getPaintProperty("background", "background-color"), water = () => m.getPaintProperty("water", "fill-color");
-  document.querySelector("#layers-btn").click();
-  const radios = [...document.querySelectorAll("input[name=night]")], tap = Math.min(...radios.map((r) => r.closest("label").getBoundingClientRect().height));
-  const day = { bg: bg(), water: water(), semantic: semantic(), checked: radios.find((r) => r.checked).value };   // the test setup stores "off"
-  radios.find((r) => r.value === "on").click(); await wait(500);
-  const night = { bg: bg(), water: water(), semantic: semantic(), stored: localStorage.getItem("piste-night"), body: document.body.classList.contains("night") };
-  radios.find((r) => r.value === "off").click(); await wait(500);
-  const back = bg();
+  const nb = document.querySelector("#night-btn"), setNight = (v) => { for (let i = 0; i < 3 && nb.dataset.state !== v; i++) nb.click(); };
+  const r0 = nb.getBoundingClientRect(), lr = document.querySelector("#lang-btn").getBoundingClientRect(), ext = getComputedStyle(nb, "::after"), size = (r) => [Math.round(r.width), Math.round(r.height)].join("x");
+  const tap = Math.min(parseFloat(ext.width), parseFloat(ext.height));   // the invisible tap area around the 34 px button
+  // the button cycles Auto, On, Off, and says which in its label, its shape and its saved value
+  const st = () => ({ state: nb.dataset.state, label: nb.getAttribute("aria-label"), title: nb.title, filled: getComputedStyle(nb.querySelector("path")).fill !== "none" && getComputedStyle(nb.querySelector("path")).fill !== "rgba(0, 0, 0, 0)", a: getComputedStyle(nb.querySelector("text")).display !== "none" });
+  const day = { bg: bg(), water: water(), semantic: semantic(), state: nb.dataset.state };   // the test setup stores "off"
+  setNight("auto"); const auto = st(); const autoStored = localStorage.getItem("piste-night");
+  nb.click(); await wait(500);
+  const night = { bg: bg(), water: water(), semantic: semantic(), stored: localStorage.getItem("piste-night"), body: document.body.classList.contains("night"), ...st() };
+  nb.click(); await wait(500);
+  const off = { stored: localStorage.getItem("piste-night"), ...st() }, back = bg();
+  nb.click(); const wrapped = st().state;   // Off -> Auto
+  setNight("off");
+  a.setLang("fr"); const fr = st(); a.setLang("en");
+  const cycle = auto.state === "auto" && autoStored === "auto" && auto.label === "Night map: Auto" && auto.a && !auto.filled
+    && night.state === "on" && night.label === "Night map: On" && night.filled && !night.a
+    && off.state === "off" && off.stored === "off" && off.label === "Night map: Off" && !off.filled && !off.a && wrapped === "auto" && fr.label === "Carte de nuit : Non";
+  const sameLook = size(r0) === size(lr) && getComputedStyle(nb).borderRadius === getComputedStyle(document.querySelector("#lang-btn")).borderRadius && nb.nextElementSibling === null && nb.previousElementSibling.id === "lang-btn" && !document.querySelector("input[name=night]");
   // winter keeps working under night: night's colour wins while it is on, winter's again after
-  a.setWinter(true); radios.find((r) => r.value === "on").click(); await wait(500);
-  const both = bg(); radios.find((r) => r.value === "off").click(); await wait(500);
+  a.setWinter(true); setNight("on"); await wait(500);
+  const both = bg(); setNight("off"); await wait(500);
   const winterBack = bg(); a.setWinter(false);
   // 2026-11-07: navy bike paths and routes would vanish on the ink-navy ground, so at night they turn periwinkle; orange (no bike path),
-  // the alternatives, construction and closures keep their colours
-  const nightColours = (d, n) => { const D = JSON.parse(d), N = JSON.parse(n), keep = [2, 3, 6, 7], navy = [0, 1, 4, 5];
+  // the alternatives and closures keep their colours
+  const nightColours = (d, n) => { const D = JSON.parse(d), N = JSON.parse(n), keep = [2, 3, 6], navy = [0, 1, 4, 5];
     return keep.every((i) => JSON.stringify(D[i]) === JSON.stringify(N[i])) && navy.every((i) => JSON.stringify(D[i]) !== JSON.stringify(N[i]))
       && JSON.stringify(D[0]).includes("#ff6a1f") && JSON.stringify(N[0]).includes("#ff6a1f") && JSON.stringify(N).includes("#aab0ff"); };
   // sunrise and sunset in Montréal (Jun 21: 05:06 / 20:46 EDT; Dec 21: 07:25 / 16:23 EST), 15 minutes either side
   const n = (s) => BikeCommon.isNight(new Date(s));
   const sun = [n("2026-06-21T08:50:00Z"), !n("2026-06-21T09:25:00Z"), !n("2026-06-22T00:30:00Z"), n("2026-06-22T01:05:00Z"),
     n("2026-12-21T12:10:00Z"), !n("2026-12-21T12:40:00Z"), !n("2026-12-21T21:10:00Z"), n("2026-12-21T21:40:00Z")];
-  const ok = day.checked === "off" && night.bg !== day.bg && night.water !== day.water && night.bg === "#0f1626" && nightColours(day.semantic, night.semantic) && !day.semantic.includes("null") && night.stored === "on" && night.body
+  const ok = day.state === "off" && cycle && sameLook && night.bg !== day.bg && night.water !== day.water && night.bg === "#0f1626" && nightColours(day.semantic, night.semantic) && !day.semantic.includes("null") && night.stored === "on" && night.body
     && back === day.bg && both === "#0f1626" && winterBack === "#f3f5f8" && sun.every(Boolean) && tap >= 44;
-  return { ok, day, night, back, both, winterBack, sun, tap };
+  return { ok, day, auto, night, off, fr, wrapped, sameLook, back, both, winterBack, sun, tap };
 }));
 
 // ------------------------------------------------------------------ parks (2026-11-03): tools/island_parks.py merges OpenStreetMap parks, nature reserves and public gardens over the whole
@@ -2462,9 +2569,9 @@ await run("parks: a muted see-through green over the whole island, under the wat
     const color = () => m.getPaintProperty("parks", "fill-color"), lum = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
     const day = color(), op = m.getPaintProperty("parks", "fill-opacity"), stops = op.slice(3).filter((_, i) => i % 2 === 1);
     a.setWinter(true); const winter = color();
-    document.querySelector("input[name=night][value=on]").click(); const both = color();
+    (() => { const b = document.querySelector("#night-btn"); for (let i = 0; i < 3 && b.dataset.state !== "on"; i++) b.click(); })(); const both = color();
     a.setWinter(false); const night = color();
-    document.querySelector("input[name=night][value=off]").click(); const back = color();
+    (() => { const b = document.querySelector("#night-btn"); for (let i = 0; i < 3 && b.dataset.state !== "off"; i++) b.click(); })(); const back = color();
     const green = (hex) => { const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return g > r && g > b; };
     const colours = { day, winter, night, both, back, distinct: new Set([day, winter, night]).size === 3, green: [day, winter, night].every(green), darkerAtNight: lum(night) < lum(day) * 0.7,
       maxOpacity: Math.max(...stops), nightWins: both === night, restored: back === day };
@@ -3076,8 +3183,8 @@ await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall,
     const summer = when(new Date(2026, 6, 15)), fall = when(new Date(2026, 9, 20)), beforeFall = when(new Date(2026, 8, 19)), afterFall = when(new Date(2026, 10, 16));
     const firstFall = when(new Date(2026, 8, 20)), lastFall = when(new Date(2026, 10, 15));
     a.setWinter(true); const winter = pick(); a.setWinter(false);
-    document.querySelector("input[name=night][value=on]").click(); const night = pick();
-    document.querySelector("input[name=night][value=off]").click();
+    (() => { const b = document.querySelector("#night-btn"); for (let i = 0; i < 3 && b.dataset.state !== "on"; i++) b.click(); })(); const night = pick();
+    (() => { const b = document.querySelector("#night-btn"); for (let i = 0; i < 3 && b.dataset.state !== "off"; i++) b.click(); })();
     const all = [...summer.names, ...fall.names, ...winter.names].flatMap((n) => [n, n + "-n"]), img = m.getImage("tree-summer-0");
     return { summer, fall, winter, night: [night.suffix, night.gl.split(",")[2]], off: pick().suffix, allImages: all.length === 18 && all.every((n) => m.hasImage(n)), size: img && [img.data.width, img.data.height, img.pixelRatio],
       edges: beforeFall.names[0] === summer.names[0] && afterFall.names[0] === summer.names[0] && firstFall.names[0] === fall.names[0] && lastFall.names[0] === fall.names[0],
@@ -3092,8 +3199,8 @@ await run("3D trees: in 3D only, a tile loads, the pictures follow summer, fall,
   const summerPx = await colour(() => window.__app.paintTrees(new Date(2026, 6, 15)), true);
   const fallPx = await colour(() => window.__app.paintTrees(new Date(2026, 9, 20)), false);
   const winterPx = await colour(() => window.__app.setWinter(true), true);
-  const nightPx = await colour(() => { window.__app.setWinter(false); document.querySelector("input[name=night][value=on]").click(); window.__app.paintTrees(new Date(2026, 6, 15)); }, true);
-  await page.evaluate(() => document.querySelector("input[name=night][value=off]").click());
+  const nightPx = await colour(() => { window.__app.setWinter(false); (() => { const b = document.querySelector("#night-btn"); for (let i = 0; i < 3 && b.dataset.state !== "on"; i++) b.click(); })(); window.__app.paintTrees(new Date(2026, 6, 15)); }, true);
+  await page.evaluate(() => (() => { const b = document.querySelector("#night-btn"); for (let i = 0; i < 3 && b.dataset.state !== "off"; i++) b.click(); })());
   const lum = (p) => p.rgb[0] + p.rgb[1] + p.rgb[2];
   const px = { summer: summerPx, fall: fallPx, winter: winterPx, night: nightPx,
     summerGreen: summerPx.share > 0.2 && summerPx.rgb[1] > summerPx.rgb[0] && summerPx.rgb[1] > summerPx.rgb[2], fallWarm: fallPx.share > 0.2 && fallPx.rgb[0] > fallPx.rgb[1] + 15,
@@ -3216,7 +3323,7 @@ await run("3D edges: drawn in 3D from zoom 15 only, navy by day and periwinkle a
   const cam = (is3d, zoom) => page.evaluate(([c, is3d, zoom]) => { const a = window.__app; a.set3d(is3d, false); a.map.jumpTo({ center: c, zoom, pitch: is3d ? 60 : 0, bearing: 0 }); }, [UDEM, is3d, zoom]);
   const info = () => page.evaluate(() => { const m = window.__app.map, e = window.__app.edges;
     return { ...e.info(), max: BikeEdges3D.MAX_LINES, vis: m.getLayer("edges-gl") ? m.getLayoutProperty("edges-gl", "visibility") : "absent", color: Array.from(e.color) }; });
-  const colour = (v) => page.evaluate((v) => { document.querySelector(`input[name=night][value=${v}]`).click(); return Array.from(window.__app.edges.color); }, v);
+  const colour = (v) => page.evaluate((v) => { { const b = document.querySelector("#night-btn"); for (let i = 0; i < 3 && b.dataset.state !== v; i++) b.click(); } return Array.from(window.__app.edges.color); }, v);
   await cam(true, 17);
   await until(page, () => window.__app.edges.info().drawn > 0 && window.__app.map.loaded(), null, 30000);
   const d3 = await info();
