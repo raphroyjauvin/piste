@@ -1489,7 +1489,8 @@ await run("ride: the rider is a flat navy arrow with an orange notch (no pin, no
     const rx = +(/rotateX\((-?[\d.e+-]+)deg\)/.exec(tf) || [0, 0])[1], rz = +(/rotateZ\((-?[\d.e+-]+)deg\)/.exec(tf) || [0, 0])[1];
     const diff = (x, y) => Math.abs((((x - y) % 360) + 540) % 360 - 180);
     return { pitch: Math.round(m.getPitch()), bearing: Math.round(m.getBearing()), heading: Math.round(h), rotX: Math.round(rx), rotZ: Math.round(rz), alignment: mk.getPitchAlignment() + "/" + mk.getRotationAlignment(),
-      rotOff: +diff(mk.getRotation(), h).toFixed(1), zOff: +diff(rz, h - m.getBearing()).toFixed(1), xOff: +Math.abs(rx - m.getPitch()).toFixed(1), w: Math.round(mk.getElement().offsetWidth) };
+      rotOff: +diff(mk.getRotation(), h).toFixed(1), zOff: +diff(rz, h - m.getBearing()).toFixed(1), xOff: +Math.abs(rx - m.getPitch()).toFixed(1), w: Math.round(mk.getElement().offsetWidth), h: Math.round(mk.getElement().offsetHeight), shapes: [...mk.getElement().querySelectorAll("svg")].filter((v) => getComputedStyle(v).display !== "none").map((v) => v.getAttribute("class")).join(),
+      screenH: Math.round([...mk.getElement().querySelectorAll("svg")].find((v) => getComputedStyle(v).display !== "none").getBoundingClientRect().height) };
   });
   const design = await page.evaluate(() => {
     const el = document.querySelector(".rider-arrow"), svg = el.querySelector("svg"), p = [...svg.querySelectorAll("path")];
@@ -1505,9 +1506,11 @@ await run("ride: the rider is a flat navy arrow with an orange notch (no pin, no
   await page.evaluate(() => window.__app.map.jumpTo({ pitch: 55 }));
   const tilted = await look();
   const flatOk = (v, tilt) => v.alignment === "map/map" && v.rotOff <= 0.5 && v.zOff <= 1 && v.xOff <= 1 && v.w === 40 && (tilt ? v.rotX > 30 : v.rotX === 0);
+  // 3D ride view: the arrow is drawn twice as long (80 px, about 28 px tall once squashed by the 70 degree tilt); flat view: the plain 40 px one
+  const longOk = (v) => v.h === 80 && v.shapes === "a-long" && v.screenH >= 24 && v.screenH <= 34, shortOk = (v) => v.h === 40 && v.shapes === "a-flat";
   const ok = design.fills[0] === "#1e2160" && design.fills[1] === "#ff6a1f" && design.outline === "#fff" && +design.width <= 3 && design.join === "miter" && design.paths === 2 && design.circles === 0
     && design.hidden === "true" && design.anim === 0 && design.shadow === "none" && design.oldPin === 0
-    && flatOk(bird, true) && flatOk(flat, false) && flatOk(turned, false) && flatOk(tilted, true) && bird.pitch >= 30 && turned.bearing !== flat.bearing;
+    && flatOk(bird, true) && longOk(bird) && flatOk(flat, false) && shortOk(flat) && shortOk(turned) && shortOk(tilted) && flatOk(turned, false) && flatOk(turned, false) && flatOk(tilted, true) && bird.pitch >= 30 && turned.bearing !== flat.bearing;
   return { ok, design, bird, flat, turned, tilted };
 }, { width: 390, height: 844 }, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 

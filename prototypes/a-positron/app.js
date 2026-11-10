@@ -1870,8 +1870,13 @@
   // lying flat on the map like a painted road arrow: in the tilted 3D view it is foreshortened and its tip points down the road ahead, in the
   // flat view it is a plain arrow along the route. MapLibre turns it to the heading and keeps it right when the map is turned by hand.
   const arrowEl = document.createElement("div"); arrowEl.className = "rider-arrow";
-  arrowEl.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 42 43 24 34 6 43Z" fill="#1e2160" stroke="#fff" stroke-width="3" stroke-linejoin="miter" stroke-miterlimit="10" paint-order="stroke"/>'
-    + '<path d="M24 20 32 38 24 34 16 38Z" fill="#ff6a1f"/></svg>';
+  // The 3D ride view tilts the map to 70 degrees, which squashes a flat arrow to a third of its height: there a second, twice as long drawing is
+  // shown (drawn longer, not scaled, so the outline stays 3 px). Both are centred on the rider's position. The CSS "long" class picks one.
+  const arrowPath = (d, k) => `<path d="${d}" fill="#1e2160" stroke="#fff" stroke-width="3" stroke-linejoin="miter" stroke-miterlimit="10" paint-order="stroke"/><path d="${k}" fill="#ff6a1f"/>`;
+  arrowEl.innerHTML = `<svg class="a-flat" viewBox="0 0 48 48" aria-hidden="true">${arrowPath("M24 3 42 43 24 34 6 43Z", "M24 20 32 38 24 34 16 38Z")}</svg>`
+    + `<svg class="a-long" viewBox="0 0 48 96" aria-hidden="true">${arrowPath("M24 3 42 93 24 73 6 93Z", "M24 41 32 83 24 73 16 83Z")}</svg>`;
+  let arrowLong = false;
+  const shapeArrow = () => { const long = state.rideView === "birdseye"; if (long !== arrowLong) { arrowLong = long; arrowEl.classList.toggle("long", long); } };
   const riderMarker = new maplibregl.Marker({ element: arrowEl, rotationAlignment: "map", pitchAlignment: "map", ...MARKER_SHOW });
   const poiMarkers = new Map();
   let smoothBearing = 0, afterGapUntil = 0, lastGapEnd = null, sparkAt = -1e9, sparkW = 0;
@@ -2170,7 +2175,7 @@
     if (state.follow && !state.holding) map.jumpTo(view);   // a GPS ride stops following while you move the map by hand
     showRider(f.fix !== false);           // a GPS ride shows you once it has a good fix
     if (f.fix !== false) checkJoined(f.d);
-    riderMarker.setLngLat([f.pos.lon, f.pos.lat]); if (Number.isFinite(f.pos.heading)) riderMarker.setRotation(f.pos.heading);
+    shapeArrow(); riderMarker.setLngLat([f.pos.lon, f.pos.lat]); if (Number.isFinite(f.pos.heading)) riderMarker.setRotation(f.pos.heading);
     // turn card
     const L = f.look;
     if (L.next) { put("#turn-dist", C.fmtKm(L.nextDist)); put("#turn-text", I.maneuver(L.next)); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`, true); }

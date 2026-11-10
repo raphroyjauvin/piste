@@ -378,6 +378,9 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 
 .rider-arrow { width: 40px; height: 40px; pointer-events: none; }   /* lies flat on the map: no shadow (a shadow under a flat shape looks wrong) */
 .rider-arrow svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.rider-arrow .a-long, .rider-arrow.long .a-flat { display: none; }
+.rider-arrow.long { height: 80px; }   /* the 3D ride view: twice as long, so that at pitch 70 it still stands about 28 px tall */
+.rider-arrow.long .a-long { display: block; }
 .poi-pop { display: flex; align-items: center; gap: 6px; }   /* no transition here: MapLibre moves this element every frame */
 .poi-pop img { width: 30px; height: 30px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
 .poi-pop span { transition: opacity .25s; background: #fff; border-radius: 8px; padding: 3px 7px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,.15); white-space: nowrap; }
