@@ -2665,7 +2665,7 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
 // summary's link, and link values that are not valid are ignored. Tests a bug report: the button only sent a link to the app, not the ride.
 const GO_LINK = "?from=-73.5817,45.5246&to=-73.6150,45.5035";
 const openLink = async (page, url) => { await page.goto(url, { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 }); };
-const shareLink = async (page) => { await page.evaluate(shareStub); await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1); return page.evaluate(() => window.__shared[0].url); };
+const shareLink = async (page) => { await page.evaluate(shareStub); await page.click("#dock .share-btn"); await until(page, () => window.__shared.length === 1); return page.evaluate(() => window.__shared[0].url); };
 await run("share: a Go somewhere link carries the Route style and Avoid settings and reopens the same route; this device's own settings do not leak in", APP + GO_LINK, async (page) => {
   const read = () => page.evaluate(() => { const a = window.__app, r = a.state.routes[0] && a.state.routes[0].r;
     return { len: r ? r.length : null, style: +document.querySelector("#strict").value, hills: document.querySelector("#hills").checked, works: document.querySelector("#avoid-works").checked,
