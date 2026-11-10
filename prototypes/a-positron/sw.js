@@ -16,7 +16,7 @@ const SHELL_FILES = [
   "./", "index.html", "style.css", "ink.js", "app.js", "tour.js",
   "../manifest.webmanifest", "../favicon.ico", "../icons/icon-192.png", "../icons/icon-512.png", "../icons/apple-touch-icon.png",
   "../vendor/maplibre/maplibre-gl.css", "../vendor/maplibre/maplibre-gl.js", "../vendor/pmtiles/pmtiles.js",
-  "../shared/router.js", "../shared/i18n.js", "../shared/common.js", "../shared/suggest.js", "../shared/weather.js", "../shared/trees3d.js", "../shared/edges3d.js", "../shared/bixi.js",
+  "../shared/router.js", "../shared/i18n.js", "../shared/common.js", "../shared/suggest.js", "../shared/weather.js", "../shared/trees3d.js", "../shared/edges3d.js", "../shared/bridge3d.js", "../shared/bixi.js",
   "../shared/data/graph_island.js", "../shared/data/planned.js", "../shared/data/pois.js", "../shared/data/rem.js", "../shared/data/elevation_tint.js",
   "../shared/data/terrain_index.js", "../shared/data/trips.js", "../shared/data/classics.js",
 ];
