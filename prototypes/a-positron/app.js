@@ -1866,21 +1866,13 @@
   };
   const turnIcon = (m) => ({ stop: "arrive", sight: "arrive", left: "left", sharpL: "left", right: "right", sharpR: "right", slightL: "slightL", slightR: "slightR" }[m.kind] || "straight");
 
-  // you: a navigation arrow (2026-11-09; it was a pin with a heading cone). A sharp navy arrowhead with a white outline and an orange notch,
-  // standing up to the camera so its edges stay crisp in both ride views. Its drawn direction is worked out on the screen (pointArrow below),
-  // so it is right with the 3D camera tilted, the flat one, and a map turned by hand. It has no cone: the arrow itself says where you head.
+  // you: a navigation arrow (2026-11-09; it was a pin with a heading cone). A sharp navy arrowhead with a thin white outline and an orange notch,
+  // lying flat on the map like a painted road arrow: in the tilted 3D view it is foreshortened and its tip points down the road ahead, in the
+  // flat view it is a plain arrow along the route. MapLibre turns it to the heading and keeps it right when the map is turned by hand.
   const arrowEl = document.createElement("div"); arrowEl.className = "rider-arrow";
-  arrowEl.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 42 43 24 34 6 43Z" fill="#1e2160" stroke="#fff" stroke-width="6" stroke-linejoin="miter" stroke-miterlimit="10" paint-order="stroke"/>'
+  arrowEl.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 42 43 24 34 6 43Z" fill="#1e2160" stroke="#fff" stroke-width="3" stroke-linejoin="miter" stroke-miterlimit="10" paint-order="stroke"/>'
     + '<path d="M24 20 32 38 24 34 16 38Z" fill="#ff6a1f"/></svg>';
-  const riderMarker = new maplibregl.Marker({ element: arrowEl, rotationAlignment: "viewport", pitchAlignment: "viewport", ...MARKER_SHOW });
-  let aim = null;   // where the rider is and which way it heads: { lon, lat, heading }
-  function pointArrow() {   // turn the arrow to the screen direction of the ground heading (project a point 40 m ahead)
-    if (!aim || !Number.isFinite(aim.heading)) return;
-    const h = (aim.heading * Math.PI) / 180, m = 111320;
-    const a = map.project([aim.lon, aim.lat]), b = map.project([aim.lon + (Math.sin(h) * 40) / (m * Math.cos((aim.lat * Math.PI) / 180)), aim.lat + (Math.cos(h) * 40) / m]);
-    arrowEl.firstChild.style.transform = `rotate(${((Math.atan2(b.x - a.x, a.y - b.y) * 180) / Math.PI).toFixed(1)}deg)`;
-  }
-  map.on("move", pointArrow);
+  const riderMarker = new maplibregl.Marker({ element: arrowEl, rotationAlignment: "map", pitchAlignment: "map", ...MARKER_SHOW });
   const poiMarkers = new Map();
   let smoothBearing = 0, afterGapUntil = 0, lastGapEnd = null, sparkAt = -1e9, sparkW = 0;
 
@@ -2178,8 +2170,7 @@
     if (state.follow && !state.holding) map.jumpTo(view);   // a GPS ride stops following while you move the map by hand
     showRider(f.fix !== false);           // a GPS ride shows you once it has a good fix
     if (f.fix !== false) checkJoined(f.d);
-    aim = { lon: f.pos.lon, lat: f.pos.lat, heading: f.pos.heading };
-    riderMarker.setLngLat([f.pos.lon, f.pos.lat]); pointArrow();
+    riderMarker.setLngLat([f.pos.lon, f.pos.lat]); if (Number.isFinite(f.pos.heading)) riderMarker.setRotation(f.pos.heading);
     // turn card
     const L = f.look;
     if (L.next) { put("#turn-dist", C.fmtKm(L.nextDist)); put("#turn-text", I.maneuver(L.next)); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`, true); }
@@ -2425,7 +2416,7 @@
     if (wasGps) keepAwake(false);
     if (map.terrain) map.terrain.exaggeration = CAM.terrain;
     state.hillK = 0; state.follow = true; glide = null; showRider(true);
-    riderMarker.remove(); aim = null; arrowEl.firstChild.style.transform = ""; for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
+    riderMarker.remove(); for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
     $("#ride-hud").hidden = true; $("#wind-badge").hidden = true; $("#hill-card").hidden = true; $("#ride-recenter").hidden = true; rideWeather(false);
     $("#panel").hidden = $("#legend").hidden = document.querySelector(".map-controls").hidden = showSum;   // the summary card takes their place until "Done"
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });

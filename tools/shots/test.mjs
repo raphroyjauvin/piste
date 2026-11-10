@@ -1480,38 +1480,34 @@ await run("wind badge on every ride: with the wind & rain button off the forecas
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), before, offlineRide, online, changes, after };
 });
 
-// ---- the rider's arrow (2026-11-09): a navigation arrow instead of the pin and its cone; it points where you head, in both ride views and with the map turned by hand ----
-await run("ride: the rider is a navy arrow with an orange notch (no pin, no cone), pointing the way you head in the 3D and flat views and with the map turned by hand", `${APP}?trip=montroyal&ride=bird&at=500&paused`, async (page) => {
+// ---- the rider's arrow (2026-11-09): a navigation arrow lying flat on the map instead of the pin and its cone; MapLibre tilts it with the map and turns it to the heading ----
+await run("ride: the rider is a flat navy arrow with an orange notch (no pin, no cone), turned to the heading in the 3D and flat views and with the map turned by hand", `${APP}?trip=montroyal&ride=bird&at=500&paused`, async (page) => {
   await until(page, () => !!window.__app.state.ride && document.querySelector(".rider-arrow") && document.querySelector(".rider-arrow").getBoundingClientRect().width > 0);
-  // the arrow's drawn direction on the screen (from its own transform) against the ground heading projected by the map (40 m ahead), both read now
+  // the marker's own transform (what MapLibre draws) against the ride's heading and the map's tilt and bearing, read now
   const look = () => page.evaluate(() => {
-    const a = window.__app, m = a.map, el = document.querySelector(".rider-arrow"), svg = el.querySelector("svg"), r = a.state.ride, p = r.cursor.at(r.d);
-    const drawn = +(/rotate\((-?[\d.]+)deg\)/.exec(svg.style.transform) || [0, 0])[1];
-    const h = (p.heading * Math.PI) / 180, A = m.project([p.lon, p.lat]), B = m.project([p.lon + (Math.sin(h) * 40) / (111320 * Math.cos((p.lat * Math.PI) / 180)), p.lat + (Math.cos(h) * 40) / 111320]);
-    const want = (Math.atan2(B.x - A.x, A.y - B.y) * 180) / Math.PI, d = Math.abs((((drawn - want) % 360) + 540) % 360 - 180), box = el.getBoundingClientRect();
-    const ll = a.riderMarker.getLngLat(), at = m.project(ll);
-    return { drawn, want: Math.round(want), off: +d.toFixed(1), pitch: Math.round(m.getPitch()), bearing: Math.round(m.getBearing()), heading: Math.round(p.heading), w: Math.round(box.width), h: Math.round(box.height),
-      centred: Math.abs(box.left + box.width / 2 - (at.x + m.getContainer().getBoundingClientRect().left)) < 2 && Math.abs(box.top + box.height / 2 - (at.y + m.getContainer().getBoundingClientRect().top)) < 2 };
+    const a = window.__app, m = a.map, mk = a.riderMarker, r = a.state.ride, h = r.cursor.at(r.d).heading, tf = mk.getElement().style.transform;
+    const rx = +(/rotateX\((-?[\d.e+-]+)deg\)/.exec(tf) || [0, 0])[1], rz = +(/rotateZ\((-?[\d.e+-]+)deg\)/.exec(tf) || [0, 0])[1];
+    const diff = (x, y) => Math.abs((((x - y) % 360) + 540) % 360 - 180);
+    return { pitch: Math.round(m.getPitch()), bearing: Math.round(m.getBearing()), heading: Math.round(h), rotX: Math.round(rx), rotZ: Math.round(rz), alignment: mk.getPitchAlignment() + "/" + mk.getRotationAlignment(),
+      rotOff: +diff(mk.getRotation(), h).toFixed(1), zOff: +diff(rz, h - m.getBearing()).toFixed(1), xOff: +Math.abs(rx - m.getPitch()).toFixed(1), w: Math.round(mk.getElement().offsetWidth) };
   });
   const design = await page.evaluate(() => {
-    const el = document.querySelector(".rider-arrow"), svg = el.querySelector("svg"), fills = [...svg.querySelectorAll("path")].map((p) => p.getAttribute("fill")), outline = svg.querySelector("path").getAttribute("stroke");
-    return { fills, outline, paths: svg.querySelectorAll("path").length, circles: svg.querySelectorAll("circle").length, hidden: svg.getAttribute("aria-hidden"), anim: svg.getAnimations().length + el.getAnimations().length,
-      oldPin: document.querySelectorAll(".rider-badge, .rider-cone").length, wheels: document.querySelectorAll('svg circle[r="6.5"]').length };
+    const el = document.querySelector(".rider-arrow"), svg = el.querySelector("svg"), p = [...svg.querySelectorAll("path")];
+    return { fills: p.map((x) => x.getAttribute("fill")), outline: p[0].getAttribute("stroke"), width: p[0].getAttribute("stroke-width"), join: p[0].getAttribute("stroke-linejoin"), paths: p.length, circles: svg.querySelectorAll("circle").length,
+      hidden: svg.getAttribute("aria-hidden"), anim: svg.getAnimations().length + el.getAnimations().length, shadow: getComputedStyle(el).filter, oldPin: document.querySelectorAll(".rider-badge, .rider-cone").length };
   });
   const bird = await look();
   await page.evaluate(() => document.querySelector("#ride-view").click());   // the flat view
   await until(page, () => window.__app.state.rideView === "topdown" && Math.abs(window.__app.map.getPitch()) < 1, null, 20000);
   const flat = await look();
-  // the map turned by hand (the ride stops following): the arrow turns with it and keeps pointing along the ground
-  const turned = await page.evaluate(() => { const a = window.__app; a.setFollow(false); a.map.jumpTo({ bearing: a.map.getBearing() + 70 }); return null; }).then(look);
+  // the map turned by hand (the ride stops following): the arrow keeps pointing along the ground, in the flat view and tilted
+  const turned = await page.evaluate(() => { const a = window.__app; a.setFollow(false); a.map.jumpTo({ bearing: a.map.getBearing() + 70 }); }).then(look);
   await page.evaluate(() => window.__app.map.jumpTo({ pitch: 55 }));
   const tilted = await look();
-  const dir = (v) => v.off <= 2 && v.w === 50 && v.h === 50 && v.centred;
-  const ok = design.fills[0] === "#1e2160" && design.fills[1] === "#ff6a1f" && design.outline === "#fff" && design.paths === 2 && design.circles === 0 && design.hidden === "true"
-    && design.anim === 0 && design.oldPin === 0 && design.wheels === 0
-    && bird.pitch >= 30 && flat.pitch === 0 && Math.abs(flat.drawn) < 20 && Math.abs(bird.drawn) < 20   // following: the camera looks the way you go, so the arrow points up
-    && Math.abs((((flat.drawn - (flat.heading - flat.bearing)) % 360) + 540) % 360 - 180) <= 2   // flat map: heading minus bearing, exactly
-    && Math.abs((((turned.drawn - flat.drawn + 70) % 360) + 540) % 360 - 180) <= 3 && dir(bird) && dir(flat) && dir(turned) && dir(tilted);
+  const flatOk = (v, tilt) => v.alignment === "map/map" && v.rotOff <= 0.5 && v.zOff <= 1 && v.xOff <= 1 && v.w === 40 && (tilt ? v.rotX > 30 : v.rotX === 0);
+  const ok = design.fills[0] === "#1e2160" && design.fills[1] === "#ff6a1f" && design.outline === "#fff" && +design.width <= 3 && design.join === "miter" && design.paths === 2 && design.circles === 0
+    && design.hidden === "true" && design.anim === 0 && design.shadow === "none" && design.oldPin === 0
+    && flatOk(bird, true) && flatOk(flat, false) && flatOk(turned, false) && flatOk(tilted, true) && bird.pitch >= 30 && turned.bearing !== flat.bearing;
   return { ok, design, bird, flat, turned, tilted };
 }, { width: 390, height: 844 }, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 
