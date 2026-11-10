@@ -630,7 +630,8 @@ body.riding .me-dot { display: none; }
 .ink-on { border-color: transparent !important; }
 /* the turn distance pops once when the instruction changes */
 @keyframes ink-pop { 0% { transform: scale(1); } 35% { transform: scale(1.14) rotate(-1.2deg); } 100% { transform: scale(1); } }
-#turn-dist.pop { display: inline-block; transform-origin: 0 80%; animation: ink-pop .28s cubic-bezier(.3, 1.6, .5, 1); }
+/* 2026-11-09: stays a block (width: fit-content, so it scales from the text's left edge): inline-block let the instruction text flow up beside the distance and stay there */
+#turn-dist.pop { width: fit-content; transform-origin: 0 80%; animation: ink-pop .28s cubic-bezier(.3, 1.6, .5, 1); }
 @media (prefers-reduced-motion: reduce) { #turn-dist.pop { animation: none; } .ht { transition: none; } }
 /* map pop-ups: the same flat edge as the cards */
 .maplibregl-popup-content { border: var(--edge); border-radius: var(--r-card); box-shadow: var(--flat); }

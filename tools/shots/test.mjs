@@ -543,11 +543,14 @@ await run("ride suggester: no spurs or U-turns, little reuse, length within 500 
   };
   const starts = { "Mont-Royal east": [-73.5495, 45.5640], Plateau: [-73.5795, 45.5235], Rosemont: [-73.5810, 45.5460], NDG: [-73.6200, 45.4730], Hochelaga: [-73.5330, 45.5430] };
   const cases = [{ km: 8, loop: true }, { km: 15, loop: true }, { km: 10, loop: false }, { km: 10, loop: true, stop: "cafe" }];
+  // 2026-11-09: fixed leaving times through the suggester's own `now`, so the result never depends on the clock (one-way rides and stops go
+  // to places open on arrival, so the hour changes which places exist): a weekday afternoon, late night (the real miss, Monday 23:45) and early morning
+  const times = { "Mon 14:30": new Date(2026, 10, 9, 14, 30), "Mon 23:45": new Date(2026, 10, 9, 23, 45), "Tue 05:00": new Date(2026, 10, 10, 5, 0) };
   const rows = [], bad = [];
-  for (const [name, start] of Object.entries(starts)) for (const c of cases) {
+  for (const [hour, now] of Object.entries(times)) for (const [name, start] of Object.entries(starts)) for (const c of cases) {
     const t0 = performance.now();
-    const picks = await app.suggester.suggest({ start, km: c.km, loop: c.loop, stop: c.stop || "", weights });
-    const ms = performance.now() - t0, tag = `${name} ${c.km} km ${c.stop ? "via " + c.stop : c.loop ? "loop" : "one-way"}`;
+    const picks = await app.suggester.suggest({ start, km: c.km, loop: c.loop, stop: c.stop || "", weights, now });
+    const ms = performance.now() - t0, tag = `${hour} ${name} ${c.km} km ${c.stop ? "via " + c.stop : c.loop ? "loop" : "one-way"}`;
     const m = picks.map((p) => ({ err: Math.round(p.route.length - c.km * 1000), u: S.turnbacks(r, p.route), reuse: S.retraced(p.route) }));
     rows.push({ tag, ms: Math.round(ms), m });
     if (picks.length < 2) bad.push(tag + ": only " + picks.length + " suggestions");
@@ -3723,6 +3726,26 @@ await run("ink hints: the turn distance pops once when the turn instruction chan
     return { countdown, changed: text.textContent !== t1, pop: dist.classList.contains("pop") };
   });
   return { ok: out.countdown.sameText && !out.countdown.pop && out.changed && out.pop, out };
+}, { width: 1200, height: 800 });
+
+// 2026-11-09: the pop must not change the layout, during or after it: the instruction stays on the line below the distance and the card keeps its height
+await run("ink hints: after the pop the turn text is still below the distance and the turn card is as tall as before", INK_ROUTE, async (page) => {
+  await page.evaluate(() => { const a = window.__app; a.startRide("birdseye"); a.pauseRide(true); a.state.snap = true; a.state.ride.seek(20); });
+  await until(page, () => !!document.querySelector("#turn-text").textContent);
+  const out = await page.evaluate(async () => {
+    const dist = document.querySelector("#turn-dist"), text = document.querySelector("#turn-text"), card = document.querySelector(".turn-card");
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+    const read = () => ({ h: card.getBoundingClientRect().height, below: text.getBoundingClientRect().top >= dist.getBoundingClientRect().bottom - 1, block: getComputedStyle(dist).display === "block" });
+    dist.classList.remove("pop"); await frame(); await frame();
+    const before = read();
+    dist.classList.add("pop");
+    await frame(); const during = read();   // the animation is running (a transform alone does not move the layout box)
+    await new Promise((r) => setTimeout(r, 600)); await frame();
+    const after = read();
+    return { before, during, after };
+  });
+  const same = (x) => Math.abs(x.h - out.before.h) < 0.5 && x.below && x.block;
+  return { ok: same(out.before) && same(out.during) && same(out.after), out };
 }, { width: 1200, height: 800 });
 
 // ------------------------------------------------------------------ route layout A (2026-11-09)
