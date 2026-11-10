@@ -1297,6 +1297,7 @@
     state.lastMs = performance.now() - t1;
     const keep = r ? [{ key: "yourRoute", r }] : [];
     state.routes = keep; state.sel = 0;
+    state.inkKey = `${state.from}|${state.to}`;   // the same trip drawn again (a slider move) keeps its pen outline; another trip draws it on (ink.js)
     renderRoutes(); drawRoutes();
     if (fit && keep.length) fitRoute(keep[0].r);
     const key = `route|${state.from}|${state.to}`;
@@ -1317,7 +1318,7 @@
     if (token !== suggToken || state.tab !== "suggest" || state.smode !== "custom" || state.mode === "ride") return;
     state.lastMs = performance.now() - t1;
     state.routes = picks.map((c) => ({ title: c.title, via: c.via, r: c.route, sig: c.route.sig, end: c.end, loop: c.loop }));
-    state.sel = 0;
+    state.sel = 0; state.inkKey = `s${token}`;
     if (!picks.length) toast(t("nothingFits"));
     else count("suggest", { shape: state.sugg.loop ? "loop" : "one-way", km: state.sugg.km, stop: state.sugg.stop ? "yes" : "no" });
     renderRoutes(); drawRoutes();
@@ -1552,6 +1553,7 @@
     $("#brand").classList.toggle("compact", state.routes.length > 0);   // phones: a route showing makes the header one line (2026-11-09)
     const box = $("#routes"), det = $("#detail");
     if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
+    box.dataset.ink = `${state.inkKey}|${state.sel}`;   // which card this is, for the pen outline (ink.js)
     const pick = state.routes.length > 1, sel = state.routes[state.sel], r = sel.r;   // Design your own ride's three; one card for a route
     if (sel.classic) { box.innerHTML = ""; renderClassicCards(); }   // a classic ride's card is its card in the carousel
     else {
@@ -2220,7 +2222,7 @@
   // The ride's cards are filled in at every frame, but their words change a few times a second at most: only a change touches the page
   // (2026-11-09: writing the same HTML 60 times a second rebuilt it each time, and woke the page-wide observer that looks for new buttons).
   const hudNow = new Map();
-  const put = (sel, v, html = false) => { if (hudNow.get(sel) === v) return; hudNow.set(sel, v); const el = $(sel); if (html) el.innerHTML = v; else el.textContent = v; };
+  const put = (sel, v, html = false) => { if (hudNow.get(sel) === v) return; hudNow.set(sel, v); const el = $(sel); if (html) el.innerHTML = v; else el.textContent = v; if (sel === "#turn-text") window.PisteInk?.pop(); };   // a new instruction: the distance pops once
   function buildStrip(r) {
     stripList = stretches(r); stripRuns = null; stripAt = -1;
     $("#ride-strip .strip-runs").innerHTML = stripList.map((s) => `<i style="flex-grow:${Math.max(1, Math.round(s.length))};background:${segBg(s)}"></i>`).join("");

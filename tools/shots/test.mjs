@@ -3458,6 +3458,128 @@ await run("3D edges: a shader that fails stops them quietly (one warning, no err
   return { ok, out };
 }, { width: 1000, height: 700 });
 
+// ------------------------------------------------------------------ "ink hints" (2026-11-09): subtle inked-drawing touches (ink.js and style.css)
+// the five hints: a pen outline on the route card, the chosen classic card and the ride card (the phone sheet gets one line on its top edge),
+// flat shadows (no blur anywhere), a flat highlight on navy, buttons that sink into their dots, a pop on the turn distance
+const INK_ROUTE = `${APP}?welcome=0&notrack=1&from=-73.5817,45.5246&to=-73.6150,45.5035`;
+await run("ink hints: pen outline on the route, classic and ride cards (two paths, no CSS border), same line at every draw, draw-on only for a new card", INK_ROUTE, async (page) => {
+  const card = "#routes .route-card .ink-svg";
+  await until(page, (s) => !!document.querySelector(s), card);
+  const first = await page.evaluate((s) => { const svg = document.querySelector(s), c = svg.parentElement, cs = getComputedStyle(c);
+    return { paths: svg.querySelectorAll("path").length, ptr: getComputedStyle(svg).pointerEvents, hidden: svg.getAttribute("aria-hidden"), border: cs.borderTopColor, bw: cs.borderTopWidth,
+      draw: svg.dataset.draw, d: [...svg.querySelectorAll("path")].map((p) => p.getAttribute("d")).join("|") }; }, card);
+  // a re-render of the same card (the slider): a new element, the same line when the size is the same, no draw-on
+  const again = async (change) => {
+    await page.evaluate((c) => { window.__old = document.querySelector("#routes .route-card"); const el = document.querySelector("#strict"); if (c) el.value = Math.max(0, +el.value - 40); el.dispatchEvent(new Event("input")); }, change);
+    await until(page, () => { const c = document.querySelector("#routes .route-card"); return c && c !== window.__old && !!c.querySelector(".ink-svg"); });
+    return page.evaluate((s) => { const svg = document.querySelector(s); return { draw: svg.dataset.draw, d: [...svg.querySelectorAll("path")].map((p) => p.getAttribute("d")).join("|"), anims: svg.getAnimations({ subtree: true }).length }; }, card);
+  };
+  const same = await again(false), moved = await again(true);
+  // a new trip draws on
+  await page.evaluate(() => { const a = window.__app; a.state.to = [-73.5900, 45.5300]; a.computeRoutes(true); });
+  await until(page, (s) => { const c = document.querySelector(s); return c && c.dataset.draw === "on"; }, card);
+  const fresh = await page.evaluate((s) => document.querySelector(s).dataset.draw, card);
+  // the chosen classic ride's card
+  const classic = await page.evaluate(async () => { const a = window.__app; a.setTab("suggest"); a.setSuggMode("classics"); a.showClassic(0, false);
+    await new Promise((r) => { const t0 = performance.now(), f = () => (document.querySelector(".classic-card.sel .ink-svg") || performance.now() - t0 > 8000 ? r() : requestAnimationFrame(f)); f(); });
+    const c = document.querySelector(".classic-card.sel"), svg = c && c.querySelector(".ink-svg"), cs = c && getComputedStyle(c);
+    return { paths: svg ? svg.querySelectorAll("path").length : 0, border: cs && cs.borderTopColor, others: [...document.querySelectorAll(".classic-card:not(.sel) .ink-svg")].length }; });
+  // the ride card
+  const ride = await page.evaluate(async () => { const a = window.__app; a.startRide("birdseye"); a.pauseRide(true);
+    await new Promise((r) => { const t0 = performance.now(), f = () => (document.querySelector(".ride-bar .ink-svg") || performance.now() - t0 > 8000 ? r() : requestAnimationFrame(f)); f(); });
+    const c = document.querySelector(".ride-bar"), svg = c.querySelector(".ink-svg"), cs = getComputedStyle(c);
+    return { paths: svg ? svg.querySelectorAll("path").length : 0, border: cs.borderTopColor, bw: cs.borderTopWidth, draw: svg && svg.dataset.draw }; });
+  const clear = (c) => /^rgba\(0, 0, 0, 0\)$|^transparent$/.test(c);
+  const ok = first.paths === 2 && first.ptr === "none" && first.hidden === "true" && clear(first.border) && parseFloat(first.bw) >= 1 && first.draw === "on"
+    && same.d === first.d && same.draw !== "on" && same.anims === 0 && moved.draw !== "on" && moved.anims === 0 && fresh === "on"
+    && classic.paths === 2 && clear(classic.border) && classic.others === 0 && ride.paths === 2 && clear(ride.border) && parseFloat(ride.bw) >= 1 && ride.draw === "on";
+  return { ok, first, same: { draw: same.draw, anims: same.anims, sameLine: same.d === first.d }, moved: { draw: moved.draw, anims: moved.anims }, fresh, classic, ride };
+}, { width: 1200, height: 800 });
+
+await run("ink hints: with reduced motion the outline simply appears (no animation), and the turn distance does not pop", INK_ROUTE, async (page) => {
+  await until(page, () => !!document.querySelector("#routes .route-card .ink-svg"));
+  const card = await page.evaluate(() => { const svg = document.querySelector("#routes .route-card .ink-svg"); return { draw: svg.dataset.draw, anims: svg.getAnimations({ subtree: true }).length }; });
+  await page.evaluate(() => { const a = window.__app; a.startRide("birdseye"); a.pauseRide(true); a.state.snap = true; a.state.ride.seek(20); });   // a paused ride writes its cards once it has moved
+  await until(page, () => !!document.querySelector("#turn-text").textContent);
+  const pop = await page.evaluate(() => ({ cls: document.querySelector("#turn-dist").classList.contains("pop"), draw: document.querySelector(".ride-bar .ink-svg") && document.querySelector(".ride-bar .ink-svg").dataset.draw }));
+  return { ok: card.draw !== "on" && card.anims === 0 && !pop.cls && pop.draw !== "on", card, pop };
+}, { width: 1200, height: 800 }, { reducedMotion: "reduce" });
+
+await run("ink hints: on a phone the sheet has one ink line on its top edge and no shadow; the cards still have their outline", `${INK_ROUTE}&safe=47,34`, async (page) => {
+  await until(page, () => !!document.querySelector(".panel > .grabber .ink-svg") && !!document.querySelector("#routes .route-card .ink-svg"));
+  const out = await page.evaluate(() => { const p = document.querySelector(".panel"), g = p.querySelector(".grabber .ink-svg"), cs = getComputedStyle(p), gb = g.getBoundingClientRect(), pb = p.getBoundingClientRect();
+    return { paths: g.querySelectorAll("path").length, shadow: cs.boxShadow, border: cs.borderTopWidth, ptr: getComputedStyle(g).pointerEvents, onTop: Math.abs(gb.top - pb.top) < 3, wide: Math.abs(gb.width - pb.width) < 2,
+      btn: [...document.querySelectorAll(".map-controls .round-btn, .map-controls .view-btn")].map((b) => getComputedStyle(b).borderTopLeftRadius) }; });
+  return { ok: out.paths === 2 && out.shadow === "none" && out.border === "0px" && out.ptr === "none" && out.onTop && out.wide && out.btn.length > 0 && out.btn.every((r) => r === "3px"), out };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+await run("ink hints: flat, not soft: no element has a blurred box-shadow or drop-shadow (route, Layers, overlays, ride); corners 3 px on buttons and 6 px on floating cards", INK_ROUTE, async (page) => {
+  const walk = () => page.evaluate(() => {
+    const blur = (v) => { const n = (v || "").match(/(-?[\d.]+)px/g) || []; return n[2] ? parseFloat(n[2]) : 0; };   // x y blur ...
+    const bad = [];
+    for (const el of document.querySelectorAll("body *")) {
+      if (!el.getClientRects().length) continue;
+      const c = getComputedStyle(el);
+      for (const s of (c.boxShadow || "").split(/,(?![^(]*\))/)) if (blur(s) > 0) bad.push(`${el.id || el.className || el.tagName}: ${s.trim()}`);
+      if (/drop-shadow/.test(c.filter) && blur(c.filter) > 0) bad.push(`${el.id || el.className.baseVal || el.className || el.tagName}: ${c.filter}`);
+    }
+    return bad;
+  });
+  const OVER = "#layers, #wx-card, #ride-summary, #notice, #toast, #about, #suggest, #place-list, #ride-recenter";
+  const open = () => page.evaluate((s) => { document.querySelectorAll(s).forEach((e) => { e.dataset.wasHidden = e.hidden ? "1" : ""; e.hidden = false; }); }, OVER);
+  const shut = () => page.evaluate((s) => document.querySelectorAll(s).forEach((e) => { e.hidden = !!e.dataset.wasHidden; }), OVER);
+  await until(page, () => !!document.querySelector("#routes .route-card .ink-svg"));
+  const route = await walk();
+  await page.click("#layers-btn"); const layers = await walk(); await page.click("#layers-btn");
+  await open(); const overlays = await walk();
+  const corners = await page.evaluate(() => { const r = (s) => { const e = document.querySelector(s); return e && getComputedStyle(e).borderTopLeftRadius; };
+    return { layers: r("#layers"), toast: r("#toast"), wx: r("#wx-card"), notice: r("#notice"), summary: r("#ride-summary"), btn: r("#ride-go"), share: r(".share-btn") }; });
+  await shut();
+  await page.evaluate(() => { const a = window.__app; a.startRide("birdseye"); a.pauseRide(true); });
+  await until(page, () => !!document.querySelector(".ride-bar .ink-svg"));
+  const ride = await walk();
+  const turn = await page.evaluate(() => { const c = getComputedStyle(document.querySelector(".turn-card")); return { radius: c.borderTopLeftRadius, grad: /radial-gradient/.test(c.backgroundImage) }; });
+  const ok = [route, layers, overlays, ride].every((l) => l.length === 0) && corners.layers === "6px" && corners.toast === "4px" && corners.wx === "6px" && corners.notice === "6px" && corners.summary === "6px"
+    && corners.btn === "3px" && corners.share === "3px" && turn.radius === "6px" && turn.grad;
+  return { ok, route, layers, overlays, ride, corners, turn };
+}, { width: 1200, height: 800 });
+
+await run("ink hints: a navy button has the flat highlight; pressed, a button sinks into its dots (top/left, no transform, dots hidden)", INK_ROUTE, async (page) => {
+  await until(page, () => !!document.querySelector("#ride-go"));
+  const read = () => page.evaluate(() => { const b = document.querySelector("#ride-go"), c = getComputedStyle(b), a = getComputedStyle(b, "::after");
+    return { top: c.top, left: c.left, transform: c.transform, dots: a.opacity, grad: /radial-gradient/.test(c.backgroundImage), bg: c.backgroundColor }; });
+  const before = await read();
+  const box = await (await page.$("#ride-go")).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  await page.waitForTimeout(200);
+  const pressed = await read();
+  await page.mouse.move(2, 2); await page.mouse.up();   // let go away from the button: no ride starts
+  await page.waitForTimeout(200);
+  const after = await read();
+  const ok = before.grad && before.top === "0px" && before.dots === "1" && pressed.top === "3px" && pressed.left === "3px" && pressed.dots === "0" && pressed.transform === "none" && after.top === "0px" && after.dots === "1";
+  return { ok, before, pressed, after };
+}, { width: 1200, height: 800 });
+
+await run("ink hints: the turn distance pops once when the turn instruction changes, not when only the distance counts down", INK_ROUTE, async (page) => {
+  await page.evaluate(() => { const a = window.__app; a.startRide("birdseye"); a.pauseRide(true); a.state.snap = true; a.state.ride.seek(20); });   // a paused ride writes its cards once it has moved
+  await until(page, () => !!document.querySelector("#turn-text").textContent);
+  const out = await page.evaluate(async () => {
+    const a = window.__app, s = a.state, dist = document.querySelector("#turn-dist"), text = document.querySelector("#turn-text"), m = s.ride.route.maneuvers;
+    const settle = (want) => new Promise((r) => { const t0 = performance.now(), f = () => (want() || performance.now() - t0 > 10000 ? r() : requestAnimationFrame(f)); f(); });
+    const go = async (d, want) => { s.snap = true; s.ride.seek(d); await settle(want); };
+    const first = m.find((x) => x.at > 120) || m[0];
+    await go(Math.max(0, first.at - 100), () => /\d/.test(dist.textContent));
+    const t1 = text.textContent, d1 = dist.textContent;
+    dist.classList.remove("pop");
+    await go(Math.max(0, first.at - 60), () => dist.textContent !== d1);   // the distance counts down, the instruction stays
+    const countdown = { sameText: text.textContent === t1, pop: dist.classList.contains("pop") };
+    const next = m.find((x) => x.at > first.at + 80);
+    await go(next.at - 50, () => text.textContent !== t1);   // a later turn: a new instruction
+    return { countdown, changed: text.textContent !== t1, pop: dist.classList.contains("pop") };
+  });
+  return { ok: out.countdown.sameText && !out.countdown.pop && out.changed && out.pop, out };
+}, { width: 1200, height: 800 });
+
 await browser.close();
 if (webkitBrowser) await webkitBrowser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----

@@ -13,7 +13,7 @@ const TILES = "piste-tiles-2";            // tiles and photos, filled while brow
 const MAX_TILES = 2500;                   // entries kept in TILES, oldest dropped first (about 100 MB at 20-60 KB a tile)
 
 const SHELL_FILES = [
-  "./", "index.html", "style.css", "app.js", "tour.js",
+  "./", "index.html", "style.css", "ink.js", "app.js", "tour.js",
   "../manifest.webmanifest", "../favicon.ico", "../icons/icon-192.png", "../icons/icon-512.png", "../icons/apple-touch-icon.png",
   "../vendor/maplibre/maplibre-gl.css", "../vendor/maplibre/maplibre-gl.js", "../vendor/pmtiles/pmtiles.js",
   "../shared/router.js", "../shared/i18n.js", "../shared/common.js", "../shared/suggest.js", "../shared/weather.js", "../shared/trees3d.js", "../shared/edges3d.js", "../shared/bixi.js",
