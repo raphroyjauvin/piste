@@ -165,14 +165,21 @@
   }
 
   // ---------------------------------------------------------------- route -> GeoJSON
-  function routePiecesGeoJSON(route) {
-    return {
-      type: "FeatureCollection",
-      features: route.pieces.map((p, i) => ({
-        type: "Feature", id: i, geometry: { type: "LineString", coordinates: p.coords },
-        properties: { tier: p.tier, gap: p.tier >= 3 && p.tier <= 4 ? 1 : 0, name: p.names.join(" / "), len: Math.round(p.length) },
-      })),
-    };
+  // cuts: [from, to] pairs, in metres along the route, where a 3D bridge deck is drawn (shared/bridge3d.js, 2026-11-09). The pieces are cut at
+  // the deck's ends and the part under the deck is marked br: 1, so the draped line can be left out there. No cuts: the pieces as they are.
+  function routePiecesGeoJSON(route, cuts = []) {
+    const features = [];
+    for (const p of route.pieces) {
+      const props = { tier: p.tier, gap: p.tier >= 3 && p.tier <= 4 ? 1 : 0, name: p.names.join(" / "), len: Math.round(p.length) };
+      const end = p.start + p.length, inside = cuts.filter(([a, b]) => b > p.start + 0.5 && a < end - 0.5).sort((x, y) => x[0] - y[0]);
+      if (!inside.length) { features.push({ type: "Feature", geometry: { type: "LineString", coordinates: p.coords }, properties: props }); continue; }
+      let at = p.start;
+      const part = (s, e, br) => { if (e - s > 0.5) features.push({ type: "Feature", geometry: { type: "LineString", coordinates: sliceCoords(route, s, e) }, properties: br ? { ...props, br: 1 } : props }); };
+      for (const [a, b] of inside) { part(at, Math.max(at, a), 0); part(Math.max(at, a), Math.min(end, b), 1); at = Math.min(end, Math.max(at, b)); }
+      part(at, end, 0);
+    }
+    features.forEach((f, i) => (f.id = i));
+    return { type: "FeatureCollection", features };
   }
   function routeLineGeoJSON(route, props = {}) {
     return { type: "Feature", geometry: { type: "LineString", coordinates: route.coords }, properties: props };

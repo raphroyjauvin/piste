@@ -441,6 +441,19 @@
   // If WebGL can't draw them the layer stops quietly (one console warning) and the buildings simply have no lines.
   const EDGE_COLORS = { day: [30, 33, 96, 0.92], night: [170, 176, 230, 0.55] };
   const edgeLayer = window.BikeEdges3D ? BikeEdges3D.create(map, { id: "edges-gl", layerId: "bld-3d", minzoom: 15, color: EDGE_COLORS.day }) : null;
+  // Bridges in 3D rides (shared/bridge3d.js, 2026-11-09): the route is drawn on the deck of a significant bridge instead of following the ground down to the
+  // water. The draped line under the deck is left out while the deck is drawn; if WebGL can't draw it the layer stops (one console warning) and the line stays as it was.
+  const STRUCT = ((G.meta && G.meta.flags) || {}).STRUCT ?? 4;
+  const BRIDGE_COLORS = {
+    day: { core: [COL.a, COL.b, COL.c, COL.gapQuiet, COL.gap, COL.gap], ink: NAVY, post: NAVY },
+    night: { core: [COL_NIGHT.a, COL_NIGHT.b, COL_NIGHT.c, COL.gapQuiet, COL.gap, COL.gap], ink: "#0f1626", post: "#aab0ff" },
+  };
+  const bridgeLayer = window.BikeBridge3D ? BikeBridge3D.create(map, { id: "bridge-gl", before: "net-casing",
+    layers: ["route-ink", "route-casing", "route-solid", "route-shared", "route-quiet", "route-lead"],
+    isStructure: (leg) => (router.eflags[leg.e] & STRUCT) !== 0,
+    demUrl: (key) => (LOCAL_DEM.has(key) ? DEM_BASE + key + ".png" : null),
+    colors: () => BRIDGE_COLORS[state.night ? "night" : "day"],
+    onChange: () => { if (state.ride && map.getSource("route")) map.getSource("route").setData(rideRouteData(state.ride.route)); } }) : null;
   function treesFallback(reason) {
     if (!state.treesGL) return;
     console.warn(`3D trees: WebGL drawing stopped (${reason}); showing the flat tree pictures instead`);
@@ -1983,10 +1996,10 @@
   }
   // the route being ridden, for the map; a classic's lead-in still to ride is drawn in dots (layer route-lead), the loop as usual
   function rideRouteData(route) {
-    const J = state.join;
-    if (!J || J.reached || !J.lead) return C.routePiecesGeoJSON(route);
-    const part = (r, isLead) => C.routePiecesGeoJSON(r).features.map((f) => Object.assign(f, { properties: Object.assign(f.properties, { lead: isLead }) }));
-    const features = part(J.lead, 1).concat(part(J.loop, 0));
+    const J = state.join, cut = (off, len) => (bridgeLayer ? bridgeLayer.cuts(route, off, len) : []);   // where a 3D bridge deck is drawn (2026-11-09)
+    if (!J || J.reached || !J.lead) return C.routePiecesGeoJSON(route, cut(0, route.length));
+    const part = (r, isLead, off) => C.routePiecesGeoJSON(r, cut(off, r.length)).features.map((f) => Object.assign(f, { properties: Object.assign(f.properties, { lead: isLead }) }));
+    const features = part(J.lead, 1, 0).concat(part(J.loop, 0, J.lead.length));
     features.forEach((f, i) => (f.id = i));
     return { type: "FeatureCollection", features };
   }
@@ -2154,6 +2167,7 @@
     if (f.fix !== false) checkJoined(f.d);
     riderMarker.setLngLat([f.pos.lon, f.pos.lat]).setRotation(f.pos.heading);
     badgeMarker.setLngLat([f.pos.lon, f.pos.lat]);
+    if (bridgeLayer) bridgeLayer.follow(r, f.d, [riderMarker, badgeMarker]);   // on a 3D bridge the rider rides on the deck, not at the water
     // turn card
     const L = f.look;
     if (L.next) { put("#turn-dist", C.fmtKm(L.nextDist)); put("#turn-text", I.maneuver(L.next)); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`, true); }
@@ -2396,6 +2410,7 @@
     const sum = summary && wasGps ? C.rideSummary(state.ride.trail) : null;
     const showSum = !!sum && sum.distanceM >= C.SUMMARY.MIN_SHOW_M;   // a few metres is not a ride
     if (state.ride) state.ride.pause(); state.ride = null;
+    if (bridgeLayer) bridgeLayer.setRoute(null);
     if (wasGps) keepAwake(false);
     if (map.terrain) map.terrain.exaggeration = CAM.terrain;
     state.hillK = 0; state.follow = true; glide = null; showRider(true);
@@ -2515,6 +2530,7 @@
   window.__app = { map, router, state, set3d, startRide, recompute, computeRoutes, computeSuggestions, showClassic, setTab, setSuggMode,
     setWinter, setWeather, setLang, setSheet, suggester, pauseRide, CAM, classicRoute, enterSearch, cancelSearch, poiMarkers,
     startGpsRide, endRide, gpsDefault, setFollow, riderMarker, loadBixi, paintTrees, poiPopup, trees: treeLayer, edges: edgeLayer, treesFallback, wind, precip };
+  window.__app.bridges = bridgeLayer;
   // hooks for the welcome card and the guided tour (tour.js), which only steer the app through these
   window.piste = { map, state, store, isPhone, sheet, setSheet, sheetHeight, setTab, setWinter, openLayers, setPoint, clearPoint,
     computeRoutes, selectRoute, recompute, gpsDefault, classics: CLASSICS.length, track: count };

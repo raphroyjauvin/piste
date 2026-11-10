@@ -3351,6 +3351,88 @@ await run("3D edges: a shader that fails stops them quietly (one warning, no err
   return { ok, out };
 }, { width: 1000, height: 700 });
 
+// ---- 2026-11-09: bridges in 3D rides (shared/bridge3d.js). The terrain has no bridge decks, so a draped route line followed the ground down to the water
+// and up again. A significant bridge (a structure the route is at least 0.5 m above the ground model on, at least 40 m long, rising at least 4 m above the
+// ground) gets the route drawn on its deck; the draped line under it is left out and the rider's markers ride on the deck. The route below crosses a
+// 65 m bridge over the Décarie trench (rise about 6 m); the other has no structure at all. Nothing here depends on how many frames were drawn. ----
+const BRIDGE_ROUTE = "from=-73.6700,45.5000&to=-73.6600,45.5040", FLAT_ROUTE = "from=-73.5800,45.5150&to=-73.5700,45.5200";
+const BRIDGE_URL = (view, at) => `${APP}?welcome=0&notrack=1&gps=0&${BRIDGE_ROUTE}&ride=${view}&at=${at}&paused`;
+await run("3D bridges: the bridge is found (start, length, rise), the deck is at the route's height, the draped line under it is left out, the rider rides on the deck", BRIDGE_URL("bird", 900), async (page) => {
+  await page.evaluate(treeHelpers); await page.evaluate(edgeHelpers);
+  await until(page, () => window.__app.bridges && window.__app.bridges.info().found > 0, null, 60000);
+  const found = await page.evaluate(() => window.__app.bridges.info());
+  const mid = found.stretches[0] ? (found.stretches[0].d0 + found.stretches[0].d1) / 2 : 1050;
+  // the rider at mid-span; the markers take the lift at a frame of the ride, so seek again once the deck has been drawn
+  await page.evaluate((d) => { const a = window.__app; a.state.snap = true; a.state.ride.seek(d); }, mid);
+  await page.evaluate(idle);
+  await page.evaluate((d) => { const a = window.__app; a.state.snap = true; a.state.ride.seek(d); }, mid);
+  await page.evaluate(idle);
+  const out = await page.evaluate((box) => {
+    const a = window.__app, m = a.map, b = a.bridges, info = b.info(), st = b.stretches[0], r = a.state.ride.route, C = BikeCommon, ex = m.terrain.exaggeration;
+    if (!st) return { info };
+    const i = st.d.length >> 1, deckVert = (st.ranges[1] + 6 * i) * 8;   // the deck's first quad at section i: x, y, nx, ny, across, raw height, lift, tier
+    const drawn = st.data[deckVert + 5], routeZ = C.elevAt(r, st.d[i]);
+    const ground = m.queryTerrainElevation(new maplibregl.LngLat(st.lon[i], st.lat[i])) / ex;   // the map's own terrain at mid-span (true metres)
+    // the draped line: the pieces with br = 1 cover the bridge, and the casing layer leaves them out
+    const len = (cs) => cs.slice(1).reduce((t, c, k) => t + BikeRouter.distM(cs[k][0], cs[k][1], c[0], c[1]), 0);
+    const pieces = C.routePiecesGeoJSON(r, b.cuts(r, 0, r.length)).features, cutLen = pieces.filter((f) => f.properties.br === 1).reduce((s, f) => s + len(f.geometry.coordinates), 0);
+    const casing = JSON.stringify(m.getFilter("route-casing") ?? null), shown = m.queryRenderedFeatures({ layers: ["route-casing"] }).filter((f) => f.properties.br === 1).length;
+    // the rider: where the deck's centre is on the screen (from the matrix the deck was drawn with) against the cone marker's centre and the ground point
+    const cvs = m.getCanvas(), cr = cvs.getBoundingClientRect(), W = cvs.clientWidth, H = cvs.clientHeight, M = st.M;
+    const x = st.x[i], y = st.y[i], z = st.deck[i] * ex, cw = M[3] * x + M[7] * y + M[11] * z + M[15];
+    const deck = [((M[0] * x + M[4] * y + M[8] * z + M[12]) / cw + 1) / 2 * W, (1 - (M[1] * x + M[5] * y + M[9] * z + M[13]) / cw) / 2 * H];
+    const el = a.riderMarker.getElement().getBoundingClientRect(), mk = [el.left + el.width / 2 - cr.left, el.top + el.height / 2 - cr.top];
+    const g = m.project([st.lon[i], st.lat[i]]);
+    const toDeck = Math.hypot(mk[0] - deck[0], mk[1] - deck[1]), toGround = Math.hypot(mk[0] - g.x, mk[1] - g.y);
+    return { info, mid: st.d[i], drawn: +drawn.toFixed(2), routeZ: +routeZ.toFixed(2), ground: +ground.toFixed(2), ownGround: +st.ground[i].toFixed(2), casing, shown, pieces: pieces.length, cutLen: Math.round(cutLen),
+      lift: +a.riderMarker.getOffset().y.toFixed(1), deck: deck.map(Math.round), marker: mk.map(Math.round), ground2: [Math.round(g.x), Math.round(g.y)], toDeck: +toDeck.toFixed(1), toGround: +toGround.toFixed(1),
+      deckPixels: __ed.added(box, "bridge-gl").mask.reduce((s, v) => s + v, 0), vertices: st.data.length / 8, bytes: st.data.byteLength };
+  }, [0, 0, 390, 844]);
+  // after the bridge the markers are back on the ground
+  await page.evaluate((d) => { const a = window.__app; a.state.snap = true; a.state.ride.seek(d); }, found.stretches[0] ? found.stretches[0].d1 + 120 : 1300);
+  await page.evaluate(idle);
+  const after = await page.evaluate(() => ({ lift: window.__app.riderMarker.getOffset().y }));
+  const s0 = found.stretches[0] || {};
+  const ok = found.found === 1 && s0.d0 > 990 && s0.d0 < 1040 && s0.len >= 55 && s0.len <= 75 && s0.rise >= 4 && s0.rise <= 9 && found.error === null
+    && out.vertices > 100 && out.vertices < 2000 && Math.abs(out.drawn - out.routeZ) < 1 && out.drawn - out.ground >= 3 && Math.abs(out.ownGround - out.ground) < 3
+    && /"br"/.test(out.casing) && out.shown === 0 && Math.abs(out.cutLen - s0.len) < 4 && out.pieces >= 3
+    && out.lift < -4 && out.toDeck < 8 && out.toGround > out.toDeck + 4 && out.deckPixels > 150 && Math.abs(after.lift) < 0.5;
+  return { ok, found, out, after };
+}, { width: 390, height: 844 });
+
+await run("3D bridges: a route with no bridge builds nothing (no layer, no cut, the draped line as it is)", `${APP}?welcome=0&notrack=1&gps=0&${FLAT_ROUTE}&ride=bird&at=600&paused`, async (page) => {
+  await until(page, () => window.__app.bridges && window.__app.bridges.info().done > 0, null, 60000);
+  await page.evaluate(idle);
+  const out = await page.evaluate(() => { const a = window.__app, m = a.map, b = a.bridges, r = a.state.ride.route;
+    return { info: b.info(), layer: !!m.getLayer("bridge-gl"), filter: JSON.stringify(m.getFilter("route-casing") ?? null), cuts: b.cuts(r).length, br: m.querySourceFeatures("route").filter((f) => f.properties.br === 1).length, terrain: !!m.terrain }; });
+  return { ok: out.terrain && out.info.done === 1 && out.info.found === 0 && out.info.stretches.length === 0 && out.info.vertices === 0 && !out.layer && out.filter === "null" && out.cuts === 0 && out.br === 0 && out.info.error === null, out };
+}, { width: 390, height: 844 });
+
+await run("3D bridges: the flat top-down ride does nothing (no terrain, no analysis, no layer); a shader that fails leaves the draped line as it was, with one warning", BRIDGE_URL("top", 900), async (page, ctx) => {
+  await page.waitForTimeout(1500);
+  const flat = await page.evaluate(() => { const a = window.__app, m = a.map; return { terrain: !!m.terrain, info: a.bridges.info(), layer: !!m.getLayer("bridge-gl"), filter: JSON.stringify(m.getFilter("route-casing") ?? null) }; });
+  // the same route in the 3D ride, with a bridge shader that does not compile
+  await ctx.addInitScript(() => {
+    for (const GL of [window.WebGLRenderingContext, window.WebGL2RenderingContext].filter(Boolean)) {
+      const source = GL.prototype.shaderSource, param = GL.prototype.getShaderParameter, ours = new WeakSet();
+      GL.prototype.shaderSource = function (s, text) { if (/u_halfw/.test(text)) ours.add(s); return source.call(this, s, text); };
+      GL.prototype.getShaderParameter = function (s, p) { return ours.has(s) && p === this.COMPILE_STATUS ? false : param.call(this, s, p); };
+    }
+  });
+  await page.goto(BASE + BRIDGE_URL("bird", 1050), { waitUntil: "load" });
+  await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
+  await page.evaluate(treeHelpers);
+  await until(page, () => window.__app.bridges && !!window.__app.bridges.info().error, null, 60000);
+  await page.evaluate(idle);
+  await page.waitForTimeout(300);   // the route is drawn again without the cut a moment after the failure
+  const failed = await page.evaluate(() => { const a = window.__app, m = a.map, b = a.bridges.info();
+    return { error: b.error, cut: b.cut, drawn: b.drawn, stretches: b.stretches.length, filter: JSON.stringify(m.getFilter("route-casing") ?? null), br: m.querySourceFeatures("route").filter((f) => f.properties.br === 1).length,
+      warns: window.__warns.filter((w) => /^3D bridges: WebGL drawing stopped/.test(w)).length, ride: !!a.state.ride, terrain: !!m.terrain }; });
+  const ok = !flat.terrain && flat.info.done === 0 && flat.info.found === 0 && !flat.layer && flat.filter === "null"
+    && /^bridge shader/.test(failed.error || "") && failed.cut === false && failed.drawn === 0 && failed.stretches === 0 && failed.filter === "null" && failed.br === 0 && failed.warns === 1 && failed.ride && failed.terrain;
+  return { ok, flat, failed };
+}, { width: 390, height: 844 });
+
 await browser.close();
 if (webkitBrowser) await webkitBrowser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----
