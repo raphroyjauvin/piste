@@ -3818,12 +3818,12 @@ await run("route layout (desktop): the card with its controls right under the se
   await page.evaluate(() => { const p = document.querySelector("#panel"); p.scrollTop = p.scrollHeight; });
   const goEnd = await page.evaluate(panelInfo);
   await page.evaluate(() => { document.querySelector("#panel").scrollTop = 0; });
-  // Design your own ride: its form, then its ride cards; the controls stay under the form; the row is pinned, with no share (loops)
+  // Design your own ride: its form, then its ride cards; the controls stay under the form; the row is pinned, and since 2026-11-09 (shareable rides) it carries share too
   await page.click("#tab-custom");
   await until(page, () => window.__app.state.routes.length > 1 && !document.querySelector("#dock").hidden && document.querySelectorAll("#routes button.route-card, #routes div.route-card").length > 1, null, 90000);
   const custom = await page.evaluate(() => { const ord = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING), form = document.querySelector("#suggest-form");
     return { formThenCards: ord(form, document.querySelector("#routes")), prefsHome: document.querySelector(".prefs").parentElement === document.querySelector("#panel") && !document.querySelector(".prefs").closest(".route-card"),
-      cards: document.querySelectorAll("#routes .route-card").length, noShare: !document.querySelector(".share-btn"), sliderH: Math.round(document.querySelector("#strict").getBoundingClientRect().height) }; });
+      cards: document.querySelectorAll("#routes .route-card").length, shareInDock: !!document.querySelector("#dock .share-btn"), sliderH: Math.round(document.querySelector("#strict").getBoundingClientRect().height) }; });
   const customPin = await page.evaluate(panelInfo);
   // Classic rides: the carousel, the same pinned row, share shown
   await page.click("#tab-classics");
@@ -3835,7 +3835,7 @@ await run("route layout (desktop): the card with its controls right under the se
   const back = await page.evaluate(() => ({ inCard: !!document.querySelector("#routes .route-card .prefs #strict"), n: document.querySelectorAll(".prefs").length }));
   const ok = go.dockLast && go.atBottom && go.rideIn && go.rideH >= 44 && go.shareH >= 44 && go.kids.indexOf("search") < go.kids.indexOf("routes") && go.kids.indexOf("routes") < go.kids.indexOf("dock")
     && goOrder.prefsInCard && goOrder.cardUnderSearch && goOrder.sliderUnderTitle && goOrder.sliderH >= 44 && goEnd.atBottom && goEnd.rideIn
-    && custom.formThenCards && custom.prefsHome && custom.cards > 1 && custom.noShare && customPin.dockLast && customPin.atBottom && customPin.rideIn && customPin.rideH >= 44
+    && custom.formThenCards && custom.prefsHome && custom.cards > 1 && custom.shareInDock && customPin.shareH >= 44 && customPin.dockLast && customPin.atBottom && customPin.rideIn && customPin.rideH >= 44
     && classics.carousel && classics.prefsHome && classicPin.atBottom && classicPin.rideIn && classicPin.shareH >= 44
     && back.inCard && back.n === 1;
   return { ok, go, goOrder, goEnd, custom, customPin, classics, classicPin, back };
