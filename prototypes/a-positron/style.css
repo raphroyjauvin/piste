@@ -146,7 +146,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .pref-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .pref-row label { font-family: var(--font-display); font-weight: 700; }
 .pref-row > output { font-family: var(--font-display); color: var(--navy-deep); font-weight: 700; font-size: 14px; }
-.prefs input[type=range] { width: 100%; accent-color: var(--navy); }
+/* Route style slider (2026-11-09): a 44 px tall touch area (it was 16) with no change to the layout or the look: the negative margins cancel the extra height */
+.prefs input[type=range] { display: block; width: 100%; height: 44px; margin: -14px 0; position: relative; z-index: 1; accent-color: var(--navy); }
 .ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
 /* "Avoid" (2026-11-03): a small label, then real checkboxes drawn as chips on one line (32 px chips inside 44 px labels) */
 .avoid { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: -4px 0; }
@@ -172,6 +173,9 @@ button.route-card:not(.sel) { border-color: var(--line); box-shadow: none; }   /
 .rc-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .rc-top b { font: 700 15px/1.2 var(--font-display); color: var(--navy); }
 .rc-top .time { font: italic 700 30px/.9 var(--font-num); color: var(--navy); white-space: nowrap; }
+/* the card's own controls (2026-11-09): the Route style slider and Avoid chips sit between hairlines right under the time row; the halves around them are wrappers that lay out as if they were not there */
+.rc-head, .rc-body { display: contents; }
+.route-card .prefs { margin: 8px 0 2px; padding: 6px 0 4px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); gap: 2px; }
 .rc-sub { display: flex; justify-content: space-between; gap: 8px; margin-top: 2px; color: var(--ink-3); font-size: 13px; font-variant-numeric: tabular-nums; }
 .rc-note { color: var(--navy-deep); }
 .rc-km { flex: none; font: italic 600 17px/1 var(--font-num); color: var(--ink-2); }
@@ -215,7 +219,7 @@ details.turns summary { cursor: pointer; font-family: var(--font-display); font-
 details.turns ol { margin: 8px 0 0; padding-left: 22px; color: var(--ink-2); font-size: 14px; }
 details.turns li { margin: 3px 0; }
 .turn-at { color: var(--ink-3); }
-.ride-go { position: relative; border: 0; background: var(--navy); color: #fff; font: italic 700 21px/1 var(--font-num); letter-spacing: .02em; padding: 13px 14px; border-radius: var(--r-btn); }
+.ride-go { position: relative; border: 0; background: var(--navy); color: #fff; font: italic 700 21px/1 var(--font-num); letter-spacing: .02em; min-height: 44px; padding: 0 14px; border-radius: var(--r-btn); }   /* 44 px, the smallest tap target (2026-11-09; it was 47) */
 .ride-go:hover { background-color: var(--navy-deep); }
 .panel-foot { font-size: 11px; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 4px; }   /* the data credits live in the map's "i" and in About */
 /* the panel's last row: feedback (mail) and a faint "Take the tour" */
@@ -502,7 +506,10 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
 .about-card .copyright { text-align: center; }
 
 /* ---------- saved places: the ★ chip under the search bars (44 px to tap, 30 px of layout), its menu, share button, place form ---------- */
-.places { display: flex; margin: -7px 0 -7px 26px; }
+/* 2026-11-09: the ★ sits at the right of the search bars, centred between them, instead of on a line of its own; the bars stop short of it */
+.search .field-row { padding-right: 38px; }
+.places { display: flex; position: absolute; right: -7px; top: 50%; margin: -22px 0 0; }   /* no transform: the menu inside is position: fixed, which a transformed parent would turn into a position inside the chip */
+.field-label:not([hidden]) ~ .places { top: calc(50% + 11px); }   /* Design your own ride: one bar under a label: the ★ lines up with the bar, not with the label */
 /* ★ (2026-11-03): a round chip, a 30 px circle in a 44 px button */
 .place { position: relative; isolation: isolate; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; padding: 0; border: 0; background: none;
   color: var(--navy-deep); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
@@ -531,6 +538,10 @@ body.riding .maplibregl-ctrl-group, body.riding .maplibregl-ctrl-scale { display
 /* you are here (Use my location, or on opening the app) */
 .me-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--navy); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(30, 33, 96, .18), 2px 2px 0 rgba(30, 33, 96, .35); pointer-events: none; }
 body.riding .me-dot { display: none; }
+/* the pinned row (2026-11-09): "Let's ride!" and share stay at the panel's bottom edge over the paper, whatever is scrolled; the right padding
+   leaves room for the buttons' dot shadows (5 px), the bottom one for the phone's safe area */
+.dock { position: sticky; bottom: 0; z-index: 4; margin: auto -18px 0; padding: 10px 23px calc(14px + var(--safe-bottom)) 18px; background: var(--paper); border-top: 1px solid var(--line); border-radius: 0 0 9px 9px; }
+.panel.docked { padding-bottom: 0; }
 .ride-row { display: flex; gap: 8px; }
 .ride-row .ride-go { flex: 1; }
 /* next to "Let's ride!": the same height, a quiet secondary button */
@@ -546,6 +557,7 @@ body.riding .me-dot { display: none; }
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: none; height: 50%; border: 0; border-radius: 10px 10px 0 0; box-shadow: none;   /* one ink line along the top edge instead (ink.js) */
     padding: 0 16px calc(12px + var(--safe-bottom)); transition: height .28s cubic-bezier(.2, .8, .2, 1); gap: 12px; }
   .panel.dragging { transition: none; }
+  .dock { margin: auto -16px 0; padding: 10px 21px calc(12px + var(--safe-bottom)) 16px; border-radius: 0; }
   .grabber { display: flex; flex: none; justify-content: center; align-items: center; height: 34px; margin: 0 -16px -8px; cursor: grab; touch-action: none; position: sticky; top: 0; background: var(--paper); z-index: 2; }
   .grabber i { width: 44px; height: 5px; border-radius: 3px; background: #c4cad0; }
   /* the bottom sheet covers the bottom-right corner: no zoom buttons or scale bar (pinch instead), and the map credits ("i")

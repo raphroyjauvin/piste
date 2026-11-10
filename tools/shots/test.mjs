@@ -1075,8 +1075,8 @@ await run("phone: swipeable panel, safe areas", `${APP}?trip=rachel&safe=62,34`,
   await page.click("#suggest li");
   await until(page, () => !document.body.classList.contains("searching") && window.__app.state.routes.length > 0 && document.querySelector("#panel").dataset.sheet === "half");   // card back, route drawn
   const done = await page.evaluate(() => ({ searching: document.body.classList.contains("searching"), routes: window.__app.state.routes.length, sheet: document.querySelector("#panel").dataset.sheet }));
-  return { ok: Math.abs(half - H / 2) < 4 && full >= H - 62 - 10 && peek <= 160 && layout.scrollW <= layout.innerW
-      && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.chipsTop && docked.chipsBottom <= docked.kbTop && docked.chipsBottom >= docked.kbTop - 30
+  return { ok: half > H / 2 - 4 && half < H * 0.75 && full >= H - 62 - 10 && peek <= 190 && layout.scrollW <= layout.innerW
+      && docked.searching && docked.active === "to" && docked.brandHidden && docked.clearShown && docked.fieldBottom <= docked.kbTop && docked.fieldBottom >= docked.kbTop - 30
       && list.shown && list.aboveCard && cancelled.searching && cancelled.cleared && cancelled.stillTyping && cancelled.startKept && moved.active === "to" && moved.searching && !done.searching && done.routes > 0 && done.sheet === "half",
     half, full, peek, ...layout, docked, list, cancelled, moved, done };
 }, { width: 402, height: 874 });
@@ -2109,7 +2109,7 @@ await run("search bars (phone): x never opens the keyboard, bars keep their layo
   const typing = await page.evaluate(() => ({ active: document.activeElement.id, searching: document.body.classList.contains("searching"), value: document.querySelector("#to").value }));
   const ok = fit.every((f) => f.insideCard && f.inputW >= 150 && f.font >= 16 && f.h >= 44) && afterTo.to === null && afterTo.routes === 0 && afterTo.pins === 1 && !/^(INPUT|TEXTAREA)$/.test(kb.active) && !kb.searching
     && afterBoth.from === null && afterBoth.pins === 0 && afterBoth.routes === 0
-    && !before.searching && !kept.searching && kept.h === before.h && kept.sheet === before.sheet && !/^(INPUT|TEXTAREA)$/.test(kept.active)
+    && !before.searching && !kept.searching && Math.abs(kept.h - 422) < 3 && kept.sheet === before.sheet && !/^(INPUT|TEXTAREA)$/.test(kept.active)
     && typing.active === "to" && typing.searching && typing.value === "";
   return { ok, fit, afterTo, kb, afterBoth, before, kept, typing };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
@@ -2608,19 +2608,19 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
     return { same: before === after, customOnly: chip.classList.contains("custom-only"), hiddenInGo: !chip.getClientRects().length }; });
   // the share button: icon only, named, 44 px, not in the tour; Web Share gets the address that reopens the route
   await page.evaluate(shareStub);
-  const btn = await page.evaluate(() => { const b = document.querySelector("#detail .share-btn"), r = b && b.getBoundingClientRect();
+  const btn = await page.evaluate(() => { const b = document.querySelector("#dock .share-btn"), r = b && b.getBoundingClientRect();
     const g = document.querySelector("#ride-go").getBoundingClientRect();   // 2026-11-04: right of "Let's ride!", on its line, as tall
     return b && { label: b.getAttribute("aria-label"), text: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), svg: !!b.querySelector("svg"), tour: window.pisteTour.steps.join(),
       rightOfRide: r.left >= g.right && Math.abs(r.top - g.top) < 1 && Math.abs(r.height - g.height) < 1, nearHeading: !!b.closest(".det-head, h2") }; });
-  await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1);
+  await page.click("#dock .share-btn"); await until(page, () => window.__shared.length === 1);
   const web = await page.evaluate(() => { const s = window.__app.state, ll = (p) => p.map((v) => +v.toFixed(5)).join(","); const d = window.__shared[0];
     return { url: d && d.url, want: `${location.origin}${location.pathname}?from=${ll(s.from)}&to=${ll(s.to)}` }; });
   // no Web Share: the link goes to the clipboard with a toast; a refusal gets a calm message instead of silence
   await page.evaluate(() => Object.defineProperty(navigator, "share", { value: undefined, configurable: true }));
-  await page.click("#detail .share-btn"); await until(page, () => window.__copied);
+  await page.click("#dock .share-btn"); await until(page, () => window.__copied);
   const copied = await page.evaluate(() => ({ text: window.__copied, toast: document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent }));
   await page.evaluate(() => { window.__copyFails = true; document.querySelector("#toast").hidden = true; });
-  await page.click("#detail .share-btn"); await until(page, () => !document.querySelector("#toast").hidden);
+  await page.click("#dock .share-btn"); await until(page, () => !document.querySelector("#toast").hidden);
   const failed = await page.evaluate(() => document.querySelector("#toast").textContent);
   // the link reopens the same route (its ends rounded to 5 decimals)
   const was = await page.evaluate(() => window.__app.state.routes.map((c) => Math.round(c.r.length)).join());
@@ -2629,8 +2629,8 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
   const again = await page.evaluate(() => window.__app.state.routes.map((c) => Math.round(c.r.length)).join());
   // a classic ride shares ?classic=<id>; the made-to-order loops have nothing to share
   await page.goto(BASE + APP + "?classic=oldport", { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
-  await until(page, () => !!document.querySelector("#detail .share-btn"), null, 30000);
-  await page.evaluate(shareStub); await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1);
+  await until(page, () => !!document.querySelector("#dock .share-btn"), null, 30000);
+  await page.evaluate(shareStub); await page.click("#dock .share-btn"); await until(page, () => window.__shared.length === 1);
   const classic = await page.evaluate(() => window.__shared[0].url);
   const loops = await page.evaluate(async () => { const a = window.__app; a.setSuggMode("custom"); await a.computeSuggestions(true); return !document.querySelector(".share-btn"); });
   const ok = cards.n >= 1 && cards.subs.every((x) => !/stretch|without a bike path|tronçon/i.test(x)) && cards.pct.every((x) => /on bike paths/.test(x))
@@ -2649,7 +2649,7 @@ const cardSnap = () => { const a = window.__app, C = window.BikeCommon, s = a.st
     const on = (segs.filter((x) => !x.classList.contains("gap")).reduce((m, x) => m + grow(x), 0) / Math.max(1, segs.reduce((m, x) => m + grow(x), 0))) * 100;
     const cs = el.getBoundingClientRect(), sv = svg && svg.getBoundingClientRect(), br = bar && bar.getBoundingClientRect();
     const colour = (q) => { const x = el.querySelector(q); return x && getComputedStyle(x).backgroundColor; };
-    return { tag: el.tagName, sel: el.classList.contains("sel"), order: [...el.children].filter((c) => !c.classList.contains("ink-svg")).map((c) => c.className.split(" ")[0] || c.tagName).join(),   // the pen outline (ink.js) is not part of the card's content
+    return { tag: el.tagName, sel: el.classList.contains("sel"), order: [...el.children].filter((c) => !c.classList.contains("ink-svg") && !c.classList.contains("prefs")).flatMap((c) => /^rc-(head|body)$/.test(c.className) ? [...c.children] : [c]).map((c) => c.className.split(" ")[0] || c.tagName).join(), tune: !!el.querySelector(":scope > .prefs"),   // the pen outline (ink.js) is not part of the card's content; Go somewhere's card has its two halves (rc-head, rc-body, laid out as if absent) around the controls (.prefs, 2026-11-09)
       title: el.querySelector(".rc-top b").textContent, time: el.querySelector(".rc-top .time").textContent, km: el.querySelector(".rc-km").textContent, climb: el.querySelector(".rc-climb").textContent,
       pct: el.querySelector(".rc-pct").textContent, label: svg && svg.getAttribute("aria-label"), role: svg && svg.getAttribute("role"), stops: svg ? [...svg.querySelectorAll("stop")].map((x) => x.getAttribute("stop-color")) : [],
       onPct: on, offs: el.querySelectorAll(".bar .seg.gap").length, offColour: colour(".bar .seg.gap"),
@@ -2684,7 +2684,7 @@ await run("route card: one card that follows the slider and Avoid; climbs over 7
   const red = await page.evaluate(() => window.BikeCommon.gradeColor(0.2));
   // the slider and the Avoid chips: the card is rebuilt for the new route (marked first, so a stale card would show)
   const moved = await page.evaluate(async () => {
-    const pause = () => new Promise((r) => setTimeout(r, 300)), mark = () => (document.querySelector("#routes .route-card").dataset.old = "1"), fresh = () => !document.querySelector("#routes .route-card[data-old]");
+    const pause = () => new Promise((r) => setTimeout(r, 300)), mark = () => { document.querySelector("#routes .route-card .rc-top").dataset.old = "1"; document.querySelector("#routes .route-card .rc-climb").dataset.old = "1"; }, fresh = () => !document.querySelector("#routes .route-card [data-old]");   // 2026-11-09: the card itself stays (with the controls inside); its halves are re-rendered
     const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true })), s = document.querySelector("#strict"), hills = document.querySelector("#hills"), w = document.querySelector("#avoid-works");
     const out = {};
     mark(); s.value = s.min; fire(s, "input"); await pause(); out.slider = fresh();
@@ -2721,7 +2721,7 @@ await run("route card: one card that follows the slider and Avoid; climbs over 7
     spikeRemoved: units.spike.n === 0 && units.spike.total === 0,
     colours: units.colours.flat && units.colours.mid && units.colours.red && units.colours.navy && !units.flatHasRed && units.flatLabel,
     oneCardInGo: go.n === 1 && go.routes === 1 && g0.tag === "DIV" && !g0.sel && g0.title === "Your route",
-    goCard: cardOk(g0) && g0.want.n >= 2 && /^\d+ climbs, \d+ m total\. Steepest climb is \d+% over \d+ m on .+\.$/.test(g0.climb) && g0.offs > 0 && g0.onBg.includes("rgb(30, 33, 96)") && g0.offColour === "rgb(255, 106, 31)",
+    goCard: cardOk(g0) && g0.tune && g0.want.n >= 2 && /^\d+ climbs, \d+ m total\. Steepest climb is \d+% over \d+ m on .+\.$/.test(g0.climb) && g0.offs > 0 && g0.onBg.includes("rgb(30, 33, 96)") && g0.offColour === "rgb(255, 106, 31)",
     elevationOnlyInCard: !/climb|elevation|m total/i.test(go.detail) && !go.detailSvg && !/climb/i.test(g0.km + g0.title + g0.pct),
     followsControls: moved.slider && moved.hills && moved.works && afterMove.n === 1 && cardOk(afterMove.cards[0]),
     french: /^(\d+ côtes?, \d+ m de montée au total\. La plus raide[\u00a0\u202f]: \d+[\u00a0\u202f]% sur \d+ m(, .+)?\.|Aucune côte raide, \d+ m de montée au total\.)$/.test(fr.t) && /sur pistes cyclables/.test(fr.p),
@@ -3063,14 +3063,14 @@ await run("saved places (phone): the ★ chip fits, typing shows it under the ba
   await until(page, () => document.body.classList.contains("searching"));
   const tappedAt = await page.evaluate(() => performance.now());
   const search = await settled(page, () => { const c = document.querySelector("#places").getBoundingClientRect(), f = document.querySelector("#to").closest(".field").getBoundingClientRect();
-    return { chips: getComputedStyle(document.querySelector("#places")).display !== "none", underBar: c.top >= f.bottom - 1, aboveKb: c.bottom - 7 <= innerHeight - Math.max(260, innerHeight * 0.47) + 1,
+    return { chips: getComputedStyle(document.querySelector("#places")).display !== "none", underBar: c.left + 7 >= f.right - 1 && c.bottom - 7 <= f.bottom + 1,   /* 2026-11-09: the star sits beside the bar, not under it */ aboveKb: c.bottom - 7 <= innerHeight - Math.max(260, innerHeight * 0.47) + 1,
       list: !document.querySelector("#suggest").hidden, focus: document.activeElement.id }; });   // the chip's circle sits 7 px inside its 44 px row
   // ★ with the keyboard up: the menu floats over the map just above the card, typing goes on, a row is the destination and the search ends.
   // (Taps in the first 800 ms after the one that opened search are swallowed on purpose, app.js swallowUntil: a time window, waited out here.)
   await page.waitForFunction((t0) => performance.now() - t0 > 900, tappedAt);
   await page.tap("#places .star");
   const star = await settled(page, () => { const l = document.querySelector("#place-list"), r = l.getBoundingClientRect(), p = document.querySelector("#panel").getBoundingClientRect();
-    return { open: !l.hidden, aboveCard: r.bottom <= p.top + 1 && r.top >= 0, focus: document.activeElement.id, searching: document.body.classList.contains("searching"), rows: [...l.querySelectorAll(".pl-row")].map((b) => b.textContent.trim()) }; });
+    return { open: !l.hidden, menu: [Math.round(r.top), Math.round(r.bottom)], panelTop: Math.round(p.top), aboveCard: r.bottom <= p.top + 1 && r.top >= 0, focus: document.activeElement.id, searching: document.body.classList.contains("searching"), rows: [...l.querySelectorAll(".pl-row")].map((b) => b.textContent.trim()) }; });
   await page.tap('#place-list .pl-row[data-p="1"]');
   await until(page, () => !document.body.classList.contains("searching"));
   const used = await page.evaluate(() => ({ to: window.__app.state.toLabel, closed: document.querySelector("#place-list").hidden, sheet: document.querySelector("#panel").dataset.sheet }));
@@ -3468,16 +3468,17 @@ await run("ink hints: pen outline on the route, classic and ride cards (two path
   const first = await page.evaluate((s) => { const svg = document.querySelector(s), c = svg.parentElement, cs = getComputedStyle(c);
     return { paths: svg.querySelectorAll("path").length, ptr: getComputedStyle(svg).pointerEvents, hidden: svg.getAttribute("aria-hidden"), border: cs.borderTopColor, bw: cs.borderTopWidth,
       draw: svg.dataset.draw, d: [...svg.querySelectorAll("path")].map((p) => p.getAttribute("d")).join("|") }; }, card);
-  // a re-render of the same card (the slider): a new element, the same line when the size is the same, no draw-on
+  // a re-render of the same card (the slider; 2026-11-09: the card stays, its halves are rewritten, so the pen outline stays too): the same svg, the same line when the size is the same, no new draw-on
   const again = async (change) => {
-    await page.evaluate((c) => { window.__old = document.querySelector("#routes .route-card"); const el = document.querySelector("#strict"); if (c) el.value = Math.max(0, +el.value - 40); el.dispatchEvent(new Event("input")); }, change);
-    await until(page, () => { const c = document.querySelector("#routes .route-card"); return c && c !== window.__old && !!c.querySelector(".ink-svg"); });
-    return page.evaluate((s) => { const svg = document.querySelector(s); return { draw: svg.dataset.draw, d: [...svg.querySelectorAll("path")].map((p) => p.getAttribute("d")).join("|"), anims: svg.getAnimations({ subtree: true }).length }; }, card);
+    await until(page, (q) => document.querySelector(q).getAnimations({ subtree: true }).length === 0, card);   // the first draw-on is over (the card, and so its outline, now stays)
+    await page.evaluate((c) => { window.__old = document.querySelector("#routes .route-card .rc-top"); window.__svg = document.querySelector("#routes .route-card .ink-svg"); const el = document.querySelector("#strict"); if (c) el.value = Math.max(0, +el.value - 40); el.dispatchEvent(new Event("input")); }, change);
+    await until(page, () => { const c = document.querySelector("#routes .route-card .rc-top"); return c && c !== window.__old; });
+    return page.evaluate((s) => { const svg = document.querySelector(s); return { sameSvg: svg === window.__svg, draw: svg.dataset.draw, d: [...svg.querySelectorAll("path")].map((p) => p.getAttribute("d")).join("|"), anims: svg.getAnimations({ subtree: true }).length }; }, card);
   };
   const same = await again(false), moved = await again(true);
   // a new trip draws on
-  await page.evaluate(() => { const a = window.__app; a.state.to = [-73.5900, 45.5300]; a.computeRoutes(true); });
-  await until(page, (s) => { const c = document.querySelector(s); return c && c.dataset.draw === "on"; }, card);
+  await page.evaluate(() => { const a = window.__app; window.__svg = document.querySelector("#routes .route-card .ink-svg"); a.state.to = [-73.5900, 45.5300]; a.computeRoutes(true); });
+  await until(page, (s) => { const c = document.querySelector(s); return c && c !== window.__svg && c.dataset.draw === "on"; }, card);
   const fresh = await page.evaluate((s) => document.querySelector(s).dataset.draw, card);
   // the chosen classic ride's card
   const classic = await page.evaluate(async () => { const a = window.__app; a.setTab("suggest"); a.setSuggMode("classics"); a.showClassic(0, false);
@@ -3491,7 +3492,7 @@ await run("ink hints: pen outline on the route, classic and ride cards (two path
     return { paths: svg ? svg.querySelectorAll("path").length : 0, border: cs.borderTopColor, bw: cs.borderTopWidth, draw: svg && svg.dataset.draw }; });
   const clear = (c) => /^rgba\(0, 0, 0, 0\)$|^transparent$/.test(c);
   const ok = first.paths === 2 && first.ptr === "none" && first.hidden === "true" && clear(first.border) && parseFloat(first.bw) >= 1 && first.draw === "on"
-    && same.d === first.d && same.draw !== "on" && same.anims === 0 && moved.draw !== "on" && moved.anims === 0 && fresh === "on"
+    && same.d === first.d && same.sameSvg && same.anims === 0 && moved.sameSvg && moved.anims === 0 && fresh === "on"
     && classic.paths === 2 && clear(classic.border) && classic.others === 0 && ride.paths === 2 && clear(ride.border) && parseFloat(ride.bw) >= 1 && ride.draw === "on";
   return { ok, first, same: { draw: same.draw, anims: same.anims, sameLine: same.d === first.d }, moved: { draw: moved.draw, anims: moved.anims }, fresh, classic, ride };
 }, { width: 1200, height: 800 });
@@ -3579,6 +3580,122 @@ await run("ink hints: the turn distance pops once when the turn instruction chan
   });
   return { ok: out.countdown.sameText && !out.countdown.pop && out.changed && out.pop, out };
 }, { width: 1200, height: 800 });
+
+// ------------------------------------------------------------------ route layout A (2026-11-09)
+// The route card holds the Route style slider and the Avoid chips right under its time row; "Let's ride!" and share are pinned to the panel's
+// bottom edge; on a phone the sheet opens at the height that shows all of it. Nothing here counts map frames or depends on how many were drawn.
+const LAYOUT_ROUTE = `${APP}?welcome=0&notrack=1&safe=47,34&gps=0&from=-73.5817,45.5246&to=-73.6150,45.5035`;
+await run("route layout (phone): the card holds time, slider and Avoid chips, all visible with Let's ride! at the bottom; the sheet opens at the height they need; dragging the slider keeps its element and focus; ride bar pinned at every sheet size; EN and FR", LAYOUT_ROUTE, async (page) => {
+  await until(page, () => window.__app.state.routes.length > 0 && !!document.querySelector("#routes .route-card .prefs"), null, 60000);
+  await panelStill(page);
+  // what the rider sees: the time, the slider, both chips and the button, each fully inside the screen, above the pinned row, map left above the sheet
+  const seen = () => {
+    const R = (s) => document.querySelector(s).getBoundingClientRect(), panel = R("#panel"), dock = R("#dock"), safeB = 34;
+    const above = (r) => r.top >= panel.top + 30 && r.bottom <= dock.top + 0.5 && r.left >= 0 && r.right <= innerWidth;
+    const chip = (id) => R(`label.toggle:has(#${id})`), ride = R("#ride-go");
+    return { mapH: Math.round(panel.top), panelH: Math.round(panel.height), time: above(R("#routes .route-card .time")), slider: above(R("#strict")), hills: above(chip("hills")), works: above(chip("avoid-works")),
+      ride: ride.top >= panel.top + 30 && ride.bottom <= innerHeight - safeB + 0.5, rideH: Math.round(ride.height), shareH: Math.round(R(".share-btn").height), sliderH: Math.round(R("#strict").height),
+      noScrollNeeded: document.querySelector("#panel").scrollTop === 0, ink: document.querySelectorAll("#routes .route-card > .ink-svg").length };
+  };
+  const open = await page.evaluate(seen);
+  const inCard = await page.evaluate(() => { const c = document.querySelector("#routes div.route-card"), strict = document.querySelector("#strict"), ord = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return { slider: c.contains(strict), chips: c.contains(document.querySelector("#hills")) && c.contains(document.querySelector("#avoid-works")), ink: document.querySelector("#routes").dataset.ink || "",
+      afterTitle: ord(c.querySelector(".rc-top"), strict), beforeClimb: ord(document.querySelector("#avoid-works"), c.querySelector(".rc-climb")),
+      // focus order follows the picture: the bars, then the slider, the chips, the strip, and the pinned button last
+      focusOrder: ["#from", "#to", "#places .star", "#strict", "#hills", "#avoid-works", "#routes .route-card .bar .seg", "#ride-go"].every((s, i, a) => !i || ord(document.querySelector(a[i - 1]), document.querySelector(s))) };
+  });
+  // the star beside the two bars, centred between them, the bars ending at the same edge
+  const star = await page.evaluate(() => { const f = document.querySelector("#from").closest(".field").getBoundingClientRect(), t = document.querySelector("#to").closest(".field").getBoundingClientRect(),
+    c = document.querySelector("#places .star").getBoundingClientRect(), mid = (f.top + t.bottom) / 2;
+    return { beside: c.left + 7 >= f.right && c.right <= innerWidth + 8, centred: Math.abs((c.top + c.bottom) / 2 - mid) <= 3, aligned: Math.abs(f.right - t.right) <= 1, tap: c.width >= 44 && c.height >= 44 }; });
+  // the slider: the same element all through a keyboard drag and a pointer drag, still focused, the time following the route
+  await page.evaluate(() => { window.__s = document.querySelector("#strict"); window.__chip = document.querySelector("#hills"); window.__r0 = window.__app.state.routes[0].r; });
+  await page.focus("#strict");
+  for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowLeft");
+  const keys = await page.evaluate(() => { const C = window.BikeCommon, s = window.__app.state;
+    return { same: document.querySelector("#strict") === window.__s, focus: document.activeElement === window.__s, value: +window.__s.value, rerouted: s.routes[0].r !== window.__r0,
+      time: document.querySelector("#routes .route-card .time").textContent === C.fmtMin(C.rideMinutes(s.routes[0].r)), ink: document.querySelectorAll("#routes .route-card > .ink-svg").length }; });
+  const box = await page.locator("#strict").boundingBox(), vals = [];
+  const x = (v) => box.x + 8 + (box.width - 16) * v / 100, y = box.y + box.height / 2;
+  await page.mouse.move(x(keys.value), y); await page.mouse.down();
+  for (const v of [60, 40, 20, 5]) { await page.mouse.move(x(v), y, { steps: 4 }); vals.push(await page.evaluate(() => +document.querySelector("#strict").value)); }
+  await page.mouse.up();
+  const drag = await page.evaluate(() => ({ same: document.querySelector("#strict") === window.__s, time: document.querySelector("#routes .route-card .time").textContent.length > 0 }));
+  // an Avoid chip toggles and the route follows; the chip stays the same element
+  await page.evaluate(() => { window.__r1 = window.__app.state.routes[0].r; });
+  await page.click("label.toggle:has(#hills)");
+  const chip = await page.evaluate(() => ({ on: document.querySelector("#hills").checked, same: document.querySelector("#hills") === window.__chip, rerouted: window.__app.state.routes[0].r !== window.__r1, hasCard: !!document.querySelector("#routes .route-card .rc-climb") }));
+  await page.click("label.toggle:has(#hills)");
+  // the pinned row at every sheet size, and after scrolling the panel to its end
+  const pinned = {};
+  for (const s of ["peek", "half", "full"]) {
+    await page.evaluate((k) => window.__app.setSheet(k), s); await page.waitForTimeout(200); await panelStill(page);
+    pinned[s] = await page.evaluate(() => { const r = document.querySelector("#ride-go").getBoundingClientRect(), p = document.querySelector("#panel").getBoundingClientRect();
+      document.querySelector("#panel").scrollTop = 0; const l = document.querySelector("#lang-btn").getBoundingClientRect(), hit = document.elementFromPoint(l.left + l.width / 2, l.top + l.height / 2);
+      return r.top >= p.top + 30 && r.bottom <= innerHeight - 34 + 0.5 && r.width > 100 && hit === document.querySelector("#lang-btn"); });   // the pinned row never covers the header
+  }
+  await page.evaluate(() => { const p = document.querySelector("#panel"); p.scrollTop = p.scrollHeight; });
+  pinned.end = await page.evaluate(() => { const r = document.querySelector("#ride-go").getBoundingClientRect(); return r.bottom <= innerHeight - 34 + 0.5 && r.top > 0; });
+  await page.evaluate(() => { window.__app.setSheet("half"); document.querySelector("#panel").scrollTop = 0; }); await panelStill(page);
+  // French: the same card (no new element, one outline), everything still fits and shows
+  await page.click("#lang-btn"); await until(page, () => /^Votre/.test(document.querySelector("#routes .route-card .rc-top b").textContent)); await page.waitForTimeout(300); await panelStill(page);
+  const fr = await page.evaluate(() => { const p = document.querySelector("#panel"); return { same: document.querySelector("#strict") === window.__s, fits: p.scrollWidth <= p.clientWidth, label: document.querySelector('label[for="strict"]').textContent }; });
+  const frSeen = await page.evaluate(seen);
+  await page.click("#lang-btn"); await until(page, () => /^Your/.test(document.querySelector("#routes .route-card .rc-top b").textContent));
+  // no destination: the slider and chips are back under the search bars, nothing is pinned, the sheet is half the screen again
+  await page.click('.clear[data-target="to"]'); await until(page, () => window.__app.state.routes.length === 0); await page.waitForTimeout(300); await panelStill(page);
+  const none = await page.evaluate(() => { const R = (s) => document.querySelector(s).getBoundingClientRect(), s = R(".search"), prefs = document.querySelector(".prefs");
+    return { under: !prefs.closest(".route-card") && R("#strict").top >= s.bottom && prefs.parentElement === document.querySelector("#panel"),
+      dockHidden: document.querySelector("#dock").hidden, half: Math.abs(R("#panel").height - innerHeight / 2) < 4, noCard: !document.querySelector("#routes .route-card"), same: document.querySelector("#strict") === window.__s,
+      sliderH: Math.round(R("#strict").height), star: R("#places .star").top > s.top && R("#places .star").bottom < s.bottom + 8 }; });
+  const ok = open.time && open.slider && open.hills && open.works && open.ride && open.noScrollNeeded && open.mapH >= 280 && open.panelH < 844 * 0.7 && open.ink === 1
+    && open.rideH >= 44 && open.rideH <= 46 && open.shareH >= 44 && open.shareH <= 46 && open.sliderH >= 44
+    && inCard.slider && inCard.chips && inCard.afterTitle && inCard.beforeClimb && inCard.focusOrder && inCard.ink.startsWith("-73.5817")
+    && star.beside && star.centred && star.aligned && star.tap
+    && keys.same && keys.focus && keys.value < 85 && keys.rerouted && keys.time && keys.ink === 1
+    && drag.same && vals.every((v, i) => !i || v < vals[i - 1]) && vals[3] <= 15
+    && chip.on && chip.same && chip.rerouted && chip.hasCard
+    && pinned.peek && pinned.half && pinned.full && pinned.end
+    && fr.same && fr.fits && /Style/.test(fr.label) && frSeen.time && frSeen.slider && frSeen.hills && frSeen.works && frSeen.ride && frSeen.ink === 1
+    && none.under && none.dockHidden && none.half && none.noCard && none.same && none.sliderH >= 44 && none.star;
+  return { ok, open, inCard, star, keys, vals, drag, chip, pinned, fr, frSeen, none };
+}, { width: 390, height: 844 }, { hasTouch: true });
+
+await run("route layout (desktop): the card with its controls right under the search bars, Let's ride! and share pinned at the panel's bottom; the other two tabs keep their content and pin the same row", LAYOUT_ROUTE, async (page) => {
+  await until(page, () => window.__app.state.routes.length > 0 && !!document.querySelector("#routes .route-card .prefs"), null, 60000);
+  const panelInfo = () => { const kids = [...document.querySelector("#panel").children].filter((c) => !c.hidden && c.getClientRects().length).map((c) => c.id || c.className.split(" ")[0]);
+    const p = document.querySelector("#panel").getBoundingClientRect(), d = document.querySelector("#dock").getBoundingClientRect(), r = document.querySelector("#ride-go").getBoundingClientRect(), sh = document.querySelector(".share-btn");
+    return { kids, dockLast: document.querySelector("#panel").lastElementChild.id === "dock", atBottom: d.bottom >= p.bottom - 3 && d.bottom <= p.bottom + 1, rideIn: r.top >= p.top && r.bottom <= p.bottom, rideH: Math.round(r.height), shareH: sh ? Math.round(sh.getBoundingClientRect().height) : 0 }; };
+  const go = await page.evaluate(panelInfo);
+  const goOrder = await page.evaluate(() => { const c = document.querySelector("#routes .route-card"), s = document.querySelector(".search").getBoundingClientRect();
+    return { prefsInCard: c.contains(document.querySelector(".prefs")), cardUnderSearch: c.getBoundingClientRect().top >= s.bottom && c.getBoundingClientRect().top - s.bottom < 24, sliderUnderTitle: document.querySelector("#strict").getBoundingClientRect().top > c.querySelector(".rc-sub").getBoundingClientRect().bottom,
+      sliderH: Math.round(document.querySelector("#strict").getBoundingClientRect().height) }; });
+  // scrolled to the end: the row is still at the bottom edge, in view
+  await page.evaluate(() => { const p = document.querySelector("#panel"); p.scrollTop = p.scrollHeight; });
+  const goEnd = await page.evaluate(panelInfo);
+  await page.evaluate(() => { document.querySelector("#panel").scrollTop = 0; });
+  // Design your own ride: its form, then its ride cards; the controls stay under the form; the row is pinned, with no share (loops)
+  await page.click("#tab-custom");
+  await until(page, () => window.__app.state.routes.length > 1 && !document.querySelector("#dock").hidden && document.querySelectorAll("#routes button.route-card, #routes div.route-card").length > 1, null, 90000);
+  const custom = await page.evaluate(() => { const ord = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING), form = document.querySelector("#suggest-form");
+    return { formThenCards: ord(form, document.querySelector("#routes")), prefsHome: document.querySelector(".prefs").parentElement === document.querySelector("#panel") && !document.querySelector(".prefs").closest(".route-card"),
+      cards: document.querySelectorAll("#routes .route-card").length, noShare: !document.querySelector(".share-btn"), sliderH: Math.round(document.querySelector("#strict").getBoundingClientRect().height) }; });
+  const customPin = await page.evaluate(panelInfo);
+  // Classic rides: the carousel, the same pinned row, share shown
+  await page.click("#tab-classics");
+  await until(page, () => window.__app.state.routes[0] && window.__app.state.routes[0].classic && !document.querySelector("#dock").hidden && !!document.querySelector(".share-btn"), null, 60000);
+  const classics = await page.evaluate(() => ({ carousel: !!document.querySelector("#classic-track .classic-card"), prefsHome: document.querySelector(".prefs").parentElement === document.querySelector("#panel") }));
+  const classicPin = await page.evaluate(panelInfo);
+  // back to Go somewhere: the card again, with its controls
+  await page.click("#tab-go"); await until(page, () => !!document.querySelector("#routes .route-card .prefs"), null, 60000);
+  const back = await page.evaluate(() => ({ inCard: !!document.querySelector("#routes .route-card .prefs #strict"), n: document.querySelectorAll(".prefs").length }));
+  const ok = go.dockLast && go.atBottom && go.rideIn && go.rideH >= 44 && go.shareH >= 44 && go.kids.indexOf("search") < go.kids.indexOf("routes") && go.kids.indexOf("routes") < go.kids.indexOf("dock")
+    && goOrder.prefsInCard && goOrder.cardUnderSearch && goOrder.sliderUnderTitle && goOrder.sliderH >= 44 && goEnd.atBottom && goEnd.rideIn
+    && custom.formThenCards && custom.prefsHome && custom.cards > 1 && custom.noShare && customPin.dockLast && customPin.atBottom && customPin.rideIn && customPin.rideH >= 44
+    && classics.carousel && classics.prefsHome && classicPin.atBottom && classicPin.rideIn && classicPin.shareH >= 44
+    && back.inCard && back.n === 1;
+  return { ok, go, goOrder, goEnd, custom, customPin, classics, classicPin, back };
+}, { width: 1440, height: 900 });
 
 await browser.close();
 if (webkitBrowser) await webkitBrowser.close();

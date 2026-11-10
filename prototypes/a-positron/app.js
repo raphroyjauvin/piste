@@ -865,8 +865,8 @@
   }
   function dock(animate) {   // card height that leaves the search bars, and the place chips under them, just above the keyboard
     if (!search.which) return;
-    const field = (state.tab === "go" ? toEl : fromEl).closest(".field"), chips = placeBox.getClientRects().length > 0;
-    const block = (chips ? placeBox : field).getBoundingClientRect().bottom - panel.getBoundingClientRect().top + (chips ? 4 : 12);   // the chips' 44 px rows end 7 px under their circles
+    const field = (state.tab === "go" ? toEl : fromEl).closest(".field");
+    const block = field.getBoundingClientRect().bottom - panel.getBoundingClientRect().top + 12;   // the ★ sits beside the bars (2026-11-09), so the last bar ends the block
     const h = Math.round(innerHeight - keyboardTop() + block);
     panel.classList.toggle("dragging", !animate);
     panel.style.height = h + "px";
@@ -1308,7 +1308,7 @@
   async function computeSuggestions(fit) {
     const token = ++suggToken;
     if (!state.from) { state.routes = []; renderRoutes(); drawRoutes(); return; }
-    $("#routes").innerHTML = `<div class="finding">${t("finding")}</div>`; $("#detail").innerHTML = "";
+    prefsHome(); $("#routes").innerHTML = `<div class="finding">${t("finding")}</div>`; $("#detail").innerHTML = ""; setDock("");
     await tick();
     const t1 = performance.now();
     const wx = state.avoidWind ? state.wxData || (await loadWeather()) : null;
@@ -1535,27 +1535,65 @@
   // tapped stretch's details. Elevation is told only here. In Suggest a ride the rides not picked are buttons that pick them.
   // what every route card holds (Go somewhere, Design your own ride, and the classic rides' cards): title and time; distance; extra (a classic
   // ride's description); the climbs; the elevation; the bike-path strip; the share on bike paths; and, on the live card, a tapped stretch's details
-  function cardParts(title, note, r, live, extra = "") {
+  // (2026-11-09: in two halves, because the Go-somewhere card keeps its Route style and Avoid controls between them and re-renders only the halves)
+  const cardHead = (title, note, r) => `<div class="rc-top"><b>${C.esc(title)}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
+        <div class="rc-sub"><span class="rc-note">${C.esc(note)}</span><span class="rc-km">${C.fmtKm(r.length)}</span></div>`;
+  function cardBody(r, live) {
     const list = stretches(r);
-    return `<div class="rc-top"><b>${C.esc(title)}</b><span class="time">${C.fmtMin(C.rideMinutes(r))}</span></div>
-        <div class="rc-sub"><span class="rc-note">${C.esc(note)}</span><span class="rc-km">${C.fmtKm(r.length)}</span></div>${extra}
-        <div class="rc-climb">${climbLine(r)}</div>
+    return `<div class="rc-climb">${climbLine(r)}</div>
         <div class="rc-profile">${C.gradeProfileSVG(r, { height: live ? 68 : 56, label: t("elevation") })}</div>
         ${strip(r, list, live, null)}
         <div class="rc-under"><div class="rc-pct"><b>${C.fmtPct(r.infraShare)}</b> ${t(state.winter ? "on4s" : "onInfra")}</div>${list.some((s) => !s.on) ? "" : `<div class="rc-whole">${t("lanesWhole")}</div>`}</div>
         ${live ? `<div class="rc-more"><div><div class="rc-det"></div></div></div>` : ""}`;
   }
+  const cardParts = (title, note, r, live, extra = "") => cardHead(title, note, r) + extra + cardBody(r, live);
   function routeCard(c, i, pick) {
     const live = !pick || i === state.sel, tag = live ? "div" : "button";
     return `<${tag} ${tag === "button" ? `type="button" ` : ""}data-i="${i}" class="route-card${pick && i === state.sel ? " sel" : ""}">${cardParts(routeTitle(c), routeNote(c), c.r, live)}</${tag}>`;
   }
+  // Route layout A (2026-11-09, Raph): with a Go-somewhere route showing, the Route style slider and the Avoid chips (the .prefs section)
+  // sit inside the route card, right under its time row, so people see they can keep tuning. The card is built once per trip and only its
+  // two halves (.rc-head above the controls, .rc-body below) are re-rendered; the controls are never rewritten, so a slider being dragged
+  // (it reroutes on every input event) keeps its element, its focus and its pointer. Whatever else wants #routes first sends them home.
+  let routeHalf = 0;   // see measureSheet (the sheet)
+  const prefs = $(".prefs"), dockEl = $("#dock");
+  function prefsHome() { if (prefs.parentElement !== panel) $("#routes").before(prefs); }
+  function goCard(box, c, fresh) {
+    let card = fresh ? null : box.querySelector("div.route-card.go");
+    if (!card) {
+      card = document.createElement("div"); card.className = "route-card go"; card.dataset.i = "0";
+      card.innerHTML = `<div class="rc-head"></div><div class="rc-body"></div>`;
+      card.firstChild.after(prefs);   // moved, not copied: one slider, one set of chips
+      box.replaceChildren(card);
+    }
+    card.querySelector(".rc-head").innerHTML = cardHead(routeTitle(c), routeNote(c), c.r);
+    card.querySelector(".rc-body").innerHTML = cardBody(c.r, true);
+    return card;
+  }
+  // the pinned row ("Let's ride!" and share) in #dock: written only when it changes, and wired once (see the click handler below)
+  let dockHtml = "";
+  function setDock(html) {
+    if (html === dockHtml) return false;
+    const shown = !dockHtml && !!html;   // true: the row has just appeared
+    dockHtml = html; dockEl.innerHTML = html; dockEl.hidden = !html; panel.classList.toggle("docked", !!html);
+    return shown;
+  }
+  dockEl.addEventListener("click", (e) => {
+    if (e.target.closest("#ride-go")) rideTap(gpsDefault());
+    else if (e.target.closest(".share-btn")) shareRoute();
+  });
   function renderRoutes() {
     $("#brand").classList.toggle("compact", state.routes.length > 0);   // phones: a route showing makes the header one line (2026-11-09)
     const box = $("#routes"), det = $("#detail");
-    if (!state.routes.length) { box.innerHTML = ""; det.innerHTML = ""; return; }
-    box.dataset.ink = `${state.inkKey}|${state.sel}`;   // which card this is, for the pen outline (ink.js)
+    if (!state.routes.length) { prefsHome(); box.innerHTML = ""; det.innerHTML = ""; setDock(""); followSheet(); return; }
+    const ink = `${state.inkKey}|${state.sel}`, newTrip = box.dataset.ink !== ink;
+    box.dataset.ink = ink;   // which card this is, for the pen outline (ink.js)
     const pick = state.routes.length > 1, sel = state.routes[state.sel], r = sel.r;   // Design your own ride's three; one card for a route
-    if (sel.classic) { box.innerHTML = ""; renderClassicCards(); }   // a classic ride's card is its card in the carousel
+    const go = state.tab === "go" && !sel.classic;
+    if (!go) prefsHome();
+    if (go) {
+      wireStretches(goCard(box, sel, newTrip || !box.querySelector("div.route-card.go")), r);
+    } else if (sel.classic) { box.innerHTML = ""; renderClassicCards(); }   // a classic ride's card is its card in the carousel
     else {
       box.innerHTML = state.routes.map((c, i) => routeCard(c, i, pick)).join("");
       box.querySelectorAll("button.route-card").forEach((b) => b.addEventListener("click", () => selectRoute(b.dataset.i)));
@@ -1563,15 +1601,14 @@
     }
     const turns = r.maneuvers.map((m) => `<li>${C.esc(I.maneuver(m))} <span class="turn-at">· ${C.fmtKm(m.at)}</span></li>`).join("");
     const share = canShare() ? `<button type="button" class="share-btn" aria-label="${t("share")}" title="${t("share")}">${SHARE_ICON}</button>` : "";
+    const dockShown = setDock(`<div class="ride-row"><button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>${share}</div>`);
     const wl = state.wx && state.wxData ? `<p class="wind-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3"/></svg>${C.esc(windLine(r))}</p>` : "";
-    // share sits next to "Let's ride!" (2026-11-04): beside a heading it read as "share the elevation"
+    // share sits next to "Let's ride!" (2026-11-04): beside a heading it read as "share the elevation"; both are pinned to the panel's bottom (2026-11-09)
     det.innerHTML = `${wl}
       <details class="turns"><summary>${t("turnByTurn", { n: r.maneuvers.length })}</summary><ol>${turns}</ol></details>
-      <div class="ride-row"><button type="button" id="ride-go" class="ride-go">${t("letsRide")}</button>${share}</div>
       ${gpsDefault() ? `<button type="button" id="ride-preview" class="ride-preview">${t("previewRide")}</button>` : ""}`;
-    $("#ride-go").onclick = () => rideTap(gpsDefault());
-    const shareBtn = det.querySelector(".share-btn"); if (shareBtn) shareBtn.onclick = shareRoute;
     if ($("#ride-preview")) $("#ride-preview").onclick = () => rideTap(false);
+    if (newTrip || dockShown) { watchSheetContent(); followSheet(); }   // a new trip or the pinned row appearing: the sheet takes the height its content needs
   }
 
   // ------------------------------------------------------------------ comic-print button shadows (2026-11-07)
@@ -1741,12 +1778,36 @@
   $("#lang-btn").textContent = I.lang === "fr" ? "EN" : "FR";
 
   // ------------------------------------------------------------------ bottom panel on phones: drag it up (full) or down (map)
-  const panel = $("#panel"), sheet = { state: "half" };
+  const panel = $("#panel"), sheet = { state: "half", drag: false };   // drag: a finger is dragging the sheet
+  // 2026-11-09: the pinned row (#dock) takes the bottom of the sheet, so two sizes are measured from the content (phones only):
+  //  - peek: the header (grabber and brand) plus the pinned row, so the row never covers the header or the language button;
+  //  - half, with a Go-somewhere route: everything down to the Avoid chips plus the pinned row, and no taller, so the map keeps the rest.
+  // routeHalf and dockPeek are those heights (0: not measured, so 150 px and half of the screen). They are measured when a new trip or the
+  // pinned row appears, when a size is set, and when a watched block changes size (language, wrapping, fonts): never per drag frame and
+  // never per slider move.
+  let dockPeek = 0, sheetWatch = null;
+  function measureSheet() {
+    const top = panel.getBoundingClientRect().top - panel.scrollTop, tune = panel.querySelector(".route-card .prefs"), brand = $("#brand");
+    if (!isPhone() || dockEl.hidden) { routeHalf = dockPeek = 0; return; }
+    if (brand.getClientRects().length) dockPeek = Math.ceil(brand.getBoundingClientRect().bottom - top + 6 + dockEl.offsetHeight);   // (a hidden header, while a place is typed: keep the last measure)
+    routeHalf = !tune ? 0 : tune.getClientRects().length ? Math.ceil(tune.getBoundingClientRect().bottom - top + 4 + dockEl.offsetHeight) : routeHalf;
+  }
+  function followSheet() {   // measure again; a sheet at rest in peek or half takes the new height
+    const was = `${routeHalf}|${dockPeek}`; measureSheet();
+    if (was !== `${routeHalf}|${dockPeek}` && isPhone() && !search.which && !sheet.drag && sheet.state !== "full") setSheet(sheet.state);
+  }
+  function watchSheetContent() {   // the blocks above the pinned row and the controls: when one changes size, the sheet follows
+    if (!("ResizeObserver" in window)) return;
+    if (!sheetWatch) sheetWatch = new ResizeObserver(followSheet);
+    sheetWatch.disconnect();
+    for (const el of [$("#brand"), $(".search"), panel.querySelector(".route-card .rc-head"), dockEl]) if (el) sheetWatch.observe(el);
+  }
   function sheetHeight(s) {
-    const H = innerHeight, top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
-    return { peek: 150, half: Math.round(H * 0.5), full: H - top - 8 }[s];
+    const H = innerHeight, top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0, full = H - top - 8;
+    return { peek: Math.max(150, dockPeek), half: routeHalf ? Math.min(routeHalf, full) : Math.round(H * 0.5), full }[s];
   }
   function setSheet(s, animate = true) {
+    if (s !== "full") measureSheet();
     sheet.state = s; panel.dataset.sheet = s;
     if (!isPhone()) { panel.style.height = ""; syncSheetTall(); return; }
     panel.classList.toggle("dragging", !animate);
@@ -1761,7 +1822,7 @@
     const zone = [$("#grabber"), $("#brand")];
     const down = (e) => {
       if (!isPhone() || search.which || e.target.closest("button")) return;
-      active = true; moved = false; y0 = lastY = e.clientY; lastT = performance.now(); h0 = panel.getBoundingClientRect().height; vy = 0;
+      active = true; sheet.drag = true; moved = false; y0 = lastY = e.clientY; lastT = performance.now(); h0 = panel.getBoundingClientRect().height; vy = 0;
       panel.classList.add("dragging"); e.currentTarget.setPointerCapture(e.pointerId);
     };
     const move = (e) => {
@@ -1771,7 +1832,7 @@
       panel.style.height = Math.max(sheetHeight("peek") - 40, Math.min(sheetHeight("full"), h0 + (y0 - e.clientY))) + "px";
     };
     const up = () => {
-      if (!active) return; active = false; panel.classList.remove("dragging");
+      if (!active) return; active = false; sheet.drag = false; panel.classList.remove("dragging");
       const order = ["peek", "half", "full"];
       if (!moved) { setSheet(order[(order.indexOf(sheet.state) + 1) % 3]); return; }   // a tap steps through the sizes
       const h = panel.getBoundingClientRect().height;
