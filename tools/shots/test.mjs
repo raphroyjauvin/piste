@@ -2115,13 +2115,13 @@ await run("search bars (phone): x never opens the keyboard, bars keep their layo
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 // ------------------------------------------------------------------ the language button in the card's header (2026-10-31)
-await run("language button: top right of the card's header, visible at every sheet height, 44 px tap area, no sheet drag", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
+await run("language button: next to the night button at the top right of the card's header, visible at every sheet height, 44 px tap area, no sheet drag", `${APP}?trip=montroyal&safe=47,34`, async (page) => {
   const probe = () => { const b = document.querySelector("#lang-btn"), r = b.getBoundingClientRect(), br = document.querySelector("#brand").getBoundingClientRect(), pr = document.querySelector("#panel").getBoundingClientRect(),
       g = document.querySelector("#grabber").getBoundingClientRect(), tb = document.querySelector(".tabs").getBoundingClientRect(), phone = matchMedia("(max-width: 760px)").matches;
     const hit = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === b || b.contains(e)); };
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2, tap = !phone || [[-21, -21], [21, -21], [-21, 21], [21, 21]].every(([dx, dy]) => hit(cx + dx, cy + dy));
     const overlap = (a, c) => a.width > 0 && c.width > 0 && Math.min(a.right, c.right) - Math.max(a.left, c.left) > 0.5 && Math.min(a.bottom, c.bottom) - Math.max(a.top, c.top) > 0.5;
-    return { inHeader: r.top >= br.top - 1 && r.bottom <= br.bottom + 1 && Math.abs(r.right - (pr.right - 16)) <= (phone ? 4 : 6), visible: hit(cx, cy) && r.top >= pr.top && r.bottom <= pr.bottom, tap,
+    return { inHeader: r.top >= br.top - 1 && r.bottom <= br.bottom + 1 && Math.abs(r.right - (document.querySelector("#night-btn").getBoundingClientRect().left - 12)) <= 1 && Math.abs(document.querySelector("#night-btn").getBoundingClientRect().right - (pr.right - 16)) <= (phone ? 4 : 6), visible: hit(cx, cy) && r.top >= pr.top && r.bottom <= pr.bottom, tap,
       clear: !overlap(r, g) && !overlap(r, tb), text: b.textContent, sheet: document.querySelector("#panel").dataset.sheet, size: [Math.round(r.width), Math.round(r.height)], rect: [r.left, r.top, r.right, r.bottom].map(Math.round) }; };
   const out = {};
   for (const sheet of ["peek", "half", "full"]) {
