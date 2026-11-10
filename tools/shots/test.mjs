@@ -3328,6 +3328,33 @@ await run("3D edges: a line a few metres behind a wall stays hidden in the ride 
   return { ok: out.lines === 2 && out.hidden === 0 && out.shown >= 3, out };
 }, { width: 1000, height: 700 });
 
+// ---- 2026-11-09: hand-inked feel. A made-up building outline edge is packed slightly past both its ends (along itself, in its own plane), a corner
+// line slightly above its roof; with the constants at 0 they are exact. Checked on the packed data: no map frames needed ----
+await run("3D edges: lines are packed a little past their ends (overshoot), exactly to them when the overshoot is 0", APP, async (page) => {
+  await page.evaluate(treeHelpers); await page.evaluate(edgeHelpers);
+  await until(page, () => !!window.__app.edges, null, 60000);
+  const out = await page.evaluate(() => {
+    const m = window.__app.map, e = window.__app.edges, c = m.getCenter(), O = maplibregl.MercatorCoordinate.fromLngLat(c, 0), k = O.meterInMercatorCoordinateUnits();
+    // one made-up edge, 40 m long running east-west (record kind 0: four packed ends), and one corner line (kind 1: two ends), on a 15 m building
+    const tile = { key: "15/0/0", z: 15, x: 0, y: 0, raw: 2, n: 2, nb: 1, lines: 3, seg: Float64Array.from([O.x, O.y, O.x + 40 * k, O.y, O.x, O.y, 0, 0]), kind: Uint8Array.from([0, 1]),
+      bld: Uint32Array.from([0, 0]), h: Float32Array.from([15]), lng: Float64Array.from([c.lng]), lat: Float64Array.from([c.lat]), elev: new Float32Array(1), elevFor: "flat" };
+    clearTimeout(e.timer); e.timer = 1;   // no rebuild from the map's tiles: pack only these
+    e.tiles = new Map([[tile.key, tile]]);
+    const read = () => { const p = e.pack(), d = p.data, kk = p.origin[2], v = (i) => ({ x: d[4 * i], y: d[4 * i + 1], z: d[4 * i + 3] });
+      const L = [0, 1, 2, 3, 4, 5].map(v);   // roof A, roof B, base A, base B, corner bottom, corner top
+      return { count: p.count, len: +(L[1].x - L[0].x).toFixed(2), start: +L[0].x.toFixed(2), flat: L.slice(0, 4).every((q) => Math.abs(q.y) < 1e-3), roofZ: [L[0].z, L[1].z], baseZ: [L[2].z, L[3].z],
+        cornerBottom: +L[4].z.toFixed(2), cornerTop: +L[5].z.toFixed(2), ink: p.ink.length, kk }; };
+    const on = read(); e.opt.overshoot = 0; e.opt.cornerUp = 0; const off = read();
+    return { on, off };
+  });
+  const { on, off } = out;
+  // on: 40 m + 2 x 0.35, the start 0.35 m before the origin, corner line 0.3 m above the 15 m roof, nothing below the ground (base stays at 0.05 m)
+  const ok = on.count === 3 && Math.abs(on.len - 40.7) < 0.02 && Math.abs(on.start + 0.35) < 0.02 && on.flat && on.roofZ.every((z) => z === 15) && on.baseZ.every((z) => Math.abs(z - 0.05) < 1e-6)
+    && Math.abs(on.cornerTop - 15.3) < 0.02 && Math.abs(on.cornerBottom - 0.05) < 0.02 && on.ink === 3
+    && off.count === 3 && Math.abs(off.len - 40) < 0.02 && Math.abs(off.start) < 0.02 && Math.abs(off.cornerTop - 15) < 0.02;
+  return { ok, on, off };
+}, { width: 600, height: 400 });
+
 await run("3D edges: a shader that fails stops them quietly (one warning, no error), the buildings and trees carry on", APP, async (page, ctx) => {
   await ctx.addInitScript(() => {
     for (const GL of [window.WebGLRenderingContext, window.WebGL2RenderingContext].filter(Boolean)) {

@@ -11,6 +11,8 @@
    At most MAX_LINES lines are drawn; when more are loaded the tiles nearest the map's centre win (stats.capped says so).
    If anything fails while drawing (an old browser, a shader error, a context found lost) the layer draws nothing, warns once in the
    console and calls onFail(reason); it never throws into the map. A lost context also removes every custom layer from the map.
+   2026-11-09 hand-inked feel (OVERSHOOT, CORNER_UP, PRESSURE below): lines run a little past their ends, and their opacity varies gently with
+   position, like pen pressure. The overshoot is built into the packed lines; the pressure is a hash in the vertex shader. No cost per frame.
    Classic script: window.BikeEdges3D. */
 (function () {
   "use strict";
@@ -18,6 +20,12 @@
   const MIN_HEIGHT = 2;          // m: lower buildings (sheds, garages) get no lines
   const TURN = 0.6;              // rad (about 34 degrees): a corner line where the outline turns by more than this
   const NUDGE = 0.3;             // m: every line end moves this far toward the camera, so a line is not hidden by the wall it lies on
+  // 2026-11-09 "hand-inked" feel, at no cost per frame (0 switches a part off). Overshoot is done once, when the lines are packed; pressure is
+  // a smooth hash of the vertex position in the vertex shader (no attribute, no memory), the same picture every frame and after every rebuild.
+  const OVERSHOOT = 0.35;        // m: roof and base lines run this far past both ends, along their own direction (stay in the wall / roof plane)
+  const CORNER_UP = 0.3;         // m: corner lines run this far above the roof (never below the ground)
+  const PRESSURE = 0.3;          // share of the opacity the pen pressure can take away: lines are 0.7 to 1.0 of the layer's alpha
+  const PRESSURE_CELL = 8;       // m: how far apart the pressure changes (smaller = busier; must divide 4096 so the wrap is seamless)
   const BASE_LIFT = 0.05;        // m: the base line sits just above the ground it stands on
   const BUFFER = 0.1;            // an axis-aligned edge within this share of a tile from its border is a tile cut
   const STRIDE = 4;              // per line end: x, y (m from the origin, east and south), the ground's raw height (m), height above the ground (m)
@@ -30,9 +38,19 @@
 uniform mat4 u_matrix;     // local metres (x east, y south, z up) to clip space
 uniform vec3 u_cam;        // the camera, in the same local metres
 uniform float u_exag;      // the terrain's exaggeration now (the ride camera changes it without any event): ground heights are stored raw
+uniform vec3 u_ink;        // pen pressure: the pack origin's place in the world (m, wrapped at 4096) and the metres-per-unit ratio, so it survives a rebuild
 attribute vec4 a_pos;      // x, y, ground height, height above the ground
+varying float v_ink;
+// a random value 0..1 on a grid of ${PRESSURE_CELL} m, wrapping every 4096 m (so the world position can be small and exact in float32)
+float cellHash(vec2 c) { return fract(sin(dot(mod(c, ${(4096 / PRESSURE_CELL).toFixed(1)}), vec2(12.9898, 78.233))) * 43758.5453); }
+float pressure(vec3 q) {
+  vec2 g = (u_ink.xy + q.xy * u_ink.z + q.z * vec2(0.7, 1.3)) / ${PRESSURE_CELL.toFixed(2)}, i = floor(g), f = fract(g);
+  f = f * f * (3.0 - 2.0 * f);   // smooth between the grid points, so no steps along a line
+  return mix(mix(cellHash(i), cellHash(i + vec2(1.0, 0.0)), f.x), mix(cellHash(i + vec2(0.0, 1.0)), cellHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 void main() {
   vec3 p = vec3(a_pos.xy, a_pos.z * u_exag + a_pos.w);
+  v_ink = 1.0 - ${PRESSURE.toFixed(2)} * (1.0 - pressure(vec3(a_pos.xy, a_pos.w)));   // from the stored position, not the lifted one: terrain changes do not shimmer it
   // a fixed distance toward the camera (not a clip-space depth offset: that is worth metres far away and lets lines behind a wall show through)
   gl_Position = u_matrix * vec4(p + normalize(u_cam - p) * ${NUDGE.toFixed(2)}, 1.0);
 }`;
@@ -43,7 +61,8 @@ precision highp float;
 precision mediump float;
 #endif
 uniform vec4 u_edgecolor;  // premultiplied alpha
-void main() { gl_FragColor = u_edgecolor; }`;
+varying float v_ink;
+void main() { gl_FragColor = u_edgecolor * v_ink; }`;
 
   // WebGL 2 has vertex arrays built in; WebGL 1 needs an extension (every iPhone and current browser has it)
   function vaoApi(gl) {
@@ -66,7 +85,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
     gl.bindAttribLocation(p, 0, "a_pos");
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error("edge shaders: " + (gl.getProgramInfoLog(p) || "did not link"));
-    return { p, matrix: gl.getUniformLocation(p, "u_matrix"), color: gl.getUniformLocation(p, "u_edgecolor"), exag: gl.getUniformLocation(p, "u_exag"), cam: gl.getUniformLocation(p, "u_cam") };
+    return { p, matrix: gl.getUniformLocation(p, "u_matrix"), color: gl.getUniformLocation(p, "u_edgecolor"), exag: gl.getUniformLocation(p, "u_exag"), cam: gl.getUniformLocation(p, "u_cam"), ink: gl.getUniformLocation(p, "u_ink") };
   }
 
   // The camera in the matrix's own space: the one point whose clip x, y and w are all 0 (three equations, Cramer's rule). Column-major matrix.
@@ -77,6 +96,11 @@ void main() { gl_FragColor = u_edgecolor; }`;
     for (let c = 0; c < 3; c++) { const B = A.slice(); rows.forEach((r, i) => { B[3 * i + c] = -a(r, 3); }); out[c] = d ? det(B) / d : 0; }
     return out;
   }
+
+  // Where the pack origin lies in the world, for the pen pressure's hash. Done in 64-bit here so the shader's 32-bit numbers stay small. A fixed
+  // metres-per-unit (Montreal's) keeps the place the same from one rebuild to the next, whatever latitude the map centre is at.
+  const INK_K = mercPerMetre(45.5);
+  const inkOrigin = (ox, oy, k) => [(ox / INK_K) % 4096, (oy / INK_K) % 4096, k / INK_K];
 
   const polygons = (g) => (!g ? [] : g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : []);
   // The tile's clipped geometry has straight cuts along the tile border (and its buffer): exactly vertical or horizontal in the tile, so
@@ -126,13 +150,14 @@ void main() { gl_FragColor = u_edgecolor; }`;
 
   class EdgeLayer {
     // opts: id, layerId (the fill-extrusion layer whose buildings get lines), minzoom (drawn from), demZoom (the terrain tiles' max zoom),
+    // overshoot, cornerUp (m: how far lines run past their ends, see OVERSHOOT and CORNER_UP; 0 = none),
     // color ([r, g, b, a]: 0-255 and 0-1), onFail(reason)
     constructor(map, opts) {
       this.id = opts.id; this.type = "custom"; this.renderingMode = "3d";
       this.map = map;
-      this.opt = { layerId: "bld-3d", minzoom: 15, demZoom: 14, color: [30, 33, 96, 0.92], ...opts };
+      this.opt = { layerId: "bld-3d", minzoom: 15, demZoom: 14, overshoot: OVERSHOOT, cornerUp: CORNER_UP, color: [30, 33, 96, 0.92], ...opts };
       this.color = new Float32Array(4); this.setColor(this.opt.color);
-      this.tiles = new Map(); this.count = 0; this.pending = null; this.origin = [0, 0, 1];
+      this.tiles = new Map(); this.count = 0; this.pending = null; this.origin = [0, 0, 1]; this.ink = [0, 0, 1];
       this.error = null; this.gl = null; this.timer = 0; this.warned = false;
       this.stats = { drawn: 0, frames: 0, rebuilds: 0, rebuildMs: 0, capped: false, elevMin: 0, elevMax: 0, webgl: 0 };   // drawn: edges (lines) in the last frame
       this.matrix = new Float32Array(16); this.cam = new Float32Array(3);
@@ -241,6 +266,11 @@ void main() { gl_FragColor = u_edgecolor; }`;
       const out = new Float32Array(lines * 2 * STRIDE), keys = new Set(used.map((t) => t.key));
       let j = 0;
       const put = (x, y, g, z) => { out[j++] = (x - ox) / k; out[j++] = (y - oy) / k; out[j++] = g; out[j++] = z; };
+      // the end A of a line A-B pushed `overshoot` metres away from B, along the line (so it stays in its wall or roof plane)
+      const o = this.opt, past = (ax, ay, bx, by) => {
+        const len = Math.hypot(bx - ax, by - ay), e = len ? (o.overshoot * k) / len : 0;
+        return [ax + (ax - bx) * e, ay + (ay - by) * e];
+      };
       for (const t of used) {
         const zc = t.z + 1, child = (mx, my) => keys.has(`${zc}/${Math.floor(mx * 2 ** zc)}/${Math.floor(my * 2 ** zc)}`);
         const covered = [0, 1].some((dx) => [0, 1].some((dy) => keys.has(`${zc}/${2 * t.x + dx}/${2 * t.y + dy}`)));
@@ -249,12 +279,13 @@ void main() { gl_FragColor = u_edgecolor; }`;
           if (covered && child(mercX(t.lng[b]), mercY(t.lat[b]))) continue;
           const g = t.elev[b], roof = t.h[b], base = BASE_LIFT;
           if (t.kind[i] === 0) {
-            put(t.seg[q], t.seg[q + 1], g, roof); put(t.seg[q + 2], t.seg[q + 3], g, roof);
-            put(t.seg[q], t.seg[q + 1], g, base); put(t.seg[q + 2], t.seg[q + 3], g, base);
-          } else { put(t.seg[q], t.seg[q + 1], g, base); put(t.seg[q], t.seg[q + 1], g, roof); }
+            const [ax, ay] = past(t.seg[q], t.seg[q + 1], t.seg[q + 2], t.seg[q + 3]), [bx, by] = past(t.seg[q + 2], t.seg[q + 3], t.seg[q], t.seg[q + 1]);
+            put(ax, ay, g, roof); put(bx, by, g, roof);
+            put(ax, ay, g, base); put(bx, by, g, base);
+          } else { put(t.seg[q], t.seg[q + 1], g, base); put(t.seg[q], t.seg[q + 1], g, roof + o.cornerUp); }
         }
       }
-      return { data: out.subarray(0, j), count: j / (2 * STRIDE), origin: [ox, oy, k] };
+      return { data: out.subarray(0, j), count: j / (2 * STRIDE), origin: [ox, oy, k], ink: inkOrigin(ox, oy, k) };
     }
 
     // ---- drawing (inside MapLibre's frame, which resets its own GL state afterwards)
@@ -277,7 +308,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
       const g = this.gl, o = this.opt, map = this.map;
       if (this.pending) {
         gl.bindBuffer(gl.ARRAY_BUFFER, g.buffer); gl.bufferData(gl.ARRAY_BUFFER, this.pending.data, gl.DYNAMIC_DRAW);
-        this.count = this.pending.count; this.origin = this.pending.origin; this.pending = null;
+        this.count = this.pending.count; this.origin = this.pending.origin; this.ink = this.pending.ink; this.pending = null;
       }
       this.stats.drawn = map.getZoom() < o.minzoom ? 0 : this.count;
       if (!this.stats.drawn) return;
@@ -289,6 +320,7 @@ void main() { gl_FragColor = u_edgecolor; }`;
       gl.uniform3fv(g.prog.cam, cameraAt(M, this.cam));
       gl.uniformMatrix4fv(g.prog.matrix, false, M);
       gl.uniform4fv(g.prog.color, this.color);
+      gl.uniform3fv(g.prog.ink, this.ink);
       gl.uniform1f(g.prog.exag, map.terrain ? map.terrain.exaggeration : 1);
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false);
