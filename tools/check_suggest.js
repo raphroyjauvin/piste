@@ -33,10 +33,15 @@ const STARTS = {
 };
 const CASES = [{ km: 8, loop: true }, { km: 15, loop: true }, { km: 25, loop: true }, { km: 10, loop: false }, { km: 20, loop: false }, { km: 10, loop: true, stop: "cafe" }];
 
+// 2026-11-09: when the rides leave (opening hours decide which places exist), fixed so the report never depends on the clock: Monday 14:30 local,
+// or another hour with --at HH:MM
+const AT = process.argv.indexOf("--at"), [LH, LM] = (AT > 0 ? process.argv[AT + 1] : "14:30").split(":").map(Number);
+const LEAVE = new Date(2026, 10, 9, LH, LM);
+
 async function measure(env, start, c) {
   const { router, pois, R, S } = env;
   const sg = new S.Suggester(router, pois), t0 = process.hrtime.bigint();
-  const picks = await sg.suggest({ start, km: c.km, loop: c.loop, stop: c.stop || "", weights: R.weightsFor(0.8, false) });
+  const picks = await sg.suggest({ start, km: c.km, loop: c.loop, stop: c.stop || "", weights: R.weightsFor(0.8, false), now: LEAVE });
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   return { ms, picks: picks.map((p) => ({ errM: Math.round(p.route.length - c.km * 1000), reuse: reuseShare(p.route), u: (env.judge || S).turnbacks(router, p.route), km: p.route.length / 1000 })) };
 }

@@ -259,6 +259,13 @@
         }
       }
       cands.sort((a, b) => b.score - a.score);
+      // 2026-11-09: the length promise comes first. Missing it costs little next to a bike-path share, so at night (few places are open)
+      // a ride 504 m short could still rank first. If the best-scored ride is outside the tolerance and another is inside it, that one
+      // leads; the rest keep their order. When none is inside, the best-scored one leads as before.
+      if (cands.length && cands[0].faults.excess > 0) {
+        const k = cands.findIndex((c) => c.faults.excess === 0);
+        if (k > 0) cands.unshift(...cands.splice(k, 1));
+      }
       const pick = [];
       for (const c of cands) {
         if (pick.length === 3) break;
