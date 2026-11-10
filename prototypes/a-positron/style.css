@@ -384,9 +384,11 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .ride-preview { border: 0; background: none; color: var(--navy-deep); font-weight: 700; font-size: 14px; padding: 2px 6px 4px; margin-top: -4px; align-self: center;
   text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 
-.rider-cone { width: 120px; height: 120px; pointer-events: none; }
-.rider-cone svg, .rider-badge svg { width: 100%; height: 100%; display: block; }
-.rider-badge { width: 46px; height: 56px; pointer-events: none; filter: drop-shadow(3px 4px 0 rgba(20, 23, 61, .3)); margin-bottom: 4px; }
+.rider-arrow { width: 40px; height: 40px; pointer-events: none; }   /* lies flat on the map: no shadow (a shadow under a flat shape looks wrong) */
+.rider-arrow svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.rider-arrow .a-long, .rider-arrow.long .a-flat { display: none; }
+.rider-arrow.long { height: 80px; }   /* the 3D ride view: twice as long, so that at pitch 70 it still stands about 28 px tall */
+.rider-arrow.long .a-long { display: block; }
 .poi-pop { display: flex; align-items: center; gap: 6px; }   /* no transition here: MapLibre moves this element every frame */
 .poi-pop img { width: 30px; height: 30px; filter: drop-shadow(1.5px 2px 0 rgba(20, 23, 61, .25)); }
 .poi-pop span { transition: opacity .25s; background: #fff; border-radius: var(--r-btn); padding: 3px 7px; font-size: 13px; font-weight: 700; box-shadow: 0 0 0 1.5px var(--navy), 3px 3px 0 1.5px rgba(30, 33, 96, .2); white-space: nowrap; }
