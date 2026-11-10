@@ -1347,7 +1347,7 @@ await run("GPS: the browser's own location moves the ride", `${APP}?trip=montroy
   await until(page, () => window.__app.state.ride && window.__app.state.ride.d > 140);   // the ride catches up with the last position (180 m)
   return page.evaluate(() => {
     const s = window.__app.state, r = s.ride, status = document.querySelector("#ride-gps").textContent;
-    const out = { gps: !!(r && r.gps), fixes: r && r.stats.fixes, d: r && Math.round(r.d), status, rider: getComputedStyle(document.querySelector(".rider-badge")).visibility, reroutes: s.reroutes };
+    const out = { gps: !!(r && r.gps), fixes: r && r.stats.fixes, d: r && Math.round(r.d), status, rider: getComputedStyle(document.querySelector(".rider-arrow")).visibility, reroutes: s.reroutes };
     out.ok = out.gps && out.fixes >= 8 && out.d > 140 && /km\/h/.test(status) && /±8 m/.test(status) && out.rider === "visible" && out.reroutes === 0;
     window.__app.endRide();
     return out;
@@ -1480,19 +1480,40 @@ await run("wind badge on every ride: with the wind & rain button off the forecas
   return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), before, offlineRide, online, changes, after };
 });
 
-// ---- the rider's pin (2026-11-03): a plain pin, no bike ----
-await run("ride: the rider's pin is the plain blue pin of the start (no bike), and no bike wheels are drawn anywhere on the page", `${APP}?trip=montroyal`, async (page) => {
-  await rideGo(page);   // desktop: the preview
-  await until(page, () => !!window.__app.state.ride && getComputedStyle(document.querySelector(".rider-badge")).visibility !== "hidden" && document.querySelector(".rider-badge").getBoundingClientRect().width > 0);
-  const pin = await page.evaluate(() => {
-    const b = document.querySelector(".rider-badge"), svg = b.querySelector("svg"), start = document.querySelector(".field-row .pin svg"), r = b.getBoundingClientRect();
-    return { circles: svg.querySelectorAll("circle").length, groups: svg.querySelectorAll("g").length, paths: svg.querySelectorAll("path").length, sameAsStart: svg.innerHTML === start.innerHTML,
-      fill: svg.querySelector("path").getAttribute("fill"), w: Math.round(r.width), h: Math.round(r.height), wheels: document.querySelectorAll('svg circle[r="6.5"]').length, cone: !!document.querySelector(".rider-cone svg circle") };
+// ---- the rider's arrow (2026-11-09): a navigation arrow instead of the pin and its cone; it points where you head, in both ride views and with the map turned by hand ----
+await run("ride: the rider is a navy arrow with an orange notch (no pin, no cone), pointing the way you head in the 3D and flat views and with the map turned by hand", `${APP}?trip=montroyal&ride=bird&at=500&paused`, async (page) => {
+  await until(page, () => !!window.__app.state.ride && document.querySelector(".rider-arrow") && document.querySelector(".rider-arrow").getBoundingClientRect().width > 0);
+  // the arrow's drawn direction on the screen (from its own transform) against the ground heading projected by the map (40 m ahead), both read now
+  const look = () => page.evaluate(() => {
+    const a = window.__app, m = a.map, el = document.querySelector(".rider-arrow"), svg = el.querySelector("svg"), r = a.state.ride, p = r.cursor.at(r.d);
+    const drawn = +(/rotate\((-?[\d.]+)deg\)/.exec(svg.style.transform) || [0, 0])[1];
+    const h = (p.heading * Math.PI) / 180, A = m.project([p.lon, p.lat]), B = m.project([p.lon + (Math.sin(h) * 40) / (111320 * Math.cos((p.lat * Math.PI) / 180)), p.lat + (Math.cos(h) * 40) / 111320]);
+    const want = (Math.atan2(B.x - A.x, A.y - B.y) * 180) / Math.PI, d = Math.abs((((drawn - want) % 360) + 540) % 360 - 180), box = el.getBoundingClientRect();
+    const ll = a.riderMarker.getLngLat(), at = m.project(ll);
+    return { drawn, want: Math.round(want), off: +d.toFixed(1), pitch: Math.round(m.getPitch()), bearing: Math.round(m.getBearing()), heading: Math.round(p.heading), w: Math.round(box.width), h: Math.round(box.height),
+      centred: Math.abs(box.left + box.width / 2 - (at.x + m.getContainer().getBoundingClientRect().left)) < 2 && Math.abs(box.top + box.height / 2 - (at.y + m.getContainer().getBoundingClientRect().top)) < 2 };
   });
-  const checks = { plainPin: pin.circles === 1 && pin.groups === 0 && pin.paths === 1 && pin.sameAsStart && pin.fill === "#1e2160", sized: pin.w === 46 && pin.h === 56, noWheels: pin.wheels === 0, coneKept: pin.cone };
-  const bad = Object.keys(checks).filter((k) => !checks[k]);
-  return { ok: !bad.length, ...(bad.length ? { error: "failed checks: " + bad.join(", ") } : {}), pin };
-});
+  const design = await page.evaluate(() => {
+    const el = document.querySelector(".rider-arrow"), svg = el.querySelector("svg"), fills = [...svg.querySelectorAll("path")].map((p) => p.getAttribute("fill")), outline = svg.querySelector("path").getAttribute("stroke");
+    return { fills, outline, paths: svg.querySelectorAll("path").length, circles: svg.querySelectorAll("circle").length, hidden: svg.getAttribute("aria-hidden"), anim: svg.getAnimations().length + el.getAnimations().length,
+      oldPin: document.querySelectorAll(".rider-badge, .rider-cone").length, wheels: document.querySelectorAll('svg circle[r="6.5"]').length };
+  });
+  const bird = await look();
+  await page.evaluate(() => document.querySelector("#ride-view").click());   // the flat view
+  await until(page, () => window.__app.state.rideView === "topdown" && Math.abs(window.__app.map.getPitch()) < 1, null, 20000);
+  const flat = await look();
+  // the map turned by hand (the ride stops following): the arrow turns with it and keeps pointing along the ground
+  const turned = await page.evaluate(() => { const a = window.__app; a.setFollow(false); a.map.jumpTo({ bearing: a.map.getBearing() + 70 }); return null; }).then(look);
+  await page.evaluate(() => window.__app.map.jumpTo({ pitch: 55 }));
+  const tilted = await look();
+  const dir = (v) => v.off <= 2 && v.w === 50 && v.h === 50 && v.centred;
+  const ok = design.fills[0] === "#1e2160" && design.fills[1] === "#ff6a1f" && design.outline === "#fff" && design.paths === 2 && design.circles === 0 && design.hidden === "true"
+    && design.anim === 0 && design.oldPin === 0 && design.wheels === 0
+    && bird.pitch >= 30 && flat.pitch === 0 && Math.abs(flat.drawn) < 20 && Math.abs(bird.drawn) < 20   // following: the camera looks the way you go, so the arrow points up
+    && Math.abs((((flat.drawn - (flat.heading - flat.bearing)) % 360) + 540) % 360 - 180) <= 2   // flat map: heading minus bearing, exactly
+    && Math.abs((((turned.drawn - flat.drawn + 70) % 360) + 540) % 360 - 180) <= 3 && dir(bird) && dir(flat) && dir(turned) && dir(tilted);
+  return { ok, design, bird, flat, turned, tilted };
+}, { width: 390, height: 844 }, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 
 // ---- the end-of-ride summary ----
 await run("ride summary: numbers, ridden path, Done clears it; End shows it; the preview doesn't", `${APP}?trip=montroyal&gps=replay&gpsx=4`, async (page) => {
@@ -2520,18 +2541,115 @@ await run("route cards: no gap count; headwinds only in Suggest a ride; share a 
   await page.goto(web.url, { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
   await until(page, () => window.__app.state.routes.length > 0);
   const again = await page.evaluate(() => window.__app.state.routes.map((c) => Math.round(c.r.length)).join());
-  // a classic ride shares ?classic=<id>; the made-to-order loops have nothing to share
+  // a classic ride shares ?classic=<id>; the made-to-order rides share their points (tested in their own groups below)
   await page.goto(BASE + APP + "?classic=oldport", { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 });
   await until(page, () => !!document.querySelector("#detail .share-btn"), null, 30000);
   await page.evaluate(shareStub); await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1);
   const classic = await page.evaluate(() => window.__shared[0].url);
-  const loops = await page.evaluate(async () => { const a = window.__app; a.setSuggMode("custom"); await a.computeSuggestions(true); return !document.querySelector(".share-btn"); });
+  const loops = await page.evaluate(async () => { const a = window.__app; window.piste.setPoint("from", [-73.5817, 45.5246], "Start"); a.setSuggMode("custom"); await a.computeSuggestions(true); return !!document.querySelector(".share-btn"); });
   const ok = cards.n >= 1 && cards.subs.every((x) => !/stretch|without a bike path|tronçon/i.test(x)) && cards.pct.every((x) => /on bike paths/.test(x))
     && wind.same && wind.customOnly && wind.hiddenInGo
     && btn && btn.label === "Share this route" && btn.text === "" && btn.svg && btn.w >= 44 && btn.h >= 44 && btn.rightOfRide && !btn.nearHeading && !/share/i.test(btn.tour)
     && web.url === web.want && !/welcome|notrack/.test(web.url) && copied.text === web.url && copied.toast === "Link copied" && failed === "Couldn't copy the link"
     && again === was && /\?classic=oldport$/.test(classic) && !/welcome|notrack/.test(classic) && loops;
   return { ok, cards, wind, btn, web, copied, failed, was, again, classic, loops };
+}, { width: 1440, height: 900 });
+
+// ---- sharing reopens the ride shown (2026-11-09): "Go somewhere" with its Route style / Avoid settings, "Design your own ride" rebuilt from its points, the
+// summary's link, and link values that are not valid are ignored. Tests a bug report: the button only sent a link to the app, not the ride.
+const GO_LINK = "?from=-73.5817,45.5246&to=-73.6150,45.5035";
+const openLink = async (page, url) => { await page.goto(url, { waitUntil: "load" }); await page.waitForFunction(() => !!window.__app, null, { timeout: 90000 }); };
+const shareLink = async (page) => { await page.evaluate(shareStub); await page.click("#detail .share-btn"); await until(page, () => window.__shared.length === 1); return page.evaluate(() => window.__shared[0].url); };
+await run("share: a Go somewhere link carries the Route style and Avoid settings and reopens the same route; this device's own settings do not leak in", APP + GO_LINK, async (page) => {
+  const read = () => page.evaluate(() => { const a = window.__app, r = a.state.routes[0] && a.state.routes[0].r;
+    return { len: r ? r.length : null, style: +document.querySelector("#strict").value, hills: document.querySelector("#hills").checked, works: document.querySelector("#avoid-works").checked,
+      saved: localStorage.getItem("piste-avoid-works") }; });
+  const plain = await read();
+  await page.evaluate(() => { const set = (id, ev, f) => { const el = document.querySelector(id); f(el); el.dispatchEvent(new Event(ev, { bubbles: true })); };
+    set("#strict", "input", (e) => (e.value = 10)); set("#hills", "change", (e) => (e.checked = true)); set("#avoid-works", "change", (e) => (e.checked = true)); });
+  await until(page, () => document.querySelector("#strict-out").textContent !== "Lanes always");
+  const sent = await read(), url = await shareLink(page);
+  const q = new URL(url).searchParams;
+  await openLink(page, url); await until(page, () => window.__app.state.routes.length > 0);
+  const got = await read();
+  // a plain link must not pick up the works option this device saved on its own
+  await openLink(page, BASE + APP + GO_LINK); await until(page, () => window.__app.state.routes.length > 0);
+  const own = await read();
+  const ok = plain.style === 85 && sent.style === 10 && sent.hills && sent.works && q.get("style") === "10" && q.get("hills") === "1" && q.get("works") === "1" && !/welcome|notrack/.test(url)
+    && q.get("from") === "-73.5817,45.5246" && q.get("to") === "-73.615,45.5035" && url.length < 120
+    && Math.abs(sent.len - plain.len) > 1   // the settings really change this route, so a link that dropped them would show
+    && Math.abs(got.len - sent.len) <= 1 && got.style === 10 && got.hills && got.works && got.saved === "1"
+    && Math.abs(own.len - plain.len) <= 1 && own.style === 85 && !own.hills && !own.works && own.saved === "1";
+  return { ok, url, plain, sent, got, own };
+}, { width: 1440, height: 900 });
+
+// a made-to-order ride: a loop (the second ride in the list), a loop through a stop, and a one-way ride. Each link is rebuilt on the other side from its points.
+await run("share: a Design your own ride link reopens that ride (within 3% of its length, through its stop)", `${APP}?suggest=loop&from=-73.5817,45.5246&km=7`, async (page) => {
+  const ready = (n = 1) => until(page, (m) => window.__app.state.tab === "suggest" && window.__app.state.routes.length >= m && !document.querySelector(".finding"), n, 120000);
+  const cases = [];
+  const one = async (label, url, pick) => {
+    if (url) { await openLink(page, BASE + APP + url); await ready(); }
+    if (pick) { await page.evaluate((i) => window.piste.selectRoute(i), pick); }
+    const sent = await page.evaluate(() => { const s = window.__app.state, c = s.routes[s.sel], r = c.r;
+      return { n: s.routes.length, len: r.length, stop: (r.stops || [])[0] ? { label: r.stops[0].label, lon: r.stops[0].lon, lat: r.stops[0].lat } : null, title: (document.querySelector("#routes .route-card.sel b") || document.querySelector("#routes b")).textContent }; });
+    const link = await shareLink(page), q = new URL(link).searchParams;
+    await openLink(page, link); await ready();
+    const got = await page.evaluate((stop) => { const s = window.__app.state, r = s.routes[0].r, D = BikeCommon.distM;
+      return { n: s.routes.length, len: r.length, stopLabel: (r.stops || [])[0] && r.stops[0].label, nearStop: stop ? Math.min(...r.coords.map((c) => D(c[0], c[1], stop.lon, stop.lat))) : null,
+        title: document.querySelector("#routes b").textContent, tab: s.tab, mode: s.smode, loop: s.sugg.loop }; }, sent.stop);
+    const rel = Math.abs(got.len - sent.len) / sent.len;
+    cases.push({ label, link, sent, got, rel: +rel.toFixed(4), params: [...q.keys()].join() });
+  };
+  await one("loop, second ride", null, 1);
+  await one("loop by a cafe", "?suggest=loop&from=-73.5817,45.5246&km=7&stop=cafe", 0);
+  await one("one-way", "?suggest=oneway&from=-73.5817,45.5246&km=6", 0);
+  const good = (c) => c.rel <= 0.03 && c.got.n === 1 && c.got.tab === "suggest" && c.got.mode === "custom" && /^suggest,from,via,km(,stop)?$/.test(c.params) && c.link.length < 200
+    && (!c.sent.stop || (c.got.stopLabel === c.sent.stop.label && c.got.nearStop < 25)) && c.got.title === c.sent.title;
+  return { ok: cases.length === 3 && cases.every(good), cases };
+}, { width: 1440, height: 900 });
+
+// the summary's share button: the link reopens the route that was planned for that ride; the GPS trace never leaves the phone
+await run("share: the ride summary's link reopens the planned route and carries no part of the GPS trace", `${APP}?trip=montroyal&gps=replay&gpsx=4`, async (page) => {
+  await page.evaluate(shareStub);
+  const planned = await page.evaluate(() => { const a = window.__app, s = a.state; return { len: Math.round(s.routes[0].r.length), from: s.from.map((v) => +v.toFixed(5)).join(","), to: s.to.map((v) => +v.toFixed(5)).join(",") }; });
+  await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms)), app = window.__app, s = app.state, total = s.routes[s.sel].r.length;
+    app.startGpsRide({ replay: { speedup: 4, startAt: Math.max(0, total - 900) } }); window.__flatRide();
+    for (const t0 = performance.now(); s.ride.trail.length < 40 && performance.now() - t0 < 60000;) await sleep(200);
+    window.__trail = s.ride.trail.slice(); document.querySelector("#ride-exit").click();
+  });
+  await until(page, () => !document.querySelector("#ride-summary").hidden && !document.querySelector("#rs-share").hidden, null, 20000);
+  await page.click("#rs-share"); await until(page, () => window.__shared.length === 1);
+  const shared = await page.evaluate(() => ({ url: window.__shared[0].url, text: window.__shared[0].text, trail: window.__trail.map((p) => [p.lon, p.lat]) }));
+  const q = new URL(shared.url).searchParams;
+  const leaks = shared.trail.filter(([lon, lat]) => shared.url.includes(lon.toFixed(4)) || shared.url.includes(lat.toFixed(4))).length;   // none of the ridden points
+  await openLink(page, shared.url); await until(page, () => window.__app.state.routes.length > 0);
+  const again = await page.evaluate(() => Math.round(window.__app.state.routes[0].r.length));
+  const ok = q.get("from") === planned.from && q.get("to") === planned.to && [...q.keys()].join() === "from,to" && Math.abs(again - planned.len) <= 1
+    && /^I rode .+ with Piste/.test(shared.text) && shared.trail.length >= 40 && leaks === 0;
+  return { ok, planned, url: shared.url, text: shared.text, again, leaks };
+}, { width: 390, height: 844 }, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+
+// a link with values that are not valid shows what it can and breaks nothing
+await run("share: link values that are not valid are ignored (numbers out of range, unknown ids, too many points)", APP, async (page) => {
+  const bad = [
+    ["from=abc&to=-73.6,45.5", (s) => s.from === null],
+    ["from=-73.58,45.52&to=999,999", (s) => s.from !== null && s.to === null],
+    ["from=-73.58,45.52&to=-73.61,45.50&style=500&hills=2&works=yes", (s) => s.style === 85 && !s.hills && !s.works && s.routes === 1],
+    ["from=-73.58,45.52&to=-73.61,45.50&style=abc", (s) => s.style === 85 && s.routes === 1],
+    ["classic=not-a-ride", (s) => s.tab === "go"],
+    ["suggest=loop&from=-73.58,45.52&via=1,2~x&km=9", (s) => s.tab === "suggest" && s.km === 9 && s.shared === false],
+    ["from=-73.58,45.52&to=-73.61,45.50&winter=2", (s) => !s.winter && s.routes === 1],
+  ];
+  const out = [];
+  for (const [q, check] of bad) {
+    await openLink(page, `${BASE}${APP}?${q}`);
+    await until(page, () => !document.querySelector(".finding"), null, 90000);
+    const s = await page.evaluate(() => { const a = window.__app.state; return { from: a.from, to: a.to, tab: a.tab, km: a.sugg.km, style: +document.querySelector("#strict").value, hills: document.querySelector("#hills").checked,
+      works: document.querySelector("#avoid-works").checked, routes: a.routes.length, winter: a.winter, shared: a.routes.length === 1 && !!a.routes[0].r.pts && a.tab === "suggest" }; });
+    out.push({ q, ok: !!check(s), s });
+  }
+  return { ok: out.every((o) => o.ok), out };
 }, { width: 1440, height: 900 });
 
 // ------------------------------------------------------------------ the route card (2026-11-05): one card that follows the slider and the Avoid chips;

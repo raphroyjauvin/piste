@@ -637,6 +637,7 @@
   }
 
   // ------------------------------------------------------------------ UI: prefs
+  const STRICT_DEFAULT = 85;   // the Route style slider's starting place (index.html)
   const strict = $("#strict"), strictOut = $("#strict-out"), hills = $("#hills"), avoidWorks = $("#avoid-works");
   avoidWorks.checked = store.get("avoid-works", "0") === "1";   // off unless the rider turned it on
   avoidWorks.addEventListener("change", () => { store.set("avoid-works", avoidWorks.checked ? "1" : "0"); recompute(false); });
@@ -1599,11 +1600,28 @@
 
   // ------------------------------------------------------------------ share a route: the system share sheet, or the link on the clipboard
   const SHARE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3.5M8 7l4-4 4 4M8 10.5H6.5A1.5 1.5 0 0 0 5 12v7a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-7a1.5 1.5 0 0 0-1.5-1.5H16"/></svg>';
-  const canShare = () => (state.tab === "go" ? !!(state.from && state.to) : state.smode === "classics" && !!state.routes.length);   // not the made-to-order loops
+  // 2026-11-09: every share carries what reopens the ride shown, and nothing about the person: the start and the end (or the points a
+  // made-to-order ride goes through), the settings that shape the route, never a saved place's name or a GPS trace. A made-to-order ride is
+  // rebuilt from its points (suggest.js rebuild), so it does not depend on the wind or the opening hours of the day it is opened.
+  //   Go somewhere   ?from=lon,lat&to=lon,lat[&style=0-100][&hills=1][&works=1][&winter=1]
+  //   Classic ride   ?classic=<id>[&winter=1]
+  //   Design a ride  ?suggest=loop|oneway&from=lon,lat&via=lon,lat~lon,lat…&km=<asked>[&stop=<kind>][&hills=1][&works=1][&winter=1]
+  const chosen = () => state.routes[state.sel] && state.routes[state.sel].r;
+  const canShare = () => (state.tab === "go" ? !!(state.from && state.to) : state.smode === "classics" ? !!state.routes.length : !!(chosen() && chosen().pts));
   function shareUrl() {   // this page's own address, without the welcome or notrack options, plus what reopens the route
-    const ll = (p) => p.map((v) => +v.toFixed(5)).join(",");
-    const route = state.tab === "go" ? `from=${ll(state.from)}&to=${ll(state.to)}` : `classic=${CLASSICS[state.classic].id}`;
-    return `${location.origin}${location.pathname}?${route}${state.winter ? "&winter=1" : ""}`;
+    const ll = (p) => p.map((v) => +v.toFixed(5)).join(","), q = [];
+    if (state.tab === "go") {
+      q.push(`from=${ll(state.from)}`, `to=${ll(state.to)}`);
+      if (+strict.value !== STRICT_DEFAULT) q.push(`style=${Math.round(+strict.value)}`);
+    } else if (state.smode === "classics") q.push(`classic=${CLASSICS[state.classic].id}`);
+    else {
+      const pts = chosen().pts, loop = !!state.routes[state.sel].loop;
+      q.push(`suggest=${loop ? "loop" : "oneway"}`, `from=${ll(pts[0])}`, `via=${pts.slice(1, loop ? -1 : undefined).map(ll).join("~")}`, `km=${state.sugg.km}`);
+      if (state.sugg.stop) q.push(`stop=${state.sugg.stop}`);
+    }
+    if (state.tab === "go" || state.smode === "custom") { if (hills.checked) q.push("hills=1"); if (avoidWorks.checked) q.push("works=1"); }
+    if (state.winter) q.push("winter=1");
+    return `${location.origin}${location.pathname}?${q.join("&")}`;
   }
   async function shareRoute() {
     const url = shareUrl();
@@ -1848,13 +1866,21 @@
   };
   const turnIcon = (m) => ({ stop: "arrive", sight: "arrive", left: "left", sharpL: "left", right: "right", sharpR: "right", slightL: "slightL", slightR: "slightR" }[m.kind] || "straight");
 
-  // you: a heading cone lying on the street + an upright pin facing the camera
-  const coneEl = document.createElement("div"); coneEl.className = "rider-cone";
-  coneEl.innerHTML = '<svg viewBox="0 0 120 120"><defs><radialGradient id="cg" cx="50%" cy="100%" r="90%"><stop offset="0" stop-color="#1e2160" stop-opacity=".5"/><stop offset="1" stop-color="#1e2160" stop-opacity="0"/></radialGradient></defs><path d="M60 64 28 6h64z" fill="url(#cg)"/><circle cx="60" cy="64" r="13" fill="#1e2160" stroke="#fff" stroke-width="5"/></svg>';
-  const riderMarker = new maplibregl.Marker({ element: coneEl, rotationAlignment: "map", pitchAlignment: "map", ...MARKER_SHOW });
-  const badgeEl = document.createElement("div"); badgeEl.className = "rider-badge";
-  badgeEl.innerHTML = PIN.from;   // the same plain blue pin as the start (2026-11-03: it had a bike in it)
-  const badgeMarker = new maplibregl.Marker({ element: badgeEl, anchor: "bottom", pitchAlignment: "viewport", rotationAlignment: "viewport", ...MARKER_SHOW });
+  // you: a navigation arrow (2026-11-09; it was a pin with a heading cone). A sharp navy arrowhead with a white outline and an orange notch,
+  // standing up to the camera so its edges stay crisp in both ride views. Its drawn direction is worked out on the screen (pointArrow below),
+  // so it is right with the 3D camera tilted, the flat one, and a map turned by hand. It has no cone: the arrow itself says where you head.
+  const arrowEl = document.createElement("div"); arrowEl.className = "rider-arrow";
+  arrowEl.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 42 43 24 34 6 43Z" fill="#1e2160" stroke="#fff" stroke-width="6" stroke-linejoin="miter" stroke-miterlimit="10" paint-order="stroke"/>'
+    + '<path d="M24 20 32 38 24 34 16 38Z" fill="#ff6a1f"/></svg>';
+  const riderMarker = new maplibregl.Marker({ element: arrowEl, rotationAlignment: "viewport", pitchAlignment: "viewport", ...MARKER_SHOW });
+  let aim = null;   // where the rider is and which way it heads: { lon, lat, heading }
+  function pointArrow() {   // turn the arrow to the screen direction of the ground heading (project a point 40 m ahead)
+    if (!aim || !Number.isFinite(aim.heading)) return;
+    const h = (aim.heading * Math.PI) / 180, m = 111320;
+    const a = map.project([aim.lon, aim.lat]), b = map.project([aim.lon + (Math.sin(h) * 40) / (m * Math.cos((aim.lat * Math.PI) / 180)), aim.lat + (Math.cos(h) * 40) / m]);
+    arrowEl.firstChild.style.transform = `rotate(${((Math.atan2(b.x - a.x, a.y - b.y) * 180) / Math.PI).toFixed(1)}deg)`;
+  }
+  map.on("move", pointArrow);
   const poiMarkers = new Map();
   let smoothBearing = 0, afterGapUntil = 0, lastGapEnd = null, sparkAt = -1e9, sparkW = 0;
 
@@ -1893,7 +1919,7 @@
     // the ride card starts with the strip of this route and no callout
     hudNow.clear(); buildStrip(r); for (const id of ["#gps-msg", "#gap-card", "#hill-card"]) $(id).hidden = true; syncEvent([]);
     measureBar(); setRidePadding();
-    riderMarker.setLngLat(r.coords[0]).addTo(map); badgeMarker.setLngLat(r.coords[0]).addTo(map);
+    riderMarker.setLngLat(r.coords[0]).addTo(map);
     Object.values(markers).forEach((m) => (m.getElement().style.display = "none"));
     smoothBearing = map.getBearing(); state.hillK = 0; sparkAt = -1e9;
     // the preview has a speed and a pause button, and its dial shows the preview's speed; a GPS ride's dial shows your speed and the GPS
@@ -2104,7 +2130,7 @@
   let riderShown = true;
   function showRider(on) {   // hidden until the first good GPS fix
     if (on === riderShown) return;
-    riderShown = on; coneEl.style.visibility = badgeEl.style.visibility = on ? "" : "hidden";
+    riderShown = on; arrowEl.style.visibility = on ? "" : "hidden";
   }
   function lerpAngle(a, b, k) { const d = ((b - a + 540) % 360) - 180; return a + d * k; }
   const smoothstep = (x) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v); };
@@ -2152,8 +2178,8 @@
     if (state.follow && !state.holding) map.jumpTo(view);   // a GPS ride stops following while you move the map by hand
     showRider(f.fix !== false);           // a GPS ride shows you once it has a good fix
     if (f.fix !== false) checkJoined(f.d);
-    riderMarker.setLngLat([f.pos.lon, f.pos.lat]).setRotation(f.pos.heading);
-    badgeMarker.setLngLat([f.pos.lon, f.pos.lat]);
+    aim = { lon: f.pos.lon, lat: f.pos.lat, heading: f.pos.heading };
+    riderMarker.setLngLat([f.pos.lon, f.pos.lat]); pointArrow();
     // turn card
     const L = f.look;
     if (L.next) { put("#turn-dist", C.fmtKm(L.nextDist)); put("#turn-text", I.maneuver(L.next)); put("#turn-icon", `<svg viewBox="0 0 46 46">${TURN_SVG[turnIcon(L.next)]}</svg>`, true); }
@@ -2399,7 +2425,7 @@
     if (wasGps) keepAwake(false);
     if (map.terrain) map.terrain.exaggeration = CAM.terrain;
     state.hillK = 0; state.follow = true; glide = null; showRider(true);
-    riderMarker.remove(); badgeMarker.remove(); for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
+    riderMarker.remove(); aim = null; arrowEl.firstChild.style.transform = ""; for (const mk of poiMarkers.values()) mk.remove(); poiMarkers.clear();
     $("#ride-hud").hidden = true; $("#wind-badge").hidden = true; $("#hill-card").hidden = true; $("#ride-recenter").hidden = true; rideWeather(false);
     $("#panel").hidden = $("#legend").hidden = document.querySelector(".map-controls").hidden = showSum;   // the summary card takes their place until "Done"
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
@@ -2453,7 +2479,8 @@
   $("#ride-summary").addEventListener("keydown", (e) => { if (e.key === "Escape") closeSummary(); });
   $("#rs-share").onclick = async () => {
     const s = state.summary; if (!s || !navigator.share) return;
-    try { await navigator.share({ text: t("rsShareText", { d: C.fmtKm(s.distanceM), t: I.duration(s.elapsedS / 60) }), url: SITE_URL }); }
+    // 2026-11-09: the link reopens the route that was planned for this ride (still in state.routes; the GPS trace is not in it)
+    try { await navigator.share({ text: t("rsShareText", { d: C.fmtKm(s.distanceM), t: I.duration(s.elapsedS / 60) }), url: canShare() ? shareUrl() : SITE_URL }); }
     catch (e) { if (e.name !== "AbortError") console.warn("share failed", e); }   // AbortError: the rider closed the share sheet
   };
 
@@ -2481,27 +2508,52 @@
   // ?ride=gps: a GPS ride (with ?gps=replay&gpsx=<speed-up>&gpsat=<m>&detour=<m>: a pretend one, for tests and screenshots;
   // add &gpsdeny for a pretend "location refused")
   refreshSections(); applyLayers();
-  const lonlat = (s) => { const v = (s || "").split(",").map(Number); return v.length === 2 && v.every(Number.isFinite) ? v : null; };
-  const pFrom = lonlat(params.get("from")), pTo = lonlat(params.get("to"));
+  // 2026-11-09: what a link says is checked before it is used: two plain numbers inside the Montréal area, else that part is ignored
+  const lonlat = (s) => {
+    const v = /^(-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)$/.exec(s || "");
+    return v && +v[1] > -74.4 && +v[1] < -73 && +v[2] > 45.2 && +v[2] < 46 ? [+v[1], +v[2]] : null;
+  };
+  const viaList = (s) => { const v = (s || "").split("~").map(lonlat); return s && v.length <= 12 && v.every(Boolean) ? v : null; };
+  const pFrom = lonlat(params.get("from")), pTo = lonlat(params.get("to")), pVia = pFrom ? viaList(params.get("via")) : null;
+  const knownClassic = CLASSICS.findIndex((c) => c.id === params.get("classic"));
+  // The ride in a "Design your own ride" link, rebuilt on this device with the sender's settings. False (with a message) when it cannot be
+  // ridden here, and the usual rides from that start are drawn instead.
+  async function showSharedRide(start, via) {
+    const built = suggester.rebuild({ start, via, loop: state.sugg.loop, stop: state.sugg.stop,
+      weights: Object.assign({}, weightsFor(1, hills.checked), worksWeights()) });
+    if (!built) { toast(t("sharedRideLost")); return false; }
+    state.routes = [{ title: built.title, via: built.via, r: built.route, sig: built.route.sig, end: built.end, loop: built.loop }];
+    state.sel = 0; renderRoutes(); drawRoutes(); fitRoute(built.route);
+    return true;
+  }
   const trip = (window.TRIPS || []).find((x) => x.id === params.get("trip"));
   if (pFrom) setPoint("from", pFrom, placeLabel(pFrom[0], pFrom[1]));
   if (pTo) setPoint("to", pTo, placeLabel(pTo[0], pTo[1]));
   if (trip) { setPoint("from", trip.from.lonlat, trip.from.label); setPoint("to", trip.to.lonlat, trip.to.label); }
+  if (pFrom && (pTo || pVia)) {   // a link from Share: the sender's route settings, not this device's (nothing is saved on this device)
+    const st = /^\d{1,3}$/.test(params.get("style") || "") && +params.get("style") <= 100 ? +params.get("style") : STRICT_DEFAULT;
+    strict.value = st; strictOut.textContent = strictLabel(st);
+    hills.checked = params.get("hills") === "1"; avoidWorks.checked = params.get("works") === "1";
+  }
   if (params.get("winter") === "1") setWinter(true);
   if (params.get("wx") === "1" || WX_DEMO) setWeather(true);
-  if (params.get("suggest") || params.get("classic")) {
+  let sharedRide = false;   // a made-to-order ride shared by link (the start and the points it goes through)
+  if (params.get("suggest") || knownClassic >= 0) {   // an unknown classic id is ignored, not turned into the first classic
     state.tab = "suggest";
-    if (params.get("classic")) { state.smode = "classics"; state.classic = Math.max(0, CLASSICS.findIndex((c) => c.id === params.get("classic"))); }
+    if (knownClassic >= 0) { state.smode = "classics"; state.classic = knownClassic; }
     else {
       state.smode = "custom";
       state.sugg.loop = params.get("suggest") !== "oneway";
       document.querySelector(`input[name="shape"][value="${state.sugg.loop ? "loop" : "oneway"}"]`).checked = true;
       if (params.get("km")) setKm(params.get("km"), false);
       if (SK[params.get("stop")]) { state.sugg.stop = params.get("stop"); renderStopChips(); }
+      sharedRide = !!pVia;
     }
     refreshSections();
   }
-  if (state.tab === "suggest" && state.smode === "custom") await computeSuggestions(true); else recompute(true);
+  if (sharedRide && state.tab === "suggest" && state.smode === "custom") sharedRide = await showSharedRide(pFrom, pVia);
+  if (sharedRide) { /* drawn above */ }
+  else if (state.tab === "suggest" && state.smode === "custom") await computeSuggestions(true); else recompute(true);
   if (state.tab === "suggest" && state.smode === "classics") requestAnimationFrame(() => { const el = track.children[state.classic]; if (el) track.scrollLeft = el.offsetLeft - (track.clientWidth - el.offsetWidth) / 2; });
   renderClassicCards();
   if (params.get("view") === "3d") set3d(true);

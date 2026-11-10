@@ -376,9 +376,8 @@ body.winter .elev-ramp { filter: hue-rotate(170deg) saturate(.65); }
 .ride-preview { border: 0; background: none; color: var(--navy-deep); font-weight: 700; font-size: 14px; padding: 2px 6px 4px; margin-top: -4px; align-self: center;
   text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 
-.rider-cone { width: 120px; height: 120px; pointer-events: none; }
-.rider-cone svg, .rider-badge svg { width: 100%; height: 100%; display: block; }
-.rider-badge { width: 46px; height: 56px; pointer-events: none; filter: drop-shadow(0 4px 6px rgba(20, 23, 61, .35)); margin-bottom: 4px; }
+.rider-arrow { width: 50px; height: 50px; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(20, 23, 61, .35)); }
+.rider-arrow svg { width: 100%; height: 100%; display: block; overflow: visible; }   /* turned by the app on the screen, never animated: MapLibre moves the marker every frame */
 .poi-pop { display: flex; align-items: center; gap: 6px; }   /* no transition here: MapLibre moves this element every frame */
 .poi-pop img { width: 30px; height: 30px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
 .poi-pop span { transition: opacity .25s; background: #fff; border-radius: 8px; padding: 3px 7px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,.15); white-space: nowrap; }

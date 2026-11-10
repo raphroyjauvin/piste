@@ -179,6 +179,14 @@
     return [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map((e) => e[0]);
   }
 
+  // how a place is named in a ride's title and in its "Stop: …" line: unnamed places (most public toilets, many parks) are called by
+  // their kind: "Public restroom", "Park"
+  function placeOf(p) {
+    const kindLabel = (window.BikeCommon && window.BikeCommon.poiLabel(p.kind)) || p.kind;
+    return { place: p.kind === "metro" ? { key: "metroOf", vars: { name: p.name } } : p.name ? { raw: p.name, kind: p.kind } : { poiKind: p.kind },
+      label: p.kind === "metro" ? `${p.name} metro` : p.name || kindLabel };
+  }
+
   class Suggester {
     constructor(router, pois) { this.router = router; this.pois = pois; }
 
@@ -207,7 +215,28 @@
       }
       const route = parts.length === 1 ? parts[0] : r.join(parts, labels || []);
       route.sig = new Set(route.legs.map((l) => l.e));
+      route.pts = points;   // 2026-11-09: what it was ridden through, so a shared link can rebuild this very ride (rebuild, below)
       return route;
+    }
+
+    // 2026-11-09: a ride shared by link, made again from its start and the points it goes through (route.pts without the start, and
+    // without the start again at the end of a loop). The same points, weights and "avoid streets already ridden" rule give the same ride;
+    // nothing here reads the wind, the clock or the opening hours. -> { route, title, via, loop, end }, or null when it cannot be ridden
+    rebuild({ start, via, loop, stop, weights }) {
+      const kinds = stop ? (STOP_KINDS[stop] || {}).kinds : loop ? null : END_KINDS;
+      let poi = null;   // the place the ride goes to: the closest one of that kind within 80 m of the first point
+      if (kinds && via.length) {
+        let best = 80;
+        for (const i of this.candidates(kinds)) { const p = this.pois[i], d = distM(via[0][0], via[0][1], p[2], p[3]); if (d < best) { best = d; poi = { kind: p[0], name: p[1] }; } }
+      }
+      const pts = [start, ...via, ...(loop ? [start] : [])], named = stop && poi ? placeOf(poi) : null;
+      const route = this.chain(pts, pts.slice(1, -1).map((_, i) => (i === 0 && named ? named.label : null)), weights);
+      if (!route) return null;
+      const place = poi ? placeOf(poi).place : { key: "destination" };
+      const mid = [0, 1].map((k) => via.reduce((sum, v) => sum + v[k], 0) / via.length);   // a loop's two points lie either side of the way out: their middle is its direction
+      const title = loop ? (named ? { key: "loopBy", vars: { place } } : { key: "loopDir", vars: { dirKey: compass(bearing(start[0], start[1], mid[0], mid[1])) } })
+        : { key: "toPlace", vars: { place } };
+      return { route, title, via: mainStreets(route), loop: !!loop, end: loop ? { key: "yourStart" } : poi ? place : { key: "destination" } };
     }
 
     // opts: { start: [lon, lat], km, loop, stop: STOP_KINDS key or "", weights: {w, hill}, windCost: route -> extra minutes (optional),
@@ -325,9 +354,7 @@
     // The ride to one picked place (out and back another way, for a loop), or null: no route, or the place is shut by the time you get there.
     _rideTo(start, p, loop, D, weights, now) {
       // unnamed places (most public toilets, many parks) are called by their kind: "Public restroom", "Park"
-      const kindLabel = (window.BikeCommon && window.BikeCommon.poiLabel(p.kind)) || p.kind;
-      const place = p.kind === "metro" ? { key: "metroOf", vars: { name: p.name } } : p.name ? { raw: p.name, kind: p.kind } : { poiKind: p.kind };
-      const label = p.kind === "metro" ? `${p.name} metro` : p.name || kindLabel;
+      const { place, label } = placeOf(p);
       const made = loop ? this._outAndBack(start, p, label, D, weights) : { route: this.chain([start, [p.lon, p.lat]], [], weights) };
       const route = made && made.route;
       if (!route) return null;
