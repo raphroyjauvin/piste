@@ -160,6 +160,11 @@
     $("#fb-cancel").addEventListener("click", closeDialog);
     fb.layer.addEventListener("click", (e) => { if (e.target === fb.layer && !fb.subject.value && !fb.message.value && !fb.email.value) closeDialog(); });   // not over a draft
     const about = $("#about");
+    // "Buy me a coffee", a small link next to "About & terms" at the bottom of the panel: a Stripe payment link (pay what you want, on Stripe's own page; no key or server here).
+    // The published site uses the live link; this PC and the tests use the test link (pretend cards only).
+    const SUPPORT_LINKS = { live: "https://buy.stripe.com/eVqeVd00u65L0iTeTZaZi00", test: "https://buy.stripe.com/test_aFa14n6oM0Zx7th4Jg0gw00" };
+    const supportUrl = /(^|\.)pistemtl\.ca$|(^|\.)raphroyjauvin\.(ca|github\.io)$/.test(location.hostname) ? SUPPORT_LINKS.live : SUPPORT_LINKS.test;
+    if (supportUrl) { $("#support-link").href = supportUrl; $("#support-link").hidden = false; }
     $("#about-close").addEventListener("click", closeDialog);
     about.addEventListener("click", (e) => { if (e.target === about) closeDialog(); });
     $("#about-link").addEventListener("click", (e) => openDialog(about, e.currentTarget, null));

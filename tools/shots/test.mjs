@@ -2367,11 +2367,12 @@ await run("feedback dialog: opens, stays inside the app, sends through Web3Forms
 
 // ------------------------------------------------------------------ About & terms and the (c) line (2026-10-31)
 await run("About & terms: the (c) line, a dialog with who, risk, privacy and credits, Esc, French", APP, async (page) => {
-  const foot = await page.evaluate(() => ({ copy: document.querySelector("#panel .copyright").textContent, link: document.querySelector("#about-link").textContent, h: Math.round(document.querySelector("#about-link").getBoundingClientRect().height),
+  const foot = await page.evaluate(() => ({ copy: document.querySelector("#panel .copyright").textContent, link: document.querySelector("#about-link").textContent, tip: document.querySelector("#support-link").textContent, h: Math.round(document.querySelector("#about-link").getBoundingClientRect().height),
     sameRow: document.querySelector("#panel .copyright").parentElement === document.querySelector("#about-link").parentElement }));
   await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
   const dlg = await page.evaluate(() => { const c = document.querySelector("#about-card"); return { role: c.getAttribute("role"), modal: c.getAttribute("aria-modal"), text: c.innerText, focus: c.contains(document.activeElement), panelInert: document.querySelector("#panel").inert,
-    mail: !!c.querySelector('a[href="mailto:support@pistemtl.ca"]'), closeH: Math.round(document.querySelector("#about-close").getBoundingClientRect().height), items: c.querySelectorAll("li").length }; });
+    mail: !!c.querySelector('a[href="mailto:support@pistemtl.ca"]'), closeH: Math.round(document.querySelector("#about-close").getBoundingClientRect().height), items: c.querySelectorAll("li").length,
+      tip: (() => { const l = document.querySelector("#support-link"); return !l.hidden && l.parentElement === document.querySelector("#about-link").parentElement && !c.querySelector("a[href*=stripe]") && /^https:\/\/buy\.stripe\.com\/test_/.test(l.href) && l.target === "_blank" && l.getBoundingClientRect().height >= 44; })() }; });
   await page.keyboard.press("Escape"); await until(page, () => document.querySelector("#about").hidden);
   const esc = await page.evaluate(() => ({ closed: document.querySelector("#about").hidden, focus: document.activeElement && document.activeElement.id, inert: document.querySelector("#panel").inert }));
   await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
@@ -2389,7 +2390,7 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
   await page.evaluate(() => window.__app.setLang("fr"));
   const fr = await page.evaluate(() => ({ link: document.querySelector("#about-link").textContent }));
   await page.click("#about-link"); await until(page, () => !document.querySelector("#about").hidden);
-  const frDlg = await page.evaluate(() => ({ title: document.querySelector("#ab-title").textContent, text: document.querySelector("#about-card").innerText }));
+  const frDlg = await page.evaluate(() => ({ title: document.querySelector("#ab-title").textContent, tip: document.querySelector("#support-link").textContent, text: document.querySelector("#about-card").innerText }));
   await page.click("#about-close"); await until(page, () => document.querySelector("#about").hidden);
   const T = dlg.text;
   // named checks, so a failure says which one (whether the text scrolls depends on the fonts, so only Close in view counts)
@@ -2398,7 +2399,7 @@ await run("About & terms: the (c) line, a dialog with who, risk, privacy and cre
     dialog: dlg.role === "dialog" && dlg.modal === "true", focusIn: dlg.focus, panelInert: dlg.panelInert, mail: dlg.mail, close44: dlg.closeH >= 44, fourItems: dlg.items === 4,
     who: /Piste is a Montréal project, in beta/.test(T) && !/Roy-Jauvin|Who made it/.test(T), risk: /own risk/.test(T) && /traffic laws/.test(T),
     privacy: /address service/.test(T) && /anonymously, without cookies/.test(T) && /Web3Forms/.test(T) && /not sent to us/.test(T),
-    credits: /Ville de Montréal \(CC BY 4\.0\)/.test(T) && /OpenStreetMap contributors/.test(T) && /OpenFreeMap/.test(T), copyInDialog: /© 2026 Piste Montréal/.test(T), address: /support@pistemtl\.ca/.test(T),
+    credits: /Ville de Montréal \(CC BY 4\.0\)/.test(T) && /OpenStreetMap contributors/.test(T) && /OpenFreeMap/.test(T), copyInDialog: /© 2026 Piste Montréal/.test(T), address: /support@pistemtl\.ca/.test(T), tipLink: dlg.tip && foot.tip === "Buy me a coffee" && frDlg.tip === "Un café?",
     escCloses: esc.closed && esc.focus === "about-link" && !esc.inert, outsideCloses: outside, phoneCloseInView: phone.closeInView, phoneInside: phone.inside,
     french: fr.link === "À propos et conditions" && frDlg.title === "À propos de Piste" && /Vie privée/i.test(frDlg.text) && /à vos propres risques/.test(frDlg.text),
   };
