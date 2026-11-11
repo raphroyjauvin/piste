@@ -2,6 +2,7 @@
 (function () {
   "use strict";
   const { buildCursor, distM } = window.BikeRouter;
+  const SELF_SRC = (typeof document !== "undefined" && document.currentScript && document.currentScript.src) || "";   // where this file came from: the places file sits beside it, in data/
 
   // ---------------------------------------------------------------- palette
   // Official STM metro colours (from STM GTFS routes.txt).
@@ -422,7 +423,7 @@
   }
 
   // ---------------------------------------------------------------- geocoding (local + City of Montréal address API)
-  function makeGeocoder(router) {
+  function makeGeocoder(router, opts = {}) {
     const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
     const local = [], folded = [];   // folded[i]: local[i]'s name without accents or capitals, worked out once (2026-11-09: it was redone for every place at every keystroke)
     (window.POIS || []).forEach((p) => {
@@ -448,6 +449,80 @@
       }
       return out;
     }
+    // Places and businesses (2026-11-10): shared/data/places.js (tools/build_places.py, OpenStreetMap), fetched the first time a search bar is used,
+    // never at start-up. If it can't be loaded the search is exactly the address search it was. Folded once after the load, in slices, so typing never waits.
+    const PLACES_SRC = SELF_SRC.replace(/common\.js(\?.*)?$/, "data/places.js");
+    const PL = { state: "idle", ready: null, failedAt: 0 };   // state: idle, loading, ready, failed
+    function loadPlaces() {
+      if (!PLACES_SRC || PL.state === "loading" || PL.state === "ready" || (PL.state === "failed" && Date.now() - PL.failedAt < 30000)) return PL.ready;
+      PL.state = "loading";
+      PL.ready = new Promise((resolve) => {
+        const fail = () => { PL.state = "failed"; PL.failedAt = Date.now(); resolve(false); };
+        const el = document.createElement("script");
+        el.src = PLACES_SRC; el.async = true;
+        el.onerror = fail;
+        el.onload = () => { try { prepare(window.PLACES, () => { PL.state = "ready"; resolve(true); }, fail); } catch (e) { fail(); } };
+        document.head.appendChild(el);
+      });
+      return PL.ready;
+    }
+    const words = (s) => norm(s).split(/[^a-z0-9]+/).filter(Boolean);   // "Saint-Denis" -> saint, denis
+    function prepare(d, done, fail) {
+      const n = d.n.length, lon = new Float64Array(n), lat = new Float64Array(n);
+      const nameHay = new Array(n), streetHay = new Array(n), who = new Array(n), key = new Array(n);
+      let x = d.x0, i = 0;
+      const slice = () => {
+        try {
+          for (const end = Math.min(n, i + 2500); i < end; i++) {
+            x += d.dx[i]; lon[i] = x / 1e5; lat[i] = (d.y0 + d.dy[i]) / 1e5;
+            const a = d.alt[i] || [];
+            nameHay[i] = " " + [d.n[i], ...a].map((v) => words(v).join(" ")).join(" ");   // a space in front: a word starts at " " + prefix
+            streetHay[i] = " " + words(d.streets[d.s[i]]).join(" ");
+            who[i] = "|" + [d.n[i], ...a].map((v) => words(v).join(" ")).join("|");   // every way the place is named, for "the name starts with the text"
+            key[i] = words(d.n[i]).join(" ");
+          }
+          if (i < n) setTimeout(slice, 0); else { PL.d = d; PL.lon = lon; PL.lat = lat; PL.nameHay = nameHay; PL.streetHay = streetHay; PL.who = who; PL.key = key; done(); }
+        } catch (e) { fail(); }
+      };
+      slice();
+    }
+    const PLACES_COVER = new Set(["food", "cafe", "bakery", "bar", "icecream", "market", "culture", "park", "shop", "bikeshop"]);
+    const kindLabel = (k) => (window.BikeI18n ? window.BikeI18n.t("pk_" + k) : k);
+    // Places for the typed text. The text is cut into words at its spaces ("saint-denis" is one word of two parts). Every word must start a word of
+    // the place's name, or of its street; at least half of the words (and always the first part of the job: one) must be in the name, so a street
+    // typed on its own stays an address search. Order: the name starts with the whole text, then importance, then nearness to `near` ([lon, lat]).
+    // A chain shows its nearest 3. At most `max` rows. Each row carries _o, its order key, so rows from the map's own list can be ranked with it.
+    const orderKey = (names, rank, lon, lat, whole, near) => {   // names: "|name|other name"
+      const dx = (lon - near[0]) * Math.cos(near[1] * Math.PI / 180) * 111.2, dy = (lat - near[1]) * 111.2;
+      return [names.includes("|" + whole) ? 1 : 0, rank, dx * dx + dy * dy];
+    };
+    const byOrder = (a, b) => b._o[0] - a._o[0] || b._o[1] - a._o[1] || a._o[2] - b._o[2];
+    function findPlaces(q, near, max) {
+      const d = PL.d, units = q.trim().split(/\s+/).map((u) => words(u).map((p) => " " + p)).filter((u) => u.length);
+      if (PL.state !== "ready" || !units.length) return [];
+      const whole = words(q).join(" "), hits = [], fr = lang() === "fr";
+      for (let i = 0; i < PL.lon.length; i++) {
+        const nh = PL.nameHay[i];
+        let inName = 0, ok = true;
+        for (const u of units) {
+          if (u.every((p) => nh.includes(p))) inName++;
+          else if (!u.every((p) => PL.streetHay[i].includes(p))) { ok = false; break; }
+        }
+        if (!ok || !inName || inName * 2 < units.length) continue;
+        hits.push({ i, _o: orderKey(PL.who[i], d.k[i] & 3, PL.lon[i], PL.lat[i], whole, near) });
+      }
+      hits.sort(byOrder);
+      const seen = new Map(), out = [];
+      for (const h of hits) {
+        const key = PL.key[h.i];
+        if ((seen.get(key) || 0) >= 3) continue;
+        seen.set(key, (seen.get(key) || 0) + 1);
+        const a = d.alt[h.i], street = d.streets[d.s[h.i]], kind = d.kinds[d.k[h.i] >> 2];
+        out.push({ label: (a && (fr ? a[0] : a[1])) || d.n[h.i], sub: [street, kindLabel(kind)].filter(Boolean).join(" · "), kind, lon: PL.lon[h.i], lat: PL.lat[h.i], _o: h._o });
+        if (out.length >= max) break;
+      }
+      return out;
+    }
     let ctrl = null;
     async function search(q) {
       const nq = norm(q.trim());
@@ -456,9 +531,12 @@
       if (m) { const a = +m[1], b = +m[2]; return [{ label: q, sub: lang() === "fr" ? "Coordonnées" : "Coordinates", lon: a < -60 ? a : b, lat: a < -60 ? b : a }]; }
       const res = [...intersections(q)];
       let offline = false;
+      const lead = res.length;
+      const loading = loadPlaces();   // the first search also starts the load; later ones find it ready
       local.filter((p, i) => folded[i].includes(nq)).sort((a, b) => b.rank - a.rank).slice(0, 6).forEach((p) => res.push(Object.assign({ sub: poiLabel(p.kind) }, p)));
       if (ctrl) ctrl.abort();
       ctrl = new AbortController();
+      const addr = [];
       try {
         const r = await fetch("https://api.montreal.ca/api/geographic/location/v1/addresses?limit=6&q=" + encodeURIComponent(q), { signal: ctrl.signal });
         if (r.ok) {
@@ -466,16 +544,34 @@
           (j.items || []).forEach((it) => {
             if (!it.coordinates) return;
             const fr = lang() === "fr";
-            res.push({ label: (fr ? it.humanReadableCode?.valueFr : it.humanReadableCode?.valueEn) || it.humanReadableCode?.valueEn || it.humanReadableCode?.valueFr || q,
+            addr.push({ label: (fr ? it.humanReadableCode?.valueFr : it.humanReadableCode?.valueEn) || it.humanReadableCode?.valueEn || it.humanReadableCode?.valueFr || q,
               sub: fr ? "Adresse (Ville de Montréal)" : "Address (Ville de Montréal)", lon: it.coordinates.lon, lat: it.coordinates.lat });
           });
         }
       } catch (e) { offline = e.name !== "AbortError"; }   // offline: local results only, and the list says so (out.offline)
-      const out = res.slice(0, 10);
+      // Places first, then the places already on our map, then addresses (a query that starts with a digit is an address: those first).
+      // The list is as long as before (10).
+      if (PL.state === "loading") await Promise.race([loading, new Promise((r) => setTimeout(r, 600))]);
+      const near = (opts.near && opts.near()) || [-73.5673, 45.5017];
+      const found = findPlaces(q, near, 5);
+      const dup = (a, b) => Math.abs(a.lon - b.lon) < 0.0015 && Math.abs(a.lat - b.lat) < 0.001 && (norm(a.label).includes(norm(b.label)) || norm(b.label).includes(norm(a.label)));
+      // the places file holds the same kinds of named places as the map's own list (same OpenStreetMap source, many more of them, with their street);
+      // once it has loaded only the map's other things (BIXI, water, toilets, repair stands, lookouts, metro) are still taken from that list
+      const onMap = res.slice(lead).filter((p) => PL.state !== "ready" || !PLACES_COVER.has(p.kind)), head = res.slice(0, lead);
+      const mine = found.filter((p) => !onMap.some((l) => dup(p, l)));
+      const whole = words(q).join(" ");
+      if (PL.state === "ready") {   // the map's own rows (metro, ...) take their place among the places by the same order
+        onMap.forEach((p) => { p._o = orderKey("|" + words(p.label).join(" "), p.rank || 1, p.lon, p.lat, whole, near); });
+        mine.push(...onMap.splice(0));
+        mine.sort(byOrder);
+      }
+      const front = [...head, ...mine, ...onMap];
+      const out = /^\d/.test(q.trim()) ? [...head, ...addr, ...mine, ...onMap].slice(0, 10)
+        : [...front.slice(0, 10 - Math.min(addr.length, 3)), ...addr].slice(0, 10);   // addresses keep 3 rows when there are that many
       out.offline = offline;
       return out;
     }
-    return { search };
+    return { search, preload: loadPlaces, places: (q, near, max = 5) => findPlaces(q, near, max) };   // places(): only the places file, synchronous (for the speed test)
   }
 
   // ---------------------------------------------------------------- ride: one emitter, two sources of progress

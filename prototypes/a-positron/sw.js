@@ -1,6 +1,7 @@
 /* Piste service worker (2026-11-02): routing and navigation keep working when the signal drops mid-ride.
  *  - Installing caches the app itself (pages, scripts, styles, routing graph, data, icons), so it opens and plans routes offline.
  *  - While browsing, the basemap, our map tiles, the terrain and the photos you look at are kept too, for the next time.
+ *  - The places file (shared/data/places.js, for searching businesses and parks) is not downloaded at install: it is kept the first time a search bar fetches it.
  *  - Address search, weather, BIXI, the feedback form and Umami always go to the network; they are never stored.
  * One file for both layouts: paths are relative to this file, and tools/build_site.py moves the ones that climb a folder for the site root.
  * It registers only on pistemtl.ca or with ?sw=1 (app.js). A new version installs in the background and takes over the next
@@ -10,6 +11,7 @@
 const VERSION = "dev";                    // tools/build_site.py stamps a hash of the built files here: every deploy is a new version
 const SHELL = `piste-shell-${VERSION}`;   // the app itself: filled on install, replaced as a whole by the next version
 const TILES = "piste-tiles-2";            // tiles and photos, filled while browsing. Bump the number when a .pmtiles or terrain file is rebuilt
+const PLACES = "piste-places-1";          // the places file, kept when first fetched. Bump the number when tools/build_places.py is rerun
 const MAX_TILES = 2500;                   // entries kept in TILES, oldest dropped first (about 100 MB at 20-60 KB a tile)
 
 const SHELL_FILES = [
@@ -22,6 +24,7 @@ const SHELL_FILES = [
 ];
 
 // What is kept while browsing: our own tiles and photos, and the basemap, terrain and font files from these hosts.
+const PLACES_FILE = /\/shared\/data\/places\.js$/;
 const OWN_TILES = /\/shared\/(tiles|terrain|photos)\//;
 const tileHost = (u) => u.hostname === "tiles.openfreemap.org" || u.hostname === "fonts.googleapis.com" || u.hostname === "fonts.gstatic.com"
   || (u.hostname === "s3.amazonaws.com" && u.pathname.startsWith("/elevation-tiles-prod/"));
@@ -32,7 +35,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  const keep = [SHELL, TILES];
+  const keep = [SHELL, TILES, PLACES];
   event.waitUntil(caches.keys()
     .then((names) => Promise.all(names.filter((n) => n.startsWith("piste-") && !keep.includes(n)).map((n) => caches.delete(n))))
     .then(() => self.clients.claim()));   // only matters for the very first install: the page that registered us starts caching at once
@@ -42,7 +45,7 @@ self.addEventListener("fetch", (event) => {
   const req = event.request, url = new URL(req.url);
   if (req.method !== "GET") return;
   if (url.origin === location.origin) {
-    event.respondWith(OWN_TILES.test(url.pathname) ? tile(event) : shell(req));
+    event.respondWith(OWN_TILES.test(url.pathname) ? tile(event) : PLACES_FILE.test(url.pathname) ? places(event) : shell(req));
   } else if (tileHost(url)) {
     event.respondWith(tile(event));
   }   // anything else is not ours to answer: the network handles it, and fails on its own when there is no signal
@@ -52,6 +55,14 @@ self.addEventListener("fetch", (event) => {
 async function shell(req) {
   const hit = await (await caches.open(SHELL)).match(req, { ignoreSearch: true });
   return hit || fetch(req);
+}
+
+// The places file: the kept copy answers at once (offline too) and a fresh one is fetched behind it; with no copy, the network answers and we keep it.
+async function places(event) {
+  const req = event.request, cache = await caches.open(PLACES), hit = await cache.match(req, { ignoreSearch: true });
+  const fresh = fetch(req).then(async (res) => { if (res.ok) await cache.put(req, res.clone()); return res; });
+  if (hit) { event.waitUntil(fresh.catch(() => {})); return hit; }
+  return fresh;
 }
 
 // Tiles and photos: stale-while-revalidate. The kept copy answers at once and a fresh one is fetched behind it; with no copy,

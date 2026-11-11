@@ -4069,6 +4069,117 @@ await run("3D bridges: the flat top-down ride does nothing (no terrain, no analy
   return { ok, flat, failed };
 }, { width: 390, height: 844 });
 
+// ------------------------------------------------------------------ places and businesses in the search bars
+// 2026-11-10: shared/data/places.js (tools/build_places.py, OpenStreetMap) is fetched the first time a search bar is used, never at start-up
+const FAKE_ADDRESSES = { items: [1, 2, 3, 4].map((n) => ({ coordinates: { lon: -73.56 - n / 1000, lat: 45.52 }, humanReadableCode: { valueEn: `${n}234 Test Street`, valueFr: `${n}234, rue Test` } })) };
+const rows = (page) => page.evaluate(() => [...document.querySelectorAll("#suggest li[data-i]")].map((li) => [li.querySelector("span").textContent, li.querySelector("small").textContent]));
+// type into a search bar and wait for the new list: the rows of the list before are marked first, so a row without the mark is from this search
+// (an empty answer never shows, so that waits out 4 s and gives no rows)
+async function ask(page, text, bar = "#to") {
+  await page.evaluate(() => document.querySelectorAll("#suggest li").forEach((li) => { li.dataset.old = "1"; }));
+  await page.fill(bar, text);
+  await until(page, () => { const l = document.querySelector("#suggest"); return !l.hidden && l.querySelector("li[data-i]") && !l.querySelector("li[data-old]"); }, null, 4000);
+  return rows(page);
+}
+const stubAddresses = (ctx) => ctx.route("https://api.montreal.ca/**", (route) => route.request().method() === "OPTIONS"
+  ? route.fulfill({ status: 204, headers: { ...CORS, "access-control-allow-headers": "*" } })
+  : route.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify(FAKE_ADDRESSES) }));
+
+await run("places search: McGill, Tim Hortons on a street, Parc La Fontaine, accents, address order, choosing, French, not loaded before use, speed", APP, async (page, ctx) => {
+  await stubAddresses(ctx);   // four addresses whatever is typed, so where the addresses sit in the list can be checked
+  const asked = [];
+  page.on("request", (r) => { if (/\/places\.js/.test(r.url())) asked.push(r.url()); });
+  // 1. nothing about places is fetched or listed at start-up (the page, the service worker's install list)
+  await page.waitForTimeout(1500);
+  const html = await page.evaluate(async () => (await (await fetch(location.pathname)).text()));
+  const sw = await page.evaluate(async () => (await (await fetch("sw.js")).text()));
+  const atStart = { requested: asked.length, loaded: await page.evaluate(() => typeof window.PLACES !== "undefined"), inHtml: /places\.js/.test(html), inShell: /places\.js/.test(sw.match(/SHELL_FILES = \[(.*?)\];/s)[1]) };
+  // 2. the first use of a search bar fetches it, once
+  await page.focus("#to");
+  await until(page, () => typeof window.PLACES !== "undefined");
+  await page.focus("#from"); await page.focus("#to"); await page.waitForTimeout(300);
+  const afterFocus = { requested: asked.length };
+  // 3. the examples
+  const mc = await ask(page, "mcgill univ");
+  const tim = await ask(page, "tim hortons saint-denis");
+  const timAll = await ask(page, "tim hortons");
+  const fontaine = await ask(page, "parc la fontaine");
+  const acc1 = await ask(page, "universite de mont"), acc2 = await ask(page, "université de mont"), acc3 = await ask(page, "UNIVERSITE DE MONT");
+  const metro = await ask(page, "berri");
+  // addresses stay first when the text starts with a digit; the list never grows past the 10 rows it had
+  const digit = await ask(page, "1234 rue"), word = await ask(page, "rue saint-denis");
+  // a street name alone is an address search: no shop is listed just for being on that street
+  const streetOnly = await ask(page, "saint-denis");
+  // 4. French: the French name and the French kind
+  await page.evaluate(() => { BikeI18n.lang = "fr"; });
+  const fr = await ask(page, "mcgill univ");
+  const frPark = await ask(page, "parc la fontaine");
+  await page.evaluate(() => { BikeI18n.lang = "en"; });
+  // 5. choosing a place routes to it like an address: its name in the bar, the point set
+  await ask(page, "mcgill univ");
+  await page.evaluate(() => document.querySelector("#suggest li[data-i]").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+  await until(page, () => !!window.__app.state.to);
+  const chosen = await page.evaluate(() => ({ to: window.__app.state.to, label: window.__app.state.toLabel, bar: document.querySelector("#to").value }));
+  const fromRows = await ask(page, "parc la fontaine", "#from");
+  // 6. speed: the places search alone (the address service is a network call), the worst of many typed texts, on the full set
+  const speed = await page.evaluate(async () => {
+    const g = BikeCommon.makeGeocoder(window.__app.router); await g.preload();
+    const near = [-73.5673, 45.5017], qs = ["a", "t", "ti", "tim", "tim hortons", "tim hortons saint-denis", "mcgill", "la", "parc", "universite de mont", "rue", "caf", "saint", "de la"];
+    let worst = 0, total = 0, n = 0;
+    for (let rep = 0; rep < 10; rep++) for (const q of qs) { const t0 = performance.now(); g.places(q, near); const ms = performance.now() - t0; if (rep) { worst = Math.max(worst, ms); total += ms; n++; } }
+    return { count: window.PLACES.n.length, worstMs: +worst.toFixed(1), meanMs: +(total / n).toFixed(2) };
+  });
+  const first = (r) => r[0] || ["", ""];
+  const ok = !atStart.requested && !atStart.loaded && !atStart.inHtml && !atStart.inShell && afterFocus.requested === 1
+    && /mcgill/i.test(first(mc)[0]) && /university/i.test(first(mc)[1])
+    && /tim hortons/i.test(first(tim)[0]) && /saint-denis/i.test(first(tim)[1])
+    && timAll.filter(([l]) => l === "Tim Hortons").length === 3   // a chain shows its nearest 3, not all of its stores
+    && /parc la fontaine/i.test(first(fontaine)[0]) && /park/i.test(first(fontaine)[1])
+    && /universit. de montr/i.test(first(acc1)[0]) && first(acc1)[0] === first(acc2)[0] && first(acc1)[0] === first(acc3)[0]
+    && metro.some(([l, s]) => /berri-uqam/i.test(l) && /metro|station/i.test(s))
+    && /Test Street/.test(first(digit)[0]) && digit.length <= 10 && word.length <= 10
+    && [word, streetOnly].every((r) => r.every(([l, s]) => !s.includes(" · ") || /saint.?denis/i.test(l)))
+    && chosen.to && Math.abs(chosen.to[0] + 73.578) < 0.02 && Math.abs(chosen.to[1] - 45.507) < 0.02 && /mcgill/i.test(chosen.label) && chosen.bar === chosen.label
+    && /fontaine/i.test(first(fromRows)[0])
+    && /universit. mcgill/i.test(first(fr)[0]) && /universit/i.test(first(fr)[1]) && /parc/i.test(first(frPark)[1])
+    && speed.count > 10000 && speed.worstMs < 12;   // about 2 ms here; the limit has room for a slow CI machine (the aim on this PC is 8 ms)
+  return { ok, atStart, afterFocus, mc: mc.slice(0, 3), tim: tim.slice(0, 3), timAll: timAll.slice(0, 5), fontaine: fontaine.slice(0, 2), acc1: acc1.slice(0, 2), metro: metro.slice(0, 3), digit: digit.slice(0, 5), word: word.slice(0, 10).map((r) => r[0]), streetOnly: streetOnly.slice(0, 5), chosen, fromRows: fromRows.slice(0, 2), fr: fr.slice(0, 2), frPark: frPark.slice(0, 2), speed };
+});
+
+await run("places search: if the places file will not load, the search is the one it was, with no error shown", APP, async (page, ctx) => {
+  await stubAddresses(ctx);
+  await ctx.route(/\/places\.js/, (route) => route.abort());
+  await page.focus("#to");
+  const list = await ask(page, "tim hortons");
+  const note = await page.evaluate(() => ({ notes: document.querySelectorAll("#suggest .note").length, loaded: typeof window.PLACES !== "undefined" }));
+  // what the map's own list finds (kind only, no street) is the search as it was; there are no places rows ("street · kind") and no message
+  return { ok: list.slice(-4).every(([l, s]) => /Test Street|rue Test/.test(l) && /Address/.test(s)) && list.every(([, s]) => !s.includes(" · ")) && !note.notes && !note.loaded, list, note };
+});
+
+await run("places search (offline): the service worker keeps the places file the first time a search bar fetches it, not at install, and the search finds places without a signal", `${APP}?sw=1`, async (page, ctx) => {
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  await page.reload({ waitUntil: "load" });   // served by the worker
+  await page.waitForFunction(() => !!window.__app);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 1500)));
+  const places = () => page.evaluate(async () => { const n = (await caches.keys()).find((k) => k.startsWith("piste-places-")); return n ? (await (await caches.open(n)).keys()).length : 0; });
+  const shell = () => page.evaluate(async () => { const n = (await caches.keys()).find((k) => k.startsWith("piste-shell-")); return n ? (await (await caches.open(n)).keys()).filter((r) => /places\.js/.test(r.url)).length : -1; });
+  const before = { places: await places(), inShell: await shell() };
+  await page.focus("#to");
+  await until(page, () => typeof window.PLACES !== "undefined");
+  await until(page, async () => (await caches.keys()).some((k) => k.startsWith("piste-places-")), null, 10000);
+  await page.waitForTimeout(500);
+  const after = { places: await places(), inShell: await shell() };
+  if (FIX) await ctx.unroute("https://api.montreal.ca/**");   // a saved answer would hide the missing signal
+  await ctx.setOffline(true);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => !!window.__app, null, { timeout: 30000 });
+  await page.focus("#to");
+  const list = await ask(page, "parc la fontaine");
+  const note = await page.evaluate(() => (document.querySelector("#suggest .note") || {}).textContent || "");
+  await ctx.setOffline(false);
+  return { ok: before.places === 0 && before.inShell === 0 && after.places === 1 && after.inShell === 0 && /parc la fontaine/i.test((list[0] || [""])[0]) && /park/i.test((list[0] || ["", ""])[1]), before, after, list: list.slice(0, 3), note };
+}, undefined, { serviceWorkers: "allow" });
+
 await browser.close();
 if (webkitBrowser) await webkitBrowser.close();
 // ---- results: the full detail of every group (JSON), then a short summary; exit code 1 if anything failed or nothing ran ----
