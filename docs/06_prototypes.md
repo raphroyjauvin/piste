@@ -32,6 +32,7 @@ The app is at https://www.pistemtl.ca/ once Raph sets up the DNS and the custom 
 - `?wx=1`: start with the wind and rain layer on.
 - `?lang=fr` (or `en`): force the language. Without it, the app uses your saved choice, or the phone's language the first time.
 - `?safe=top,bottom`: simulated phone safe areas in px (the phone preview sets this, since desktop browsers report 0).
+- Notch area (2026-11-10): the map canvas fills the whole screen, under the iPhone notch and clock. The home-screen app asks for a see-through status bar (`apple-mobile-web-app-status-bar-style` is `black-translucent`; it was `default`, an opaque white bar, which is what faded the top). The clock is then always white. Nothing in the page covers the top inset; the buttons and cards sit below `--safe-top`.
 - `?welcome=1`: show the first-visit welcome card again (to see it on the iPhone after dismissing it); `?welcome=0` never shows it. The frames in `phone.html` add `&welcome=0`, so the welcome card doesn't cover the phone screens.
 
 ## What's in it

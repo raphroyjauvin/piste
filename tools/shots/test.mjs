@@ -3819,6 +3819,23 @@ await run("ride summary: no privacy sentence at the bottom of the card (English 
   return { ok: gone(out.res.en) && gone(out.res.fr) && !out.el && /dialog-buttons/.test(out.last), out };
 });
 
+// 2026-11-10: the map reaches the very top of the screen (under the iPhone's notch and clock): the home-screen app asks for a see-through status bar, nothing in the page covers the top inset, and the buttons and the turn card still clear it
+await run("notch area (phone, safe top 47): the status bar is see-through (black-translucent), the map canvas starts at y = 0 with nothing over it, the top-right buttons and the turn card sit below the inset", `${APP}?welcome=0&notrack=1&safe=47,34&gps=0&from=-73.5817,45.5246&to=-73.6150,45.5035`, async (page) => {
+  await until(page, () => !!document.querySelector("#map canvas"));
+  const out = await page.evaluate(async () => {
+    const q = (x) => document.querySelector(x), top = (x) => q(x).getBoundingClientRect().top;
+    const over = [10, 100, 195, 290, 380].map((x) => document.elementsFromPoint(x, 4)[0]).map((e) => e.tagName + "." + e.className);
+    const bg = getComputedStyle(document.body).backgroundImage, canvas = q("#map canvas").getBoundingClientRect();
+    const res = { status: q('meta[name="apple-mobile-web-app-status-bar-style"]').content, viewport: /viewport-fit=cover/.test(q('meta[name="viewport"]').content), map: top("#map"), canvas: canvas.top, h: canvas.height, over, bg, controls: top(".map-controls") };
+    window.__app.startRide("birdseye"); window.__app.pauseRide(true); window.__app.state.snap = true; window.__app.state.ride.seek(40);
+    await new Promise((r) => setTimeout(r, 600));
+    res.turn = top(".turn-card"); res.canvasRide = q("#map canvas").getBoundingClientRect().top;
+    return res;
+  });
+  const mapOnly = out.over.every((e) => /^CANVAS\.maplibregl-canvas/.test(e));
+  return { ok: out.status === "black-translucent" && out.viewport && out.map === 0 && out.canvas === 0 && out.canvasRide === 0 && mapOnly && out.bg === "none" && out.controls >= 47 && out.turn >= 47, out };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
 // ------------------------------------------------------------------ route layout A (2026-11-09)
 // The route card holds the Route style slider and the Avoid chips right under its time row; "Let's ride!" and share are pinned to the panel's
 // bottom edge; on a phone the sheet opens at the height that shows all of it. Nothing here counts map frames or depends on how many were drawn.
