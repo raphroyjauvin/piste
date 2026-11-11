@@ -3824,7 +3824,7 @@ for (const [w, lang] of [[390, "en"], [360, "fr"]]) {
   }, { width: w, height: 844 }, { hasTouch: true, isMobile: true });
 }
 
-// 2026-11-10: the two ride warnings take one line each; only the street name can end in an ellipsis; no real street name, no "on ..."
+// 2026-11-10: the ride warnings ("No bike path for ...", "In 300 m: ...", "Back on a bike path") take one line each; only the street name can end in an ellipsis; no real street name, no "on ..."
 for (const [w, lang] of [[390, "en"], [360, "en"], [360, "fr"]]) {
   await run(`ride card (phone ${w}, ${lang}): "No bike path for ..." and "Back on a bike path" take one line, summer and winter, only the street name is cut`, RIDE_PHONE(lang, 3700), async (page) => {
     await until(page, () => !document.querySelector("#gap-card").hidden && /\d/.test(document.querySelector("#gap-card").textContent));
@@ -3835,9 +3835,9 @@ for (const [w, lang] of [[390, "en"], [360, "en"], [360, "fr"]]) {
       const live = { text: card.textContent.trim(), tip: /traffic|circulation|Quiet|tranquille|Take care|Prudence/.test(card.textContent), one: oneLine(), cut: cut(), size: parseFloat(getComputedStyle(span()).fontSize) };
       // every wording, worst case: a 12 km distance and a very long street; then the same without the name (that part must never be cut)
       const rows = [];
-      for (const key of ["gapInside", "gapInsideWinter"]) for (const lg of ["en", "fr"]) {
+      for (const key of ["gapInside", "gapInsideWinter", "gapAhead", "gapAheadWinter"]) for (const lg of ["en", "fr"]) {
         I.lang = lg;
-        const mk = (on) => { card.innerHTML = `<svg class="gc-icon" viewBox="0 0 26 26"></svg><span>${I.t(key, { d: "<b>" + (lg === "fr" ? "12,3 km" : "12.3 km") + "</b>", on })}</span>`; };
+        const mk = (on) => { card.innerHTML = `<svg class="gc-icon" viewBox="0 0 26 26"></svg><span>${I.t(key, /Ahead/.test(key) ? { d: "<b>400 m</b>", m: (lg === "fr" ? "12,3 km" : "12.3 km"), on } : { d: "<b>" + (lg === "fr" ? "12,3 km" : "12.3 km") + "</b>", on })}</span>`; };
         mk((lg === "fr" ? " sur " : " on ") + "Boulevard Henri-Bourassa Ouest, côté sud"); const withName = { one: oneLine(), cut: cut() };
         mk(""); rows.push({ key, lg, withName, nameless: { one: oneLine(), cut: cut() }, text: span().textContent });
       }
@@ -3846,7 +3846,7 @@ for (const [w, lang] of [[390, "en"], [360, "en"], [360, "fr"]]) {
       for (const lg of ["en", "fr"]) { I.lang = lg; card.innerHTML = `<svg class="gc-icon" viewBox="0 0 26 26"></svg><span>${I.t("backOnLane")}</span>`; back[lg] = { one: oneLine(), cut: cut() }; }
       return { live, rows, back };
     });
-    const rowsOk = out.rows.every((r) => r.withName.one && r.nameless.one && !r.nameless.cut && !/traffic|circulation|Take care|Prudence/.test(r.text));
+    const rowsOk = out.rows.every((r) => r.withName.one && r.nameless.one && !r.nameless.cut && !/traffic|circulation|Take care|Prudence|busy|achaland/.test(r.text));
     return { ok: out.live.one && !out.live.tip && out.live.size >= 14 && rowsOk && out.back.en.one && !out.back.en.cut && out.back.fr.one && !out.back.fr.cut, out };
   }, { width: w, height: 844 }, { hasTouch: true, isMobile: true });
 }

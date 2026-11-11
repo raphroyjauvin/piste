@@ -2282,7 +2282,7 @@
         : t("gapInside", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })}</span>`);
     } else if (L.nextGap && L.nextGapDist <= 400) {
       gapAt = L.nextGap.start;
-      gapCard("", `${GAP_BADGE}<span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: Math.round(L.nextGap.length), on: on(L.nextGap), busy: L.nextGap.busy ? t("busyTag") : "" })}</span>`);
+      gapCard("", `${GAP_BADGE}<span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: C.fmtKm(L.nextGap.length), on: on(L.nextGap) })}</span>`);
     } else if (lastGapEnd !== null && performance.now() < afterGapUntil) {
       gapAt = lastGapEnd; gapCard("ok", `${OK_BADGE}<span>${t("backOnLane")}</span>`);
     } else card.hidden = true;
