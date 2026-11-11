@@ -295,7 +295,7 @@ def metro_stations():
         x, y = TO_M.transform(lon, lat)
         from shapely.geometry import Point
         on = [lid for lid, L in lm if L.distance(Point(x, y)) < 120]
-        name = r["stop_name"].replace("STATION ", "").title().replace("–", "-")
+        name = r["stop_name"].replace("STATION ", "").title().replace("–", "-").replace("Mcgill", "McGill")   # title() lower-cases the G
         name = name.replace("Uqam", "UQAM").replace("Oaci", "OACI").replace("Du ", "du ").replace("De ", "de ").replace("D'", "d'")
         out.append((name, round(lon, 6), round(lat, 6), on))
     return out

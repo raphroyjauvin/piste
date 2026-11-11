@@ -23,7 +23,7 @@
     let d = `M${f(x0)} ${f(q() * 0.3)}` + side(x0, 0, w - r, 0) + `C${f(w - k)} 0 ${f(w)} ${f(k)} ${f(w)} ${f(r)}`;
     d += side(w, r, w, h - r) + `C${f(w)} ${f(h - k)} ${f(w - k)} ${f(h)} ${f(w - r)} ${f(h)}`;
     d += side(w - r, h, r, h) + `C${f(k)} ${f(h)} 0 ${f(h - k)} 0 ${f(h - r)}`;
-    d += side(0, h - r, 0, r) + `C0 ${f(k)} ${f(k)} 0.5 ${f(r)} 0.9` + `L${f(x0 + overlap)} ${f(1.9 + q() * 0.3)}`;
+    d += side(0, h - r, 0, r) + `C0 ${f(k)} ${f(k)} 0.5 ${f(r)} 0.9` + `L${f(x0 + overlap * 0.25)} ${f(0.3 + q() * 0.2)}`;
     return d;
   }
   // [path, stroke width, opacity] for a box of this size: a firm pass and a thin, fainter second pass
