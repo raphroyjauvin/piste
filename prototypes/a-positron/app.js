@@ -306,14 +306,20 @@
   map.addImage("stop-ring", await svgImageData(C.stopSVG(), 36, 36), { pixelRatio: 2 });
   map.addImage("stop-ring-night", await svgImageData(C.stopSVG("#c9ccff", "#0f1626"), 36, 36), { pixelRatio: 2 });
   const POI_LAYERS = [];
+  // Bike racks show by tier (each rack's tier is set once in C.poisGeoJSON, racks 300 / 150 / 75 / 40 m apart): four layers, each from its own zoom (a filter
+  // cannot read the map's zoom: it sees the tile's, which stops at 18), so closer in means more racks (2026-11-10). Layer ids: poi-parking, -t2, -t3, -t4.
+  const RACK_LAYERS = [["", ["<=", ["get", "tier"], 1], 17.8], ["-t2", ["==", ["get", "tier"], 2], 18], ["-t3", ["==", ["get", "tier"], 3], 18.5], ["-t4", ["==", ["get", "tier"], 4], 19]];
   for (const [kind, k] of Object.entries(C.POI_KINDS)) {
     if (kind === "works") continue;
-    const id = "poi-" + kind; POI_LAYERS.push({ id, kind, group: k.group });
-    map.addLayer({ id, type: "symbol", source: "pois", minzoom: k.minzoom, filter: ["==", ["get", "k"], kind],
-      layout: { "icon-image": ["get", "icon"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.72, 17, 1], "icon-padding": 1,
-        "text-field": ["step", ["zoom"], "", 16.5, ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 11,
-        "text-offset": [0, 1.35], "text-anchor": "top", "text-optional": true, "symbol-sort-key": k.group === "transit" ? 0 : kind === "bixi" ? 1 : 5 },
-      paint: { "text-color": "#44476a", "text-halo-color": HALO, "text-halo-width": 1.3 } });
+    for (const [suffix, tierTest, minzoom] of kind === "parking" ? RACK_LAYERS : [["", null, k.minzoom]]) {
+      const id = "poi-" + kind + suffix, base = tierTest ? ["all", ["==", ["get", "k"], kind], tierTest] : ["==", ["get", "k"], kind];
+      POI_LAYERS.push({ id, kind, group: k.group, base });
+      map.addLayer({ id, type: "symbol", source: "pois", minzoom, filter: base,
+        layout: { "icon-image": ["get", "icon"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.72, 17, 1], "icon-padding": 1,
+          "text-field": ["step", ["zoom"], "", 16.5, ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 11,
+          "text-offset": [0, 1.35], "text-anchor": "top", "text-optional": true, "symbol-sort-key": k.group === "transit" ? 0 : kind === "bixi" ? 1 : 5 },
+        paint: { "text-color": "#44476a", "text-halo-color": HALO, "text-halo-width": 1.3 } });
+    }
   }
   // live BIXI: the station icon, plus a badge with the bikes available (green, orange when 1-2, grey when empty)
   map.addLayer({ id: "bixi-live", type: "symbol", source: "bixi-live", minzoom: 14.6,
@@ -1759,7 +1765,7 @@
     vis("works", toggles.works && browse); vis("works-near", toggles.works && !browse);
     const ids = sel && !browse ? C.routePOIs(sel.r, window.POIS, 90).map((p) => p.i) : null;
     POI_LAYERS.forEach((p) => {
-      const base = ["==", ["get", "k"], p.kind];
+      const base = p.base;
       map.setFilter(p.id, ids && p.group !== "transit" ? ["all", base, ["in", ["id"], ["literal", ids]]] : base);
     });
     if (liveBixi) {

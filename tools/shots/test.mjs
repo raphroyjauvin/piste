@@ -3846,6 +3846,31 @@ await run("french grammar: the suggested loop's title elides before est and oues
   return { ok: Object.keys(want).every((k) => out.fr[k] === want[k]) && out.en.N === "North loop" && out.en.SW === "South-west loop" && !Object.values(out.fr).some((v) => /le (est|ouest)/.test(v)), out };
 });
 
+// 2026-11-10: bike racks by tier: racks 300 / 150 / 75 / 40 m apart are tiers 0 to 3, the rest tier 4; the map shows more tiers the closer you are; none during a ride
+await run("bike parking: tiers keep their minimum spacing, the map shows tier 0-1 at first and every rack only when very close", `${APP}?welcome=0&notrack=1&gps=0`, async (page) => {
+  await until(page, () => !!window.__app && window.__app.map.getLayer("poi-parking-t4"));
+  const out = await page.evaluate(async () => {
+    const C = BikeCommon, m = window.__app.map, tiers = C.rackTiers(window.POIS), kx = 111320 * Math.cos(45.5 * Math.PI / 180), ky = 110574;
+    const pts = [...tiers].map(([i, t]) => ({ t, x: window.POIS[i][2] * kx, y: window.POIS[i][3] * ky }));
+    const minGap = (max) => { const a = pts.filter((p) => p.t <= max); let best = 1e9; for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) { const d = Math.hypot(a[i].x - a[j].x, a[i].y - a[j].y); if (d < best) best = d; } return Math.round(best); };
+    const count = [0, 0, 0, 0, 0]; pts.forEach((p) => count[p.t]++);
+    const layers = ["poi-parking", "poi-parking-t2", "poi-parking-t3", "poi-parking-t4"].map((id) => ({ id, minzoom: m.getLayer(id).minzoom, vis: m.getLayoutProperty(id, "visibility") }));
+    const ids = layers.map((l) => l.id), seen = async (z) => { m.jumpTo({ center: [-73.57535, 45.50575], zoom: z, pitch: 0, bearing: 0 }); await new Promise((r) => setTimeout(r, 1500)); return m.queryRenderedFeatures({ layers: ids }).length; };
+    const shown = { z17_9: await seen(17.9), z18_2: await seen(18.2), z19_3: await seen(19.3) };
+    return { n: pts.length, count, gaps: [minGap(0), minGap(1), minGap(2), minGap(3)], layers, shown };
+  });
+  const ok = out.n > 4000 && out.gaps[0] >= 300 && out.gaps[1] >= 150 && out.gaps[2] >= 75 && out.gaps[3] >= 40 && out.count.every((c) => c > 0)
+    && out.layers.map((l) => l.minzoom).join() === "17.8,18,18.5,19" && out.shown.z17_9 >= 1 && out.shown.z17_9 <= 3 && out.shown.z18_2 <= 4 && out.shown.z19_3 >= 5;
+  return { ok, out };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+await run("bike parking: no rack is on the map while riding, at any zoom", `${APP}?welcome=0&notrack=1&gps=0&from=-73.5800,45.5000&to=-73.5700,45.5120&ride=bird&paused`, async (page) => {
+  await until(page, () => window.__app.state.mode === "ride" && !!window.__app.map.getLayer("poi-parking-t4"));
+  const out = await page.evaluate(async () => { const m = window.__app.map, ids = ["poi-parking", "poi-parking-t2", "poi-parking-t3", "poi-parking-t4"];
+    m.jumpTo({ center: [-73.57535, 45.50575], zoom: 19.3, pitch: 0, bearing: 0 }); await new Promise((r) => setTimeout(r, 1200));
+    return { vis: ids.map((id) => m.getLayoutProperty(id, "visibility")), rendered: m.queryRenderedFeatures({ layers: ids }).length }; });
+  return { ok: out.vis.every((v) => v === "none") && out.rendered === 0, out };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
 // ------------------------------------------------------------------ route layout A (2026-11-09)
 // The route card holds the Route style slider and the Avoid chips right under its time row; "Let's ride!" and share are pinned to the panel's
 // bottom edge; on a phone the sheet opens at the height that shows all of it. Nothing here counts map frames or depends on how many were drawn.

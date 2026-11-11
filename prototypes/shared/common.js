@@ -141,13 +141,41 @@
     await Promise.all(tasks);
   }
 
+  // Bike racks come in thousands, so the map shows them by tier (2026-11-10): a greedy pass, once, that keeps tier 0 racks at least 300 m apart, then
+  // tier 1 so that tiers 0 and 1 together are at least 150 m apart, tier 2 at least 75 m, tier 3 at least 40 m; every other rack is tier 4. The data has no capacity, so
+  // a rack with more racks within 40 m (a bigger parking area is mapped as several points) goes first. The map then only filters on zoom.
+  const RACK_SPACING = [300, 150, 75, 40];
+  function rackTiers(pois) {
+    const rack = []; pois.forEach((p, i) => { if (p[0] === "parking") rack.push(i); });
+    const kx = 111320 * Math.cos((45.5 * Math.PI) / 180), ky = 110574;   // metres per degree of longitude and latitude at Montréal
+    const X = rack.map((i) => pois[i][2] * kx), Y = rack.map((i) => pois[i][3] * ky);
+    const gridOf = (cell) => { const g = new Map(), key = (a, b) => a + "," + b;
+      const count = (j, d, stop) => { const cx = Math.floor(X[j] / cell), cy = Math.floor(Y[j] / cell); let n = 0;   // racks within d metres of rack j (stop: as soon as there is one)
+        for (let a = cx - 1; a <= cx + 1; a++) for (let b = cy - 1; b <= cy + 1; b++) for (const o of g.get(key(a, b)) || []) if (o !== j && Math.hypot(X[o] - X[j], Y[o] - Y[j]) < d && (++n, stop)) return n;
+        return n; };
+      return { add(j) { const k = key(Math.floor(X[j] / cell), Math.floor(Y[j] / cell)); (g.get(k) || g.set(k, []).get(k)).push(j); }, count }; };
+    const dense = gridOf(40);
+    rack.forEach((_, j) => dense.add(j));
+    const weight = rack.map((_, j) => dense.count(j, 40, false));
+    const order = rack.map((_, j) => j).sort((a, b) => weight[b] - weight[a] || a - b);
+    const none = RACK_SPACING.length, tier = new Array(rack.length).fill(none), out = new Map();
+    for (let t = 0; t < RACK_SPACING.length; t++) {
+      const g = gridOf(RACK_SPACING[t]);
+      rack.forEach((_, j) => { if (tier[j] < t) g.add(j); });   // the racks already kept by the lower tiers
+      for (const j of order) if (tier[j] === none && !g.count(j, RACK_SPACING[t], true)) { tier[j] = t; g.add(j); }
+    }
+    rack.forEach((i, j) => out.set(i, tier[j]));
+    return out;
+  }
+
   function poisGeoJSON(pois) {
+    const rackTier = rackTiers(pois);
     return {
       type: "FeatureCollection",
       features: pois.map((p, i) => ({
         type: "Feature", id: i, geometry: { type: "Point", coordinates: [p[2], p[3]] },
         properties: { k: p[0], name: p[1], icon: p[0] === "metro" ? "poi-metro-" + (p[4] || []).join("") : "poi-" + p[0],
-          minz: (POI_KINDS[p[0]] || {}).minzoom || 15, group: (POI_KINDS[p[0]] || {}).group || "other" },
+          minz: (POI_KINDS[p[0]] || {}).minzoom || 15, group: (POI_KINDS[p[0]] || {}).group || "other", ...(rackTier.has(i) ? { tier: rackTier.get(i) } : {}) },
       })),
     };
   }
@@ -1148,7 +1176,7 @@
     return I.t("gapVoice", { d, m, on, busy: g.busy ? I.t("gapVoiceBusy") : "" });
   }
 
-  window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, pillSVG, stopSVG, svgToImage, addMapIcons, poisGeoJSON, unpackBuildings,
+  window.BikeCommon = { STM, TIER_LABEL, TIER_SHORT, POI_KINDS, iconSVG, pillSVG, stopSVG, svgToImage, addMapIcons, poisGeoJSON, rackTiers, unpackBuildings,
     routePiecesGeoJSON, routeLineGeoJSON, gapStartsGeoJSON, rideMinutes, fmtKm, fmtMin, fmtPct, esc, routePOIs, climbs, lookahead,
     elevAt, profileWindow, climbMaxGrade, climbName, sliceCoords, climbsGeoJSON, mainGaps, poiLabel, GAP_MIN, GAP_WARN_MIN, CLIMB_CALLOUT_MIN_RISE,
     cleanProfile, hills, gradeColor, gradeProfileSVG, STEEP, makeGeocoder, RideSim, RideGPS, ReplayGeo, GPS, headingFromFixes, makeTrack, sliceRoute, tailRoute, rotateRoute, joinRoutes, JOIN, planJoin, voice, audioSession, gapSentence, buildCursor, distM,
