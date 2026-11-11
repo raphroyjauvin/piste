@@ -3836,6 +3836,16 @@ await run("notch area (phone, safe top 47): the status bar is see-through (black
   return { ok: out.status === "black-translucent" && out.viewport && out.map === 0 && out.canvas === 0 && out.canvasRide === 0 && mapOnly && out.bg === "none" && out.controls >= 47 && out.turn >= 47, out };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
+// 2026-11-10: French elision in the suggested loop's title: "vers l'est", "vers l'ouest" (it said "vers le est" and "vers le ouest")
+await run("french grammar: the suggested loop's title elides before est and ouest, for all eight directions (and English keeps \"North loop\")", `${APP}?welcome=0&notrack=1&gps=0`, async (page) => {
+  await until(page, () => !!window.__app && !!window.BikeI18n);
+  const out = await page.evaluate(() => { const I = BikeI18n, res = { fr: {}, en: {} };
+    for (const lg of ["fr", "en"]) { I.lang = lg; for (const k of ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]) res[lg][k] = I.t("loopDir", { dir: I.t("dir_" + k) }); }
+    return res; });
+  const want = { N: "Boucle vers le nord", NE: "Boucle vers le nord-est", E: "Boucle vers l'est", SE: "Boucle vers le sud-est", S: "Boucle vers le sud", SW: "Boucle vers le sud-ouest", W: "Boucle vers l'ouest", NW: "Boucle vers le nord-ouest" };
+  return { ok: Object.keys(want).every((k) => out.fr[k] === want[k]) && out.en.N === "North loop" && out.en.SW === "South-west loop" && !Object.values(out.fr).some((v) => /le (est|ouest)/.test(v)), out };
+});
+
 // ------------------------------------------------------------------ route layout A (2026-11-09)
 // The route card holds the Route style slider and the Avoid chips right under its time row; "Let's ride!" and share are pinned to the panel's
 // bottom edge; on a phone the sheet opens at the height that shows all of it. Nothing here counts map frames or depends on how many were drawn.
