@@ -31,6 +31,18 @@ for (const base of bases) {
   const cards = await page.evaluate(() => document.querySelectorAll("#classic-track > *").length).catch(() => 0);
   check(new URL(page.url()).pathname === new URL(base).pathname, `it stays at the root (${new URL(page.url()).pathname})`);
 
+  // Shared links (Reddit, LinkedIn…): a description, and a preview image that is in the site at 1200 x 630
+  const og = await page.evaluate(async (b) => {
+    const get = (sel) => (document.querySelector(sel) || { content: "" }).content;
+    const image = get('meta[property="og:image"]'), file = image.split("/").pop();
+    const out = { desc: get('meta[name="description"]'), ogDesc: get('meta[property="og:description"]'), title: get('meta[property="og:title"]'), image, size: "" };
+    try { const r = await fetch(b + file); if (r.ok) { const bmp = await createImageBitmap(await r.blob()); out.size = `${bmp.width}x${bmp.height}`; } else out.size = `HTTP ${r.status}`; } catch (e) { out.size = e.message; }
+    return out;
+  }, base);
+  check(og.desc.length > 40 && og.desc === og.ogDesc && /bike paths/.test(og.desc) && /pistes cyclables/.test(og.desc) && og.title.length > 0,
+    `the page has a description in English and French (${og.desc.length} characters)`);
+  check(/^https:\/\/www\.pistemtl\.ca\/[\w.-]+$/.test(og.image) && og.size === "1200x630", `link-preview image ${og.image || "missing"} is in the site (${og.size})`);
+
   // Offline: no service worker on a plain visit here (it registers on pistemtl.ca only); with ?sw=1 it installs at the site's root with a stamped version
   const published = /(^|\.)pistemtl\.ca$/.test(new URL(base).hostname);   // the live site registers its worker on every visit
   check(await page.evaluate(async (pub) => ((await navigator.serviceWorker.getRegistrations()).length > 0) === pub, published), published ? "the offline worker registers on the published site" : "no service worker on a plain visit to this host");
