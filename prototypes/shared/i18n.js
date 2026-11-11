@@ -117,6 +117,11 @@
       placeNewT: "Save this place", placeEditT: "Edit place", placeName: "Name", placeNeedName: "Please give it a name.",
       placeSave: "Save", placeDelete: "Delete", placeUse: "Use the current place",
       recentTag: "Recent", clearRecents: "Clear recent places",
+      // kinds of places the search finds (2026-11-10, the places file)
+      pk_uni: "University", pk_school: "School", pk_hospital: "Hospital", pk_library: "Library", pk_museum: "Museum", pk_theatre: "Theatre",
+      pk_cinema: "Cinema", pk_stadium: "Stadium", pk_market: "Market", pk_park: "Park", pk_station: "Station", pk_cafe: "Café",
+      pk_restaurant: "Restaurant", pk_fastfood: "Fast food", pk_bar: "Bar", pk_shop: "Shop", pk_pharmacy: "Pharmacy", pk_bank: "Bank",
+      pk_hotel: "Hotel", pk_worship: "Place of worship", pk_centre: "Sports or community centre", pk_attraction: "Attraction",
       tour9T: "Help shape Piste", tour9: "Piste is in beta. Tell us what works and what doesn't, and replay this tour here anytime.",
     },
     fr: {
@@ -229,6 +234,11 @@
       placeNewT: "Enregistrer ce lieu", placeEditT: "Modifier le lieu", placeName: "Nom", placeNeedName: "Donnez-lui un nom.",
       placeSave: "Enregistrer", placeDelete: "Supprimer", placeUse: "Utiliser le lieu actuel",
       recentTag: "Récent", clearRecents: "Effacer les lieux récents",
+      // genres de lieux que la recherche trouve (2026-11-10, le fichier des lieux)
+      pk_uni: "Université", pk_school: "École", pk_hospital: "Hôpital", pk_library: "Bibliothèque", pk_museum: "Musée", pk_theatre: "Théâtre",
+      pk_cinema: "Cinéma", pk_stadium: "Stade", pk_market: "Marché", pk_park: "Parc", pk_station: "Station", pk_cafe: "Café",
+      pk_restaurant: "Restaurant", pk_fastfood: "Restauration rapide", pk_bar: "Bar", pk_shop: "Boutique", pk_pharmacy: "Pharmacie", pk_bank: "Banque",
+      pk_hotel: "Hôtel", pk_worship: "Lieu de culte", pk_centre: "Centre sportif ou communautaire", pk_attraction: "Attraction",
       tour9T: "Aidez-nous à améliorer Piste", tour9: "Piste est en version bêta. Dites-nous ce qui marche et ce qui cloche, et revoyez cette visite ici en tout temps.",
     },
   };

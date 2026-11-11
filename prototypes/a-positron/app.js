@@ -56,7 +56,8 @@
   const t0 = performance.now();
   const G = window.GRAPH_ISLAND || window.GRAPH_STUDY;
   const router = new Router(G);
-  const geocoder = C.makeGeocoder(router);
+  // places are ranked by nearness to the start (when choosing the destination) or to the middle of the map
+  const geocoder = C.makeGeocoder(router, { near: () => (sugTarget === "to" && state.from) || [map.getCenter().lng, map.getCenter().lat] });
   const suggester = new window.BikeSuggest.Suggester(router, window.POIS);
   const SK = window.BikeSuggest.STOP_KINDS;
   const CLASSICS = window.CLASSICS || [];
@@ -728,6 +729,7 @@
   const syncFieldLabels = () => { for (const el of [fromEl, toEl]) el.setAttribute("aria-label", el.placeholder); };   // the placeholder is the only visible name
   syncFieldLabels();
   for (const el of [fromEl, toEl]) {
+    el.addEventListener("focus", () => geocoder.preload());   // the places file is fetched the first time a search bar is used, not at start-up
     el.addEventListener("input", () => {
       if (!el.value.trim() && state[el.id]) { clearPoint(el.id); recompute(true); }   // all the text deleted: that place, and the route, go
       sugTarget = el.id; clearTimeout(sugTimer); closeList(false);
