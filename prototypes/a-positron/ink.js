@@ -106,7 +106,7 @@
   function pop() {
     if (calm()) return;
     const el = document.getElementById("turn-dist"); if (!el) return;
-    el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
+    el.classList.remove("turn-pop"); void el.offsetWidth; el.classList.add("turn-pop");
   }
   window.PisteInk = { pop };
 })();

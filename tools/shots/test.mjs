@@ -270,9 +270,9 @@ await run("ride card: route strip, two dials, and a callout whose line lands on 
     ticksOnStrip: ticks.every((x) => x >= strip.left - 1 && x <= strip.right + 1),
     leadsBetween: leads.every((b) => b.top >= ev.bottom - 1 && b.bottom <= strip.top + 1),
     calloutAbove: ev.bottom < strip.top, youOnStrip: you.left + you.width / 2 >= strip.left - 1 && you.left + you.width / 2 <= Math.min(...ticks) + 1 };
-  // the dials: two 64 px circles side by side to the right of the strip, inside the card; the preview's speed dial shows its 16 km/h
+  // the dials: two 56 px circles (64 px until 2026-11-10) side by side to the right of the strip, inside the card; the preview's speed dial shows its 16 km/h
   const dials = ["#ride-gps", "#wind-badge"].filter((x) => !q(x).hidden).map((x) => box(x));
-  const gauges = { n: dials.length, round: dials.every((b) => Math.round(b.width) === 64 && Math.round(b.height) === 64), right: dials.every((b) => b.left >= strip.right),
+  const gauges = { n: dials.length, round: dials.every((b) => Math.round(b.width) === 56 && Math.round(b.height) === 56), right: dials.every((b) => b.left >= strip.right),
     inside: dials.every((b) => b.left >= bar.left && b.right <= bar.right), speed: q("#gps-main").textContent, unit: q("#gps-unit").textContent,
     left: q("#ride-left-km").textContent + " | " + q("#ride-left-min").textContent };
   // the rider is drawn above the (taller) card, and "Re-center" sits above it too
@@ -3650,7 +3650,7 @@ await run("ink hints: with reduced motion the outline simply appears (no animati
   const card = await page.evaluate(() => { const svg = document.querySelector("#routes .route-card .ink-svg"); return { draw: svg.dataset.draw, anims: svg.getAnimations({ subtree: true }).length }; });
   await page.evaluate(() => { const a = window.__app; a.startRide("birdseye"); a.pauseRide(true); a.state.snap = true; a.state.ride.seek(20); });   // a paused ride writes its cards once it has moved
   await until(page, () => !!document.querySelector("#turn-text").textContent);
-  const pop = await page.evaluate(() => ({ cls: document.querySelector("#turn-dist").classList.contains("pop"), draw: document.querySelector(".ride-bar .ink-svg") && document.querySelector(".ride-bar .ink-svg").dataset.draw }));
+  const pop = await page.evaluate(() => ({ cls: document.querySelector("#turn-dist").classList.contains("turn-pop"), draw: document.querySelector(".ride-bar .ink-svg") && document.querySelector(".ride-bar .ink-svg").dataset.draw }));
   return { ok: card.draw !== "on" && card.anims === 0 && !pop.cls && pop.draw !== "on", card, pop };
 }, { width: 1200, height: 800 }, { reducedMotion: "reduce" });
 
@@ -3719,35 +3719,105 @@ await run("ink hints: the turn distance pops once when the turn instruction chan
     const first = m.find((x) => x.at > 120) || m[0];
     await go(Math.max(0, first.at - 100), () => /\d/.test(dist.textContent));
     const t1 = text.textContent, d1 = dist.textContent;
-    dist.classList.remove("pop");
+    dist.classList.remove("turn-pop");
     await go(Math.max(0, first.at - 60), () => dist.textContent !== d1);   // the distance counts down, the instruction stays
-    const countdown = { sameText: text.textContent === t1, pop: dist.classList.contains("pop") };
+    const countdown = { sameText: text.textContent === t1, pop: dist.classList.contains("turn-pop") };
     const next = m.find((x) => x.at > first.at + 80);
     await go(next.at - 50, () => text.textContent !== t1);   // a later turn: a new instruction
-    return { countdown, changed: text.textContent !== t1, pop: dist.classList.contains("pop") };
+    return { countdown, changed: text.textContent !== t1, pop: dist.classList.contains("turn-pop") };
   });
   return { ok: out.countdown.sameText && !out.countdown.pop && out.changed && out.pop, out };
 }, { width: 1200, height: 800 });
 
-// 2026-11-09: the pop must not change the layout, during or after it: the instruction stays on the line below the distance and the card keeps its height
-await run("ink hints: after the pop the turn text is still below the distance and the turn card is as tall as before", INK_ROUTE, async (page) => {
+// 2026-11-10: the turn card has the distance in its left column with the arrow (distance above the arrow), the instruction to the right; the pop must not change the layout
+await run("ink hints: after the pop the distance still sits above the arrow, left of the instruction, and the turn card is as tall as before", INK_ROUTE, async (page) => {
   await page.evaluate(() => { const a = window.__app; a.startRide("birdseye"); a.pauseRide(true); a.state.snap = true; a.state.ride.seek(20); });
   await until(page, () => !!document.querySelector("#turn-text").textContent);
   const out = await page.evaluate(async () => {
-    const dist = document.querySelector("#turn-dist"), text = document.querySelector("#turn-text"), card = document.querySelector(".turn-card");
+    const dist = document.querySelector("#turn-dist"), text = document.querySelector("#turn-text"), card = document.querySelector(".turn-card"), icon = document.querySelector("#turn-icon");
     const frame = () => new Promise((r) => requestAnimationFrame(r));
-    const read = () => ({ h: card.getBoundingClientRect().height, below: text.getBoundingClientRect().top >= dist.getBoundingClientRect().bottom - 1, block: getComputedStyle(dist).display === "block" });
-    dist.classList.remove("pop"); await frame(); await frame();
+    const read = () => ({ h: card.getBoundingClientRect().height, left: text.getBoundingClientRect().left >= Math.max(dist.getBoundingClientRect().right, icon.getBoundingClientRect().right) - 1,
+      above: dist.getBoundingClientRect().bottom <= icon.getBoundingClientRect().top + 1, block: getComputedStyle(dist).display === "block" });
+    dist.classList.remove("turn-pop"); await frame(); await frame();
     const before = read();
-    dist.classList.add("pop");
+    dist.classList.add("turn-pop");
     await frame(); const during = read();   // the animation is running (a transform alone does not move the layout box)
     await new Promise((r) => setTimeout(r, 600)); await frame();
     const after = read();
     return { before, during, after };
   });
-  const same = (x) => Math.abs(x.h - out.before.h) < 0.5 && x.below && x.block;
+  const same = (x) => Math.abs(x.h - out.before.h) < 0.5 && x.left && x.above && x.block;
   return { ok: same(out.before) && same(out.during) && same(out.after), out };
 }, { width: 1200, height: 800 });
+
+// 2026-11-10: turn card layout and the tighter ride card, on a phone (390 and 360 wide), in English and French
+const RIDE_PHONE = (lang, at) => `${APP}?welcome=0&notrack=1&safe=47,34&gps=0&lang=${lang}&from=-73.5817,45.5246&to=-73.6150,45.5035&ride=bird&at=${at}&paused`;
+for (const [w, lang] of [[390, "en"], [360, "fr"]]) {
+  await run(`turn card (phone ${w}, ${lang}): distance above the arrow in the left column, instruction on the right in at most two lines, the card is 80 px or less tall, "1.2 km" fits; the ride card is tight and its buttons stay 44 px`, RIDE_PHONE(lang, 3100), async (page) => {
+    await until(page, () => !!document.querySelector("#turn-text").textContent && !!document.querySelector("#turn-icon svg"));
+    const out = await page.evaluate(() => {
+      const q = (x) => document.querySelector(x), box = (x) => q(x).getBoundingClientRect(), card = box(".turn-card"), dist = q("#turn-dist"), lead = box(".turn-lead"), text = q("#turn-text");
+      dist.textContent = BikeI18n.lang === "fr" ? "1,2 km" : "1.2 km";
+      const tb = text.getBoundingClientRect(), line = parseFloat(getComputedStyle(text).lineHeight), d = dist.getBoundingClientRect(), i = box("#turn-icon");
+      return { card: +card.height.toFixed(1), lead: { left: lead.left - card.left, w: lead.width }, distFits: d.width <= lead.width && d.left >= lead.left - 0.5 && d.right <= lead.right + 0.5, dist: +d.width.toFixed(1),
+        above: d.bottom <= i.top + 1, textRight: tb.left >= lead.right, lines: Math.round(tb.height / line), centred: Math.abs((tb.top + tb.bottom) / 2 - (card.top + card.bottom) / 2) < 3,
+        inside: tb.right <= card.right - 8 && i.left >= card.left, font: parseFloat(getComputedStyle(text).fontSize),
+        bar: +box(".ride-bar").height.toFixed(1), btn: [...document.querySelectorAll(".ride-buttons button")].filter((b) => b.getClientRects().length).map((b) => Math.round(b.getBoundingClientRect().height)),
+        noScroll: document.documentElement.scrollWidth <= innerWidth };
+    });
+    return { ok: out.card <= 80 && out.distFits && out.above && out.textRight && out.lines <= 2 && out.centred && out.inside && out.bar <= 126 && out.btn.length > 0 && out.btn.every((h) => h >= 44) && out.noScroll, out };
+  }, { width: w, height: 844 }, { hasTouch: true, isMobile: true });
+}
+
+// 2026-11-10: the two ride warnings take one line each; only the street name can end in an ellipsis; no real street name, no "on ..."
+for (const [w, lang] of [[390, "en"], [360, "en"], [360, "fr"]]) {
+  await run(`ride card (phone ${w}, ${lang}): "No bike path for ..." and "Back on a bike path" take one line, summer and winter, only the street name is cut`, RIDE_PHONE(lang, 3700), async (page) => {
+    await until(page, () => !document.querySelector("#gap-card").hidden && /\d/.test(document.querySelector("#gap-card").textContent));
+    const out = await page.evaluate(() => {
+      const I = BikeI18n, q = (x) => document.querySelector(x), card = q("#gap-card"), span = () => card.querySelector(":scope > span"), line = () => parseFloat(getComputedStyle(span()).lineHeight);
+      const oneLine = () => span().getBoundingClientRect().height < line() * 1.5 && getComputedStyle(span()).whiteSpace === "nowrap";
+      const cut = () => span().scrollWidth > span().clientWidth + 0.5;   // something is hidden by the ellipsis
+      const live = { text: card.textContent.trim(), tip: /traffic|circulation|Quiet|tranquille|Take care|Prudence/.test(card.textContent), one: oneLine(), cut: cut(), size: parseFloat(getComputedStyle(span()).fontSize) };
+      // every wording, worst case: a 12 km distance and a very long street; then the same without the name (that part must never be cut)
+      const rows = [];
+      for (const key of ["gapInside", "gapInsideWinter"]) for (const lg of ["en", "fr"]) {
+        I.lang = lg;
+        const mk = (on) => { card.innerHTML = `<svg class="gc-icon" viewBox="0 0 26 26"></svg><span>${I.t(key, { d: "<b>" + (lg === "fr" ? "12,3 km" : "12.3 km") + "</b>", on })}</span>`; };
+        mk((lg === "fr" ? " sur " : " on ") + "Boulevard Henri-Bourassa Ouest, côté sud"); const withName = { one: oneLine(), cut: cut() };
+        mk(""); rows.push({ key, lg, withName, nameless: { one: oneLine(), cut: cut() }, text: span().textContent });
+      }
+      card.className = "ev-item gap-card ok";
+      const back = {};
+      for (const lg of ["en", "fr"]) { I.lang = lg; card.innerHTML = `<svg class="gc-icon" viewBox="0 0 26 26"></svg><span>${I.t("backOnLane")}</span>`; back[lg] = { one: oneLine(), cut: cut() }; }
+      return { live, rows, back };
+    });
+    const rowsOk = out.rows.every((r) => r.withName.one && r.nameless.one && !r.nameless.cut && !/traffic|circulation|Take care|Prudence/.test(r.text));
+    return { ok: out.live.one && !out.live.tip && out.live.size >= 14 && rowsOk && out.back.en.one && !out.back.en.cut && out.back.fr.one && !out.back.fr.cut, out };
+  }, { width: w, height: 844 }, { hasTouch: true, isMobile: true });
+}
+await run("ride card: a gap on a generic street name (Lane, Ruelle) or on none says only how far; a real name still follows", RIDE_PHONE("en", 3700), async (page) => {
+  await until(page, () => !document.querySelector("#gap-card").hidden && /\d/.test(document.querySelector("#gap-card").textContent));
+  const out = await page.evaluate(async () => {
+    const a = window.__app, s = a.state, g = BikeCommon.mainGaps(s.ride.route).find((x) => x.names[0] && x.length > 300), frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const keep = g.names[0]; let at = g.start + 100;
+    const read = async (name) => { g.names[0] = name; at += 1; s.snap = true; s.ride.seek(at); await frames(); await frames(); return document.querySelector("#gap-card").textContent.trim(); };
+    const res = { real: await read(keep), lane: await read("Lane"), ruelle: await read("Ruelle"), none: await read(""), name: keep };
+    g.names[0] = keep;
+    return res;
+  });
+  const noOn = (t) => /^No bike path for [\d.,]+ ?(km|m)$/.test(t);
+  return { ok: out.real.includes(" on " + out.name) && noOn(out.lane) && noOn(out.ruelle) && noOn(out.none), out };
+}, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+
+// 2026-11-10: the ride summary no longer ends with the "stays on this device" sentence, in either language
+await run("ride summary: no privacy sentence at the bottom of the card (English and French; its text keys are gone)", `${APP}?welcome=0&notrack=1&gps=0`, async (page) => {
+  await until(page, () => !!window.__app && !!window.BikeI18n);
+  const out = await page.evaluate(() => { const I = BikeI18n, el = document.querySelector("#ride-summary"), res = {};
+    for (const lg of ["en", "fr"]) { I.lang = lg; I.apply(); res[lg] = { text: el.textContent.replace(/\s+/g, " ").trim(), key: I.t("rsPrivacy") }; }
+    return { res, el: !!el.querySelector(".rs-privacy"), last: el.lastElementChild.className }; });
+  const gone = (r) => !/device|appareil|saved|enregistré/i.test(r.text) && r.key === "rsPrivacy";
+  return { ok: gone(out.res.en) && gone(out.res.fr) && !out.el && /dialog-buttons/.test(out.last), out };
+});
 
 // ------------------------------------------------------------------ route layout A (2026-11-09)
 // The route card holds the Route style slider and the Avoid chips right under its time row; "Let's ride!" and share are pinned to the panel's

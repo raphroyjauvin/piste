@@ -2264,12 +2264,13 @@
     // gap callout: calm, specific (only stretches of 100 m or more, C.GAP_WARN_MIN). It points to where the gap starts, or, inside it, to where the bike path comes back.
     const card = $("#gap-card");
     const gapCard = (kind, html) => { put("#gap-card", html, true); const cls = `ev-item gap-card${kind ? " " + kind : ""}`; if (card.className !== cls) card.className = cls; card.hidden = false; };
-    const on = (g) => (g.names[0] ? (I.lang === "fr" ? " sur " : " on ") + C.esc(I.place(g.names[0])) : "");
+    const GENERIC = /^(lane|ruelle|alley|path|bike path|multi-use path)$/i;   // no real street name: the card says nothing about where (2026-11-10)
+    const on = (g) => (g.names[0] && !GENERIC.test(g.names[0].trim()) ? (I.lang === "fr" ? " sur " : " on ") + C.esc(I.place(g.names[0])) : "");
     let gapAt = null;
     if (L.inGap) {
       const left = L.inGap.start + L.inGap.length - f.d; lastGapEnd = gapAt = L.inGap.start + L.inGap.length;
       gapCard("inside", `${GAP_BADGE}<span>${state.winter ? t("gapInsideWinter", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })
-        : t("gapInside", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap), tip: t(L.inGap.busy ? "rideTraffic" : "quietTip") })}</span>`);
+        : t("gapInside", { d: `<b>${C.fmtKm(left)}</b>`, on: on(L.inGap) })}</span>`);
     } else if (L.nextGap && L.nextGapDist <= 400) {
       gapAt = L.nextGap.start;
       gapCard("", `${GAP_BADGE}<span>${t(state.winter ? "gapAheadWinter" : "gapAhead", { d: `<b>${C.fmtKm(L.nextGapDist)}</b>`, m: Math.round(L.nextGap.length), on: on(L.nextGap), busy: L.nextGap.busy ? t("busyTag") : "" })}</span>`);
@@ -2457,7 +2458,7 @@
     return cur ? c.start + c.length : c.start;
   }
   function sparkSVG(r, d, list) {   // drawn at the callout's own width (sparkW, kept by the ride card's ResizeObserver), so the dot stays round
-    const W = sparkW || (sparkW = $("#hill-spark").clientWidth) || 314, H = 44, d0 = d - 60, d1 = d + 740;
+    const W = sparkW || (sparkW = $("#hill-spark").clientWidth) || 314, H = 38, d0 = d - 60, d1 = d + 740;
     const pts = C.profileWindow(r, d0, d1, 10);
     let zmin = Math.min(...pts.map((p) => p[1])), zmax = Math.max(...pts.map((p) => p[1]));
     if (zmax - zmin < 24) { const m = (zmax + zmin) / 2; zmin = m - 12; zmax = m + 12; }   // 2026-10-29: gentler (was 12 m)

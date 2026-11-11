@@ -165,7 +165,7 @@
 </div>
 
 <div id="ride-hud" class="ride-hud" hidden>
-  <div class="turn-card"><div id="turn-icon" class="turn-icon" aria-hidden="true"></div><div><b id="turn-dist">—</b><span id="turn-text"></span></div></div>
+  <div class="turn-card"><div class="turn-lead"><b id="turn-dist">—</b><div id="turn-icon" class="turn-icon" aria-hidden="true"></div></div><span id="turn-text"></span></div>
   <!-- the ride card (design B, 2026-11-08): the route strip with distance and time below it, then a speed + GPS dial and a wind dial side by side.
        A gap or a climb ahead opens a callout above, with a notch and a dotted line down to where it happens on the strip. -->
   <div class="ride-bar">
@@ -218,7 +218,6 @@
     <div id="rs-climb-row"><dt data-i18n="rsClimb"></dt><dd id="rs-climb"></dd></div>
     <div id="rs-descent-row"><dt data-i18n="rsDescent"></dt><dd id="rs-descent"></dd></div>
   </dl>
-  <p class="rs-privacy" data-i18n="rsPrivacy"></p>
   <div class="dialog-buttons"><button type="button" id="rs-share" class="dialog-alt" data-i18n="rsShare" hidden></button><button type="button" id="rs-done" class="primary dialog-go" data-i18n="rsDone"></button></div>
 </section>
 
