@@ -431,7 +431,8 @@
   const treeImages = ["", "-n"].map((n) => Object.entries(TREE_SET).flatMap(([kind, set]) => set.map((_, i) => treePics[`tree-${kind}-${i}${n}`])));
   state.treesGL = !!window.BikeTrees3D;
   const treeLayer = state.treesGL ? BikeTrees3D.create(map, { id: "trees-gl", source: "trees", sourceLayer: "trees", images: treeImages, demZoom: 14, opacity: 0.85, onFail: treesFallback }) : null;
-  // 3D building edges (shared/edges3d.js, 2026-11-07): thin ink lines on the roofs, bases and corners of the 3D buildings; navy by day, light periwinkle at night.
+  // 3D building edges (shared/edges3d.js, 2026-11-07; inked strokes 2026-11-10): ink strokes on the roofs and corners of the 3D buildings (no ground
+  // outline, nothing on party walls), tapered at their ends and thinning into the distance; navy by day, light periwinkle at night.
   // If WebGL can't draw them the layer stops quietly (one console warning) and the buildings simply have no lines.
   const EDGE_COLORS = { day: [30, 33, 96, 0.92], night: [170, 176, 230, 0.55] };
   const edgeLayer = window.BikeEdges3D ? BikeEdges3D.create(map, { id: "edges-gl", layerId: "bld-3d", minzoom: 15, color: EDGE_COLORS.day }) : null;

@@ -3408,7 +3408,7 @@ await run("3D trees: the Layers checkbox (Trees in 3D) is on by default and reme
   return { ok, first, shown, hidden, off, fr, again, offIn3d, fell };
 }, { width: 1000, height: 700 });
 
-// ---- 3D building edges (2026-11-07): thin ink lines on the roofs, bases and corners of the 3D buildings (shared/edges3d.js), 3D only, from zoom 15;
+// ---- 3D building edges (2026-11-07; inked strokes 2026-11-10): ink strokes on the roofs and corners of the 3D buildings (shared/edges3d.js), 3D only, from zoom 15;
 // on hills they are lifted with the buildings the way MapLibre lifts a fill-extrusion; if WebGL can't draw them they stop quietly ----
 // Page helper: ed.near(box) is what the lines add to the box (the pixels that change when they are drawn) and how much of it lies within 3 px of
 // the buildings (the pixels that change when the buildings are drawn): lines that sit on the buildings are all near them. (Uses __px from treeHelpers.)
@@ -3434,6 +3434,31 @@ const edgeHelpers = `window.__ed = {
       }
     }
     return { lines: n, buildings: nb, near: n ? +(hit / n).toFixed(3) : 0 };
+  },
+  // 2026-11-10 made-up data for edges3d.js: key(c) is the zoom-15 tile under c; square(c, x, y, w, h, height, jog) a building footprint as a
+  // tile feature, x / y / w / h in metres east and south of c (jog: a 0.6 m notch in its west wall); mid(key) the middle of a tile; tile(records, c) a tile of hand-made
+  // stroke records (a, b: mercator ends; za, zb: heights; cls: 0 roof, 1 corner); screen(e, c, x, y, z) where a point lands (CSS px)
+  key(c) { const s = 2 ** 15, O = maplibregl.MercatorCoordinate.fromLngLat(c, 0); return "15/" + Math.floor(O.x * s) + "/" + Math.floor(O.y * s); },
+  mid(key) { const [z, x, y] = key.split("/").map(Number), s = 2 ** z; return new maplibregl.MercatorCoordinate((x + 0.5) / s, (y + 0.5) / s, 0).toLngLat(); },
+  at(c, x, y) { const O = maplibregl.MercatorCoordinate.fromLngLat(c, 0), k = O.meterInMercatorCoordinateUnits(); return new maplibregl.MercatorCoordinate(O.x + x * k, O.y + y * k, 0).toLngLat().toArray(); },
+  square(c, x, y, w, h, height, jog) {
+    const pts = jog ? [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y + h / 2 + 0.3], [x + 0.6, y + h / 2 + 0.3], [x + 0.6, y + h / 2 - 0.3], [x, y + h / 2 - 0.3]]
+      : [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    const ring = pts.map(([px, py]) => this.at(c, px, py));
+    return { geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] }, properties: { h: height } };
+  },
+  tile(records, c) {
+    const n = records.length, t = { key: "15/0/0", z: 15, x: 0, y: 0, raw: n, n, nb: 1, lines: n, bases: 0, roofs: 0, corners: n, seamEdges: 0, stepEdges: 0, seamCorners: 0, jogCorners: 0,
+      seg: new Float64Array(n * 4), zz: new Float32Array(n * 2), fl: new Uint8Array(n * 4), bld: new Uint32Array(n),
+      lng: Float64Array.from([c.lng]), lat: Float64Array.from([c.lat]), elev: new Float32Array(1), elevFor: "flat" };
+    records.forEach((r, i) => { t.seg.set([...r.a, ...r.b], 4 * i); t.zz.set([r.za, r.zb], 2 * i); t.fl.set([r.cls, 1, 1, 0], 4 * i); });
+    return t;
+  },
+  screen(e, c, x, y, z) {
+    const m = window.__app.map, [ox, oy, k] = e.origin, M = e.matrix, W = m.getCanvas().clientWidth, H = m.getCanvas().clientHeight;
+    const O = maplibregl.MercatorCoordinate.fromLngLat(c, 0), mk = O.meterInMercatorCoordinateUnits(), px = (O.x + x * mk - ox) / k, py = (O.y + y * mk - oy) / k;
+    const cx = M[0] * px + M[4] * py + M[8] * z + M[12], cy = M[1] * px + M[5] * py + M[9] * z + M[13], cw = M[3] * px + M[7] * py + M[11] * z + M[15];
+    return { x: (cx / cw + 1) / 2 * W, y: (1 - cy / cw) / 2 * H };
   },
 };`;
 const UDEM = [-73.613, 45.512];   // Université de Montréal: dense buildings on the mountain's north slope
@@ -3541,9 +3566,7 @@ await run("3D edges: a line a few metres behind a wall stays hidden in the ride 
     m.addLayer({ id: "t-slab", type: "fill-extrusion", source: "t-slab", paint: { "fill-extrusion-color": "#ffffff", "fill-extrusion-height": 20, "fill-extrusion-opacity": 1 } }, "edges-gl");
     // two vertical lines, from 2 m to 18 m up: one 2 m inside the slab, behind its near wall (hidden), one 4 m in front of the wall (shown)
     const spots = [at(0, -0.5), at(15, 4)], n = spots.length;
-    const tile = { key: "15/0/0", z: 15, x: 0, y: 0, raw: n, n, nb: n, lines: n, seg: new Float64Array(n * 4), kind: new Uint8Array(n).fill(1), bld: Uint32Array.from([0, 1]),
-      h: new Float32Array(n).fill(18), lng: new Float64Array(n).fill(c.lng), lat: new Float64Array(n).fill(c.lat), elev: new Float32Array(n), elevFor: "flat" };
-    spots.forEach((q, i) => { tile.seg[i * 4] = q.x; tile.seg[i * 4 + 1] = q.y; });
+    const tile = __ed.tile(spots.map((q) => ({ a: [q.x, q.y], b: [q.x, q.y], za: 2, zb: 18, cls: 1 })), c);   // corner-line records (class 1)
     clearTimeout(e.timer); e.timer = 1;   // the layer must not rebuild from the map's tiles now: it draws only these
     e.tiles = new Map([[tile.key, tile]]); e.pending = e.pack(); m.redraw(); m.redraw();
     // where each line's middle (9 m up) is on screen, from the matrix the layer drew with
@@ -3556,31 +3579,63 @@ await run("3D edges: a line a few metres behind a wall stays hidden in the ride 
   return { ok: out.lines === 2 && out.hidden === 0 && out.shown >= 3, out };
 }, { width: 1000, height: 700 });
 
-// ---- 2026-11-09: hand-inked feel. A made-up building outline edge is packed slightly past both its ends (along itself, in its own plane), a corner
-// line slightly above its roof; with the constants at 0 they are exact. Checked on the packed data: no map frames needed ----
-await run("3D edges: lines are packed a little past their ends (overshoot), exactly to them when the overshoot is 0", APP, async (page) => {
+// ---- 2026-11-10: inked strokes. The lines are real strokes now (instanced quads, widths in CSS px times the pixel ratio), with no overshoot past the
+// corners. A made-up 40 m square building on open, flat ground, seen from straight above at zoom 19 on a 3x screen: its roof edge is at least one
+// CSS px (3 device px) thick, the corner is inked, and nothing is drawn beyond it along either edge (the old overshoot ran 0.35 m, about 3 CSS px, past) ----
+await run("3D edges: strokes are at least 1 CSS px wide on a 3x screen, and stop at the corners (no overshoot)", APP, async (page) => {
+  await page.evaluate(treeHelpers); await page.evaluate(edgeHelpers);
+  const C = [-73.58, 45.52];
+  await page.evaluate((c) => { const a = window.__app; a.set3d(true, false); document.querySelector('input[data-layer="terrain"]').click();   // flat ground
+    a.map.setLayoutProperty("bld-3d", "visibility", "none"); a.map.jumpTo({ center: c, zoom: 19, pitch: 0, bearing: 0 }); }, C);
+  await until(page, () => window.__app.edges.info().drawn > 0 && window.__app.map.loaded(), null, 60000);
+  await page.evaluate(idle);
+  const out = await page.evaluate(() => {
+    const m = window.__app.map, e = window.__app.edges, c = m.getCenter();
+    m.setLayoutProperty("bld-3d", "visibility", "none");   // again: the terrain switch shows the buildings again, and a real wall would hide a corner
+    const tile = BikeEdges3D.readTile(__ed.key(c), [__ed.square(c, -20, -20, 40, 40, 12)]);
+    clearTimeout(e.timer); e.timer = 1;   // the layer must not rebuild from the map's tiles now: it draws only this
+    e.tiles = new Map([[tile.key, tile]]); e.pending = e.pack(); m.redraw(); m.redraw();
+    const nw = __ed.screen(e, c, -20, -20, 12), ne = __ed.screen(e, c, 20, -20, 12), x0 = Math.round(nw.x), y0 = Math.round(nw.y);
+    const ink = (box) => __ed.added(box, "edges-gl").mask.reduce((s, v) => s + v, 0);
+    // across the north edge at its middle: a column 24 CSS px tall; the stroke's thickness in device px
+    const thick = ink([Math.round((nw.x + ne.x) / 2), y0 - 12, 1, 24]) / devicePixelRatio;   // (the box is one CSS px, so 3 device columns)
+    // past the north-west corner, 3 to 15 CSS px out: along the north edge (west of it) and along the west edge (north of it); and the corner itself
+    const west = ink([x0 - 15, y0 - 2, 12, 4]), north = ink([x0 - 2, y0 - 15, 4, 12]), corner = ink([x0 - 1, y0 - 1, 3, 3]);
+    return { pr: devicePixelRatio, count: e.count, roofs: tile.roofs, corners: tile.corners, bases: tile.bases, thick, west, north, corner, edgePx: +(ne.x - nw.x).toFixed(1) };
+  });
+  // 4 roof segments and 4 corner lines (the base outline is read but not packed)
+  const ok = out.pr === 3 && out.roofs === 4 && out.corners === 4 && out.bases === 4 && out.count === 8 && out.edgePx > 200
+    && out.thick >= 3 && out.thick <= 12 && out.west === 0 && out.north === 0 && out.corner >= 4;
+  return { ok, out };
+}, { width: 600, height: 600 }, { deviceScaleFactor: 3 });
+
+// ---- party walls: two made-up buildings side by side, sharing one wall. Same height: no line on the shared wall (roof or corner), and the front and
+// back roof lines run on through it (joint ends, no taper). One 4 m taller: its roof line along the shared wall is drawn once (by the taller one),
+// with corner lines from the lower roof up to its own. A tiny jog (a 0.6 m notch) gets no corner lines. Checked on readTile's records. ----
+await run("3D edges: party walls between buildings of the same height draw nothing; a roof step draws once; tiny jogs get no corner line", APP, async (page) => {
   await page.evaluate(treeHelpers); await page.evaluate(edgeHelpers);
   await until(page, () => !!window.__app.edges, null, 60000);
   const out = await page.evaluate(() => {
-    const m = window.__app.map, e = window.__app.edges, c = m.getCenter(), O = maplibregl.MercatorCoordinate.fromLngLat(c, 0), k = O.meterInMercatorCoordinateUnits();
-    // one made-up edge, 40 m long running east-west (record kind 0: four packed ends), and one corner line (kind 1: two ends), on a 15 m building
-    const tile = { key: "15/0/0", z: 15, x: 0, y: 0, raw: 2, n: 2, nb: 1, lines: 3, seg: Float64Array.from([O.x, O.y, O.x + 40 * k, O.y, O.x, O.y, 0, 0]), kind: Uint8Array.from([0, 1]),
-      bld: Uint32Array.from([0, 0]), h: Float32Array.from([15]), lng: Float64Array.from([c.lng]), lat: Float64Array.from([c.lat]), elev: new Float32Array(1), elevFor: "flat" };
-    clearTimeout(e.timer); e.timer = 1;   // no rebuild from the map's tiles: pack only these
-    e.tiles = new Map([[tile.key, tile]]);
-    const read = () => { const p = e.pack(), d = p.data, kk = p.origin[2], v = (i) => ({ x: d[4 * i], y: d[4 * i + 1], z: d[4 * i + 3] });
-      const L = [0, 1, 2, 3, 4, 5].map(v);   // roof A, roof B, base A, base B, corner bottom, corner top
-      return { count: p.count, len: +(L[1].x - L[0].x).toFixed(2), start: +L[0].x.toFixed(2), flat: L.slice(0, 4).every((q) => Math.abs(q.y) < 1e-3), roofZ: [L[0].z, L[1].z], baseZ: [L[2].z, L[3].z],
-        cornerBottom: +L[4].z.toFixed(2), cornerTop: +L[5].z.toFixed(2), ink: p.ink.length, kk }; };
-    const on = read(); e.opt.overshoot = 0; e.opt.cornerUp = 0; const off = read();
-    return { on, off };
+    const key = __ed.key(window.__app.map.getCenter()), c = __ed.mid(key);   // the middle of a tile: axis-aligned walls near a tile's border count as tile cuts
+    const read = (hA, hB, jog) => {
+      const t = BikeEdges3D.readTile(key, [__ed.square(c, -10, -6, 10, 12, hA, jog), __ed.square(c, 0, -6, 10, 12, hB)]);
+      const O = maplibregl.MercatorCoordinate.fromLngLat(c, 0), k = O.meterInMercatorCoordinateUnits(), mx = (i) => (t.seg[i] - O.x) / k;
+      const recs = [...Array(t.n).keys()].map((i) => ({ cls: t.fl[4 * i], ka: t.fl[4 * i + 1], kb: t.fl[4 * i + 2], ax: mx(4 * i), bx: mx(4 * i + 2), za: t.zz[2 * i], zb: t.zz[2 * i + 1] }));
+      const on = (r) => Math.abs(r.ax) < 0.05 && Math.abs(r.bx) < 0.05;   // lying on (or standing on) the shared wall, x = 0
+      return { roofs: t.roofs, corners: t.corners, seamEdges: t.seamEdges, stepEdges: t.stepEdges, jogCorners: t.jogCorners,
+        wallRoofs: recs.filter((r) => r.cls === 0 && on(r)).map((r) => r.za), wallCorners: recs.filter((r) => r.cls === 1 && on(r)).map((r) => [r.za, r.zb]),
+        // how the front and back roof segments end at the shared wall (0 = a joint: the line goes on)
+        throughWall: recs.filter((r) => r.cls === 0 && !on(r)).flatMap((r) => [Math.abs(r.ax) < 0.05 ? r.ka : null, Math.abs(r.bx) < 0.05 ? r.kb : null]).filter((v) => v !== null) };
+    };
+    return { same: read(10, 10), step: read(10, 14), jog: read(10, 10, true) };
   });
-  const { on, off } = out;
-  // on: 40 m + 2 x 0.35, the start 0.35 m before the origin, corner line 0.3 m above the 15 m roof, nothing below the ground (base stays at 0.05 m)
-  const ok = on.count === 3 && Math.abs(on.len - 40.7) < 0.02 && Math.abs(on.start + 0.35) < 0.02 && on.flat && on.roofZ.every((z) => z === 15) && on.baseZ.every((z) => Math.abs(z - 0.05) < 1e-6)
-    && Math.abs(on.cornerTop - 15.3) < 0.02 && Math.abs(on.cornerBottom - 0.05) < 0.02 && on.ink === 3
-    && off.count === 3 && Math.abs(off.len - 40) < 0.02 && Math.abs(off.start) < 0.02 && Math.abs(off.cornerTop - 15) < 0.02;
-  return { ok, on, off };
+  const { same, step, jog } = out;
+  const ok = same.roofs === 6 && same.corners === 4 && same.wallRoofs.length === 0 && same.wallCorners.length === 0 && same.seamEdges === 2
+    && same.throughWall.length === 4 && same.throughWall.every((k) => k === 0)
+    && step.roofs === 7 && step.wallRoofs.length === 1 && step.wallRoofs[0] === 14 && step.stepEdges === 1 && step.corners === 6
+    && step.wallCorners.length === 2 && step.wallCorners.every(([a, b]) => a === 10 && b === 14)
+    && jog.jogCorners >= 2 && jog.corners === 4;
+  return { ok, out };
 }, { width: 600, height: 400 });
 
 await run("3D edges: a shader that fails stops them quietly (one warning, no error), the buildings and trees carry on", APP, async (page, ctx) => {
