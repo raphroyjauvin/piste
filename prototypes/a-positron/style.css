@@ -556,7 +556,7 @@ body.riding .me-dot { display: none; }
 
 /* ---------- phones: the panel is a bottom sheet you drag up (full) or down (map) ---------- */
 @media (max-width: 760px) {
-  .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: none; height: 50%; border: 0; border-radius: 10px 10px 0 0; box-shadow: none;   /* one ink line along the top edge instead (ink.js) */
+  .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: none; height: 50%; border: 0; border-radius: 10px 10px 0 0; box-shadow: none;
     padding: 0 16px calc(12px + var(--safe-bottom)); transition: height .28s cubic-bezier(.2, .8, .2, 1); gap: 12px; }
   .panel.dragging { transition: none; }
   .dock { margin: auto -16px 0; padding: 10px 21px calc(12px + var(--safe-bottom)) 16px; border-radius: 0; }

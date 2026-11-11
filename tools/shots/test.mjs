@@ -3607,7 +3607,7 @@ await run("3D edges: a shader that fails stops them quietly (one warning, no err
 }, { width: 1000, height: 700 });
 
 // ------------------------------------------------------------------ "ink hints" (2026-11-09): subtle inked-drawing touches (ink.js and style.css)
-// the five hints: a pen outline on the route card, the chosen classic card and the ride card (the phone sheet gets one line on its top edge),
+// the five hints: a pen outline on the route card, the chosen classic card and the ride card (the phone sheet has none: 2026-11-10),
 // flat shadows (no blur anywhere), a flat highlight on navy, buttons that sink into their dots, a pop on the turn distance
 const INK_ROUTE = `${APP}?welcome=0&notrack=1&from=-73.5817,45.5246&to=-73.6150,45.5035`;
 await run("ink hints: pen outline on the route, classic and ride cards (two paths, no CSS border), same line at every draw, draw-on only for a new card", INK_ROUTE, async (page) => {
@@ -3654,12 +3654,12 @@ await run("ink hints: with reduced motion the outline simply appears (no animati
   return { ok: card.draw !== "on" && card.anims === 0 && !pop.cls && pop.draw !== "on", card, pop };
 }, { width: 1200, height: 800 }, { reducedMotion: "reduce" });
 
-await run("ink hints: on a phone the sheet has one ink line on its top edge and no shadow; the cards still have their outline", `${INK_ROUTE}&safe=47,34`, async (page) => {
-  await until(page, () => !!document.querySelector(".panel > .grabber .ink-svg") && !!document.querySelector("#routes .route-card .ink-svg"));
-  const out = await page.evaluate(() => { const p = document.querySelector(".panel"), g = p.querySelector(".grabber .ink-svg"), cs = getComputedStyle(p), gb = g.getBoundingClientRect(), pb = p.getBoundingClientRect();
-    return { paths: g.querySelectorAll("path").length, shadow: cs.boxShadow, border: cs.borderTopWidth, ptr: getComputedStyle(g).pointerEvents, onTop: Math.abs(gb.top - pb.top) < 3, wide: Math.abs(gb.width - pb.width) < 2,
+await run("ink hints: on a phone the sheet has no line along its top edge (no ink, no border, no shadow); the cards still have their outline", `${INK_ROUTE}&safe=47,34`, async (page) => {
+  await until(page, () => !!document.querySelector("#routes .route-card .ink-svg"));
+  const out = await page.evaluate(() => { const p = document.querySelector(".panel"), cs = getComputedStyle(p);
+    return { sheetInk: p.querySelectorAll(":scope > .grabber .ink-svg, :scope > .ink-svg").length, shadow: cs.boxShadow, border: cs.borderTopWidth, cards: document.querySelectorAll("#routes .route-card .ink-svg").length,
       btn: [...document.querySelectorAll(".map-controls .round-btn, .map-controls .view-btn")].map((b) => getComputedStyle(b).borderTopLeftRadius) }; });
-  return { ok: out.paths === 2 && out.shadow === "none" && out.border === "0px" && out.ptr === "none" && out.onTop && out.wide && out.btn.length > 0 && out.btn.every((r) => r === "3px"), out };
+  return { ok: out.sheetInk === 0 && out.shadow === "none" && out.border === "0px" && out.cards === 1 && out.btn.length > 0 && out.btn.every((r) => r === "3px"), out };
 }, { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 
 await run("ink hints: flat, not soft: no element has a blurred box-shadow or drop-shadow (route, Layers, overlays, ride); corners 3 px on buttons and 6 px on floating cards", INK_ROUTE, async (page) => {

@@ -1,6 +1,5 @@
 /* Piste: the "inked drawing" hints (2026-11-09). Loaded before app.js; app.js only calls PisteInk.pop() when the turn instruction changes.
- *  - A hand-inked outline on the route card, the chosen classic ride's card and the ride card (and one ink line along the top of the phone
- *    sheet): two SVG pen passes that bow a little and overlap at the start without quite meeting. Seeded, so the line is the same at every
+ *  - A hand-inked outline on the route card, the chosen classic ride's card and the ride card: two SVG pen passes that bow a little and overlap at the start without quite meeting. Seeded, so the line is the same at every
  *    draw (no shimmer). It draws itself on once, when a card appears where there was none or a different route/ride is shown; a re-render of
  *    the same card (a slider move) and a resize redraw it at once. Nothing here runs per ride frame: it reacts to the page changing and to
  *    a card changing size, a few times at most.
@@ -32,20 +31,12 @@
     const rnd = rng(seed * 7919 + 13);
     return [[pass(w, h, r, 0.5, rnd, 12), 1.6, 1], [pass(w, h, r, 1.1, rnd, 20), 0.85, 0.5]];
   }
-  // the phone sheet: one line along the top edge that bows a little and runs just past each end, and a short second dash
-  function topPaths(w, r, seed) {
-    const rnd = rng(seed * 7919 + 13);
-    return [[`M${f(r * 0.6)} ${f(1 + rnd())}Q${f(w * 0.3)} ${f(0.2 + rnd() * 1.2)} ${f(w * 0.55)} 0.9T${f(w - r * 0.6)} ${f(0.6 + rnd())}`, 1.6, 1],
-      [`M${f(w * 0.08)} 2.4Q${f(w * 0.2)} 1.6 ${f(w * 0.34)} 2.2`, 0.9, 0.4]];
-  }
-
   // The cards that carry an outline. key says which card this is: a new key is a new card (it draws on), the same key is the same card
   // drawn again (it does not). The route card's key is stamped by app.js (data-ink on #routes: the trip, or the suggested rides).
   const SLOTS = [
     { name: "route", sel: "#routes div.route-card", seed: 1, key: (el) => el.parentElement.dataset.ink || "" },
     { name: "classic", sel: ".classic-card.sel", seed: 2, key: (el) => el.dataset.i },
     { name: "ride", sel: ".ride-bar", seed: 3, key: () => "ride" },
-    { name: "sheet", sel: ".panel > .grabber", seed: 4, top: true, key: () => "sheet" },   // phones only: the grabber is hidden on desktop
   ];
   const state = new WeakMap();   // card -> { svg, w, h }
   const lastKeys = {};           // slot name -> the keys showing at the previous look
@@ -63,16 +54,16 @@
   // that cards with overflow: hidden do not trim it
   function shape(el, slot) {
     const s = state.get(el), w = el.offsetWidth, h = el.offsetHeight;
-    if (w === s.w && (slot.top || h === s.h)) return false;
+    if (w === s.w && h === s.h) return false;
     s.w = w; s.h = h;
-    const bw = parseFloat(getComputedStyle(el).borderTopWidth) || 0, inset = slot.top ? 0 : 1.6;
-    const r = slot.top ? 10 : Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 4, 14);
-    const list = slot.top ? topPaths(w, r, slot.seed) : boxPaths(w - 2 * inset, h - 2 * inset, r, slot.seed);
-    s.svg.setAttribute("width", w); s.svg.setAttribute("height", slot.top ? 6 : h);
+    const bw = parseFloat(getComputedStyle(el).borderTopWidth) || 0, inset = 1.6;
+    const r = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 4, 14);
+    const list = boxPaths(w - 2 * inset, h - 2 * inset, r, slot.seed);
+    s.svg.setAttribute("width", w); s.svg.setAttribute("height", h);
     s.svg.style.left = s.svg.style.top = -bw + "px";
     s.svg.querySelectorAll("path").forEach((p, i) => {
       p.setAttribute("d", list[i][0]); p.setAttribute("stroke-width", list[i][1]); p.setAttribute("opacity", list[i][2]);
-      p.setAttribute("transform", slot.top ? "" : `translate(${inset} ${inset})`);
+      p.setAttribute("transform", `translate(${inset} ${inset})`);
     });
     return true;
   }
@@ -88,15 +79,15 @@
     queued = false;
     const live = new Set();
     for (const slot of SLOTS) {
-      const els = [...document.querySelectorAll(slot.sel)].filter((el) => el.getClientRects().length && !(slot.top && el.offsetWidth === 0));
+      const els = [...document.querySelectorAll(slot.sel)].filter((el) => el.getClientRects().length);
       const before = lastKeys[slot.name] || new Set(), now = new Set();
       for (const el of els) {
         const key = slot.key(el); now.add(key); live.add(el);
         let fresh = false;
-        if (!state.has(el)) { build(el); fresh = !before.has(key) && !slot.top && !calm(); }
+        if (!state.has(el)) { build(el); fresh = !before.has(key) && !calm(); }
         const drew = shape(el, slot);
         if (drew) { if (fresh) drawOn(state.get(el).svg); else state.get(el).svg.dataset.draw = state.get(el).svg.dataset.draw || "at once"; }
-        if (!slot.top) el.classList.add("ink-on");
+        el.classList.add("ink-on");
       }
       lastKeys[slot.name] = now;
     }
